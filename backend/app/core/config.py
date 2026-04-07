@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     max_upload_mb: int = 10
     upload_dir: str = "./uploads"
+    runtime_dir: str = "./runtime_data"
     demo_email: str = "demo@example.com"
     demo_password: str = "change-me-local"
     allow_demo_portal_fallback: bool = True

@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: tracking-portal-v3-backend
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: testing
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: DATABASE_URL
+        value: sqlite:////opt/render/project-data/tracking_portal.db
+      - key: CORS_ORIGINS
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: UPLOAD_DIR
+        value: /opt/render/project-data/uploads
+      - key: RUNTIME_DIR
+        value: /opt/render/project-data/runtime_data
+      - key: ALLOW_DEMO_PORTAL_FALLBACK
+        value: "false"
+      - key: ALLOW_DEMO_ACCOUNT_BOOTSTRAP
+        value: "false"
+      - key: ENABLE_DEMO_SHIPMENT_ADOPTION
+        value: "false"
+      - key: SEED_TEST_USERS
+        sync: false
+    disk:
+      name: tracking-portal-v3-data
+      mountPath: /opt/render/project-data
+      sizeGB: 1

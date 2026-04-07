@@ -26,6 +26,10 @@ For external testing, use these rules:
 
 ## Recommended hosted test configuration
 
+The repository now includes:
+- `render.yaml` for backend deployment on Render
+- `frontend/.env.production` for hosted frontend defaults
+
 ### Backend environment
 Set these values in hosted backend environment variables:
 

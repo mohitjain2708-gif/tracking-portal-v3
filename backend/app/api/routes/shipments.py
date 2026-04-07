@@ -29,7 +29,9 @@ from app.schemas.shipment import ShipmentCreateRequest, ShipmentStatusUpdateRequ
 router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parents[3]
-RUNTIME_DIR = BASE_DIR / "runtime_data"
+RUNTIME_DIR = Path(settings.runtime_dir).expanduser()
+if not RUNTIME_DIR.is_absolute():
+    RUNTIME_DIR = (BASE_DIR / RUNTIME_DIR).resolve()
 TEMP_IMPORT_DIR = RUNTIME_DIR / "temp_imports"
 STATE_FILE = RUNTIME_DIR / "shipment_state.json"
 CACHE_FILE = RUNTIME_DIR / "tracking_cache.json"
