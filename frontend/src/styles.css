@@ -375,6 +375,62 @@ select:focus {
   font-weight: 600;
 }
 
+.progress-banner {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+}
+
+.progress-banner-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.progress-banner-copy strong {
+  color: var(--primary);
+}
+
+.progress-banner-copy span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(19, 58, 99, 0.1);
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(19, 58, 99, 0.95), rgba(89, 146, 206, 0.95));
+  transition: width 0.35s ease;
+}
+
+.progress-fill::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.18) 35%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.18) 65%,
+    transparent 100%
+  );
+  background-size: 120px 100%;
+  animation: progress-sheen 1.35s linear infinite;
+}
+
 .banner-success {
   border-color: rgba(6, 118, 71, 0.18);
   background: var(--success-soft);
@@ -391,6 +447,12 @@ select:focus {
   border-color: rgba(19, 58, 99, 0.18);
   background: var(--primary-soft);
   color: var(--primary);
+}
+
+.banner-warning {
+  border-color: rgba(181, 71, 8, 0.18);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .workspace-grid {
@@ -1054,6 +1116,16 @@ select:focus {
   line-height: 1.5;
 }
 
+.confirm-warning {
+  margin-bottom: 12px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(181, 71, 8, 0.16);
+  background: var(--warning-soft);
+  color: var(--warning);
+  line-height: 1.5;
+}
+
 .document-form-grid {
   display: grid;
   gap: 12px;
@@ -1103,6 +1175,15 @@ select:focus {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes progress-sheen {
+  from {
+    transform: translateX(-120px);
+  }
+  to {
+    transform: translateX(320px);
   }
 }
 

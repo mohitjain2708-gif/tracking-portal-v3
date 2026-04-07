@@ -428,6 +428,8 @@ function App() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [clearancePrompt, setClearancePrompt] = useState(null);
   const [clearanceDocNumber, setClearanceDocNumber] = useState("");
+  const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
+  const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const [documentRow, setDocumentRow] = useState(null);
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
@@ -660,6 +662,26 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!trackingRefreshActive) {
+      setTrackingRefreshProgress(0);
+      return undefined;
+    }
+
+    setTrackingRefreshProgress(12);
+    const timer = window.setInterval(() => {
+      setTrackingRefreshProgress((current) => {
+        if (current >= 92) {
+          return current;
+        }
+        const nextStep = current < 40 ? 9 : current < 70 ? 5 : 2;
+        return Math.min(92, current + nextStep);
+      });
+    }, 420);
+
+    return () => window.clearInterval(timer);
+  }, [trackingRefreshActive]);
+
   const normalizedRows = useMemo(
     () =>
       dashboardRows.map((row) => ({
@@ -827,6 +849,7 @@ function App() {
   const handleRefreshAllTracking = useCallback(async () => {
     setFeedback(null);
     setRefreshing(true);
+    setTrackingRefreshActive(true);
 
     try {
       setFeedback({
@@ -842,6 +865,10 @@ function App() {
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
     } finally {
+      setTrackingRefreshProgress(100);
+      window.setTimeout(() => {
+        setTrackingRefreshActive(false);
+      }, 350);
       setRefreshing(false);
     }
   }, [loadDashboard]);
@@ -1128,6 +1155,18 @@ function App() {
         <StatCard label="Completed" value={shipmentCounts.completed} />
         <StatCard label="Archived" value={shipmentCounts.archived} />
       </section>
+
+      {trackingRefreshActive && (
+        <section className="surface progress-banner" aria-live="polite">
+          <div className="progress-banner-copy">
+            <strong>Refreshing live tracking</strong>
+            <span>{Math.max(5, Math.round(trackingRefreshProgress))}%</span>
+          </div>
+          <div className="progress-track" aria-hidden="true">
+            <span className="progress-fill" style={{ width: `${trackingRefreshProgress}%` }} />
+          </div>
+        </section>
+      )}
 
       {feedback && (
         <section className={`surface banner banner-${feedback.tone}`} aria-live="polite">
@@ -1474,28 +1513,46 @@ function App() {
             }}>
               Refresh Tracking
             </ActionButton>
-            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
-              Activate
-            </ActionButton>
-            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
-              Complete
-            </ActionButton>
-            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "archived", row: actionRow })}>
-              Archive
-            </ActionButton>
-            <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
-              Delete
-            </ActionButton>
+                            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
+                              Activate
+                            </ActionButton>
+                            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
+                              Complete
+                            </ActionButton>
+                            <ActionButton
+                              type="button"
+                              tone="ghost"
+                              onClick={() => {
+                                if (!cleanText(actionRow?.clearance_doc_number)) {
+                                  setFeedback({
+                                    tone: "warning",
+                                    text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
+                                  });
+                                }
+                                setConfirmAction({ type: "archived", row: actionRow });
+                              }}
+                            >
+                              Archive
+                            </ActionButton>
+                            <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
+                              Delete
+                            </ActionButton>
           </div>
         </Modal>
       )}
 
       {confirmAction && (
         <Modal title="Confirm Action" onClose={() => setConfirmAction(null)}>
+          {confirmAction.type === "archived" && !cleanText(confirmAction.row?.clearance_doc_number) ? (
+            <div className="confirm-warning">
+              Archive is locked for this BL. Click <strong>Complete</strong> first, save the clearance document number,
+              and only then archive this BL group.
+            </div>
+          ) : null}
           <div className="confirm-copy">
             <p>
               Are you sure you want to{" "}
-              <strong>{confirmAction.type === "delete" ? "delete" : `mark as ${confirmAction.type}`}</strong>{" "}
+                <strong>{confirmAction.type === "delete" ? "delete" : `mark as ${confirmAction.type}`}</strong>{" "}
               this shipment group?
             </p>
           </div>
@@ -1503,14 +1560,15 @@ function App() {
             <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction(null)}>
               Cancel
             </ActionButton>
-            <ActionButton
-              type="button"
-              tone={confirmAction.type === "delete" ? "danger" : "primary"}
-              onClick={async () => {
-                if (confirmAction.type === "delete") {
-                  await handleGroupDelete(confirmAction.row);
-                } else if (confirmAction.type === "completed") {
-                  setClearancePrompt(confirmAction.row);
+              <ActionButton
+                type="button"
+                tone={confirmAction.type === "delete" ? "danger" : "primary"}
+                disabled={confirmAction.type === "archived" && !cleanText(confirmAction.row?.clearance_doc_number)}
+                onClick={async () => {
+                  if (confirmAction.type === "delete") {
+                    await handleGroupDelete(confirmAction.row);
+                  } else if (confirmAction.type === "completed") {
+                    setClearancePrompt(confirmAction.row);
                   setClearanceDocNumber("");
                 } else {
                   await handleGroupStatusChange(confirmAction.row, confirmAction.type);
