@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
+from html import unescape
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -48,6 +49,7 @@ BL_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 LDB_API_URL = "https://www.ldb.co.in/api/ldb/container/search"
 CONCOR_API_URL = "https://www.concorindia.co.in/api/multipalContainer"
+PRISTINE_TRACKING_URL = "https://pristinevalleyport.com/tracking/"
 CACHE_DURATION_MINUTES = 30
 TRACKING_SOURCE_TIMEOUT_SECONDS = 10
 TRACKING_POOL_WORKERS = 6
@@ -472,6 +474,84 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
         if date_match:
             last_reported_date = _format_to_dd_mm_yyyy(date_match.group(1))
         return {"train_no": _json_value(container_track, "TRAIN_NUMBER"), "wagon_no": _json_value(container_track, "WAGON_NUMBER"), "train_origin": _json_value(container_track, "TRAIN_ORIGNATING_STATION"), "train_destination": _json_value(container_track, "TRAIN_DESTINATION_STATION"), "departure": departure, "last_reported_station": last_reported_date, "shipping_line": ""}
+    except Exception:
+        return None
+
+
+def _extract_pristine_tracking_field(html_text: str, label: str) -> str:
+    match = re.search(
+        rf"<span><b>{re.escape(label)}\s*:?\s*</b></span>\s*<span>(.*?)</span>",
+        html_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+    raw_value = re.sub(r"<.*?>", "", match.group(1)).strip()
+    return unescape(raw_value)
+
+
+def _extract_pristine_nonce(html_text: str) -> str:
+    match = re.search(
+        r'<input[^>]*name="_wpnonce_phoen_tracking"[^>]*value="([^"]+)"',
+        html_text,
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(
+            r'<input[^>]*value="([^"]+)"[^>]*name="_wpnonce_phoen_tracking"',
+            html_text,
+            re.IGNORECASE,
+        )
+    return match.group(1) if match else ""
+
+
+def _fetch_pristine_arrival(container_number: str) -> dict[str, Any] | None:
+    try:
+        session = requests.Session()
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Upgrade-Insecure-Requests": "1",
+            "Referer": PRISTINE_TRACKING_URL,
+        }
+        page = session.get(
+            PRISTINE_TRACKING_URL,
+            headers=headers,
+            timeout=(4, TRACKING_SOURCE_TIMEOUT_SECONDS),
+        )
+        if page.status_code != 200 or not page.text:
+            return None
+        nonce = _extract_pristine_nonce(page.text)
+        response = session.post(
+            PRISTINE_TRACKING_URL,
+            headers=headers,
+            data={
+                "_wpnonce_phoen_tracking": nonce,
+                "tracking_id": container_number,
+                "tracking_button": "Track",
+            },
+            timeout=(4, TRACKING_SOURCE_TIMEOUT_SECONDS),
+        )
+        if response.status_code != 200 or not response.text:
+            return None
+        html_text = response.text
+        if container_number.upper() not in html_text.upper():
+            return None
+        arrival_date = _extract_pristine_tracking_field(html_text, "Arrival Date")
+        if not arrival_date:
+            return None
+        return {
+            "arrival_date": _format_to_dd_mm_yyyy(arrival_date),
+            "empty_date": _format_to_dd_mm_yyyy(_extract_pristine_tracking_field(html_text, "Empty Date")),
+            "rake_departure_date": _format_to_dd_mm_yyyy(
+                _extract_pristine_tracking_field(html_text, "Rake Departure Date")
+            ),
+            "location": "ICD BIRGANJ, Samastipur",
+        }
     except Exception:
         return None
 
@@ -1121,11 +1201,13 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
                 "has_data": True,
             }
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         future_ldb = executor.submit(_fetch_ldb, container_number)
         future_concor = executor.submit(_fetch_concor, container_number)
+        future_pristine = executor.submit(_fetch_pristine_arrival, container_number)
         ldb_data = future_ldb.result() or {}
         concor_data = future_concor.result() or {}
+        pristine_data = future_pristine.result() or {}
 
     latest_location = ldb_data.get("latest_location", "")
     latest_time = ldb_data.get("latest_time", "")
@@ -1141,6 +1223,13 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         latest_location = concor_data["last_reported_station"]
     movement_category = _movement_category(latest_location, train_no, departure, delay_days)
 
+    if pristine_data.get("arrival_date"):
+        latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
+        latest_time = pristine_data["arrival_date"]
+        rail_status = "Arrived Birgunj"
+        movement_category = "Arrived Birgunj"
+        delay_days = _compute_delay_days(latest_time)
+
     data = {
         "latest_location": latest_location,
         "latest_time": latest_time,
@@ -1154,10 +1243,12 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         "train_destination": train_destination,
         "shipping_line": shipping_line,
         "tracking_source": "+".join(
-            source for source, payload in (("ldb", ldb_data), ("concor", concor_data)) if payload
+            source
+            for source, payload in (("ldb", ldb_data), ("concor", concor_data), ("pristine", pristine_data))
+            if payload
         ),
     }
-    has_data = bool(ldb_data or concor_data)
+    has_data = bool(ldb_data or concor_data or pristine_data)
     status = "success" if has_data else "no_data"
     error = "" if train_no or not concor_data else "CONCOR returned but no train number"
     if not has_data:
