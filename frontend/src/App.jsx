@@ -430,6 +430,7 @@ function App() {
   const [clearanceDocNumber, setClearanceDocNumber] = useState("");
   const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
+  const trackingRefreshPollRef = useRef(null);
   const [documentRow, setDocumentRow] = useState(null);
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
@@ -663,24 +664,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!trackingRefreshActive) {
-      setTrackingRefreshProgress(0);
-      return undefined;
-    }
-
-    setTrackingRefreshProgress(12);
-    const timer = window.setInterval(() => {
-      setTrackingRefreshProgress((current) => {
-        if (current >= 92) {
-          return current;
-        }
-        const nextStep = current < 40 ? 9 : current < 70 ? 5 : 2;
-        return Math.min(92, current + nextStep);
-      });
-    }, 420);
-
-    return () => window.clearInterval(timer);
-  }, [trackingRefreshActive]);
+    return () => {
+      if (trackingRefreshPollRef.current) {
+        window.clearInterval(trackingRefreshPollRef.current);
+      }
+    };
+  }, []);
 
   const normalizedRows = useMemo(
     () =>
@@ -850,24 +839,75 @@ function App() {
     setFeedback(null);
     setRefreshing(true);
     setTrackingRefreshActive(true);
+    setTrackingRefreshProgress(0);
+
+    if (trackingRefreshPollRef.current) {
+      window.clearInterval(trackingRefreshPollRef.current);
+      trackingRefreshPollRef.current = null;
+    }
 
     try {
       setFeedback({
         tone: "info",
-        text: "Fetching live tracking from LDB and CONCOR. This can take a short while for multiple containers.",
+        text: "Preparing live tracking refresh from LDB and CONCOR.",
       });
-      const data = await api.refreshAllTracking();
-      setFeedback({
-        tone: "success",
-        text: `Tracking refreshed for ${data.refreshed_count ?? 0} active containers.`,
+      const { task_id: taskId } = await api.startRefreshAllTracking();
+
+      await new Promise((resolve, reject) => {
+        const pollStatus = async () => {
+          try {
+            const status = await api.getRefreshAllTrackingStatus(taskId);
+            const nextProgress = Number.isFinite(Number(status.progress))
+              ? Math.max(0, Math.min(100, Number(status.progress)))
+              : 0;
+            setTrackingRefreshProgress(nextProgress);
+            setFeedback({
+              tone: status.state === "failed" ? "error" : status.state === "completed" ? "success" : "info",
+              text:
+                status.message ||
+                "Fetching live tracking from LDB and CONCOR. This can take a short while for multiple containers.",
+            });
+
+            if (status.state === "completed") {
+              if (trackingRefreshPollRef.current) {
+                window.clearInterval(trackingRefreshPollRef.current);
+                trackingRefreshPollRef.current = null;
+              }
+              resolve(status);
+              return;
+            }
+
+            if (status.state === "failed") {
+              if (trackingRefreshPollRef.current) {
+                window.clearInterval(trackingRefreshPollRef.current);
+                trackingRefreshPollRef.current = null;
+              }
+              reject(new Error(status.message || "Refresh all failed"));
+            }
+          } catch (error) {
+            if (trackingRefreshPollRef.current) {
+              window.clearInterval(trackingRefreshPollRef.current);
+              trackingRefreshPollRef.current = null;
+            }
+            reject(error);
+          }
+        };
+
+        trackingRefreshPollRef.current = window.setInterval(pollStatus, 700);
+        void pollStatus();
       });
+
       await loadDashboard({ silent: true });
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
     } finally {
-      setTrackingRefreshProgress(100);
+      if (trackingRefreshPollRef.current) {
+        window.clearInterval(trackingRefreshPollRef.current);
+        trackingRefreshPollRef.current = null;
+      }
       window.setTimeout(() => {
         setTrackingRefreshActive(false);
+        setTrackingRefreshProgress(0);
       }, 350);
       setRefreshing(false);
     }
@@ -1156,16 +1196,16 @@ function App() {
         <StatCard label="Archived" value={shipmentCounts.archived} />
       </section>
 
-      {trackingRefreshActive && (
-        <section className="surface progress-banner" aria-live="polite">
-          <div className="progress-banner-copy">
-            <strong>Refreshing live tracking</strong>
-            <span>{Math.max(5, Math.round(trackingRefreshProgress))}%</span>
-          </div>
-          <div className="progress-track" aria-hidden="true">
-            <span className="progress-fill" style={{ width: `${trackingRefreshProgress}%` }} />
-          </div>
-        </section>
+        {trackingRefreshActive && (
+          <section className="surface progress-banner" aria-live="polite">
+            <div className="progress-banner-copy">
+              <strong>Refreshing live tracking</strong>
+              <span>{Math.round(trackingRefreshProgress)}%</span>
+            </div>
+            <div className="progress-track" aria-hidden="true">
+              <span className="progress-fill" style={{ width: `${trackingRefreshProgress}%` }} />
+            </div>
+          </section>
       )}
 
       {feedback && (

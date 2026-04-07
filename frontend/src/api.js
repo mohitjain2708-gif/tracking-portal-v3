@@ -284,6 +284,14 @@ export const api = {
       method: "POST",
     }),
 
+  startRefreshAllTracking: () =>
+    request("/api/shipments/refresh-all/start", {
+      method: "POST",
+    }),
+
+  getRefreshAllTrackingStatus: (taskId) =>
+    request(`/api/shipments/refresh-all/status/${encodeURIComponent(taskId)}`),
+
   refreshOneTracking: (containerNumber) =>
     request("/api/shipments/refresh-one", {
       method: "POST",
