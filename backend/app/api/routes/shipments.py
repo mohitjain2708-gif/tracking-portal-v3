@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.database import engine, get_db
 from app.core.security import hash_password
 from app.models.customer_directory import CustomerDirectory
+from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
 from app.models.user import User
 from app.schemas.shipment import ShipmentCreateRequest, ShipmentStatusUpdateRequest
@@ -125,6 +126,8 @@ PORT_PATTERNS = [
 _storage_ready = False
 _refresh_jobs: dict[str, dict[str, Any]] = {}
 _refresh_jobs_lock = Lock()
+_documents_index_cache: dict[str, dict[str, Any]] | None = None
+_documents_index_mtime: float | None = None
 
 
 def _now_datetime() -> str:
@@ -708,17 +711,72 @@ def _sync_customer_directory(db: Session, raw_name: str) -> str:
 
 
 def _load_documents_index() -> dict[str, dict[str, Any]]:
+    global _documents_index_cache, _documents_index_mtime
     if not BL_DOCUMENTS_INDEX_FILE.exists():
+        _documents_index_cache = {}
+        _documents_index_mtime = None
         return {}
     try:
+        current_mtime = BL_DOCUMENTS_INDEX_FILE.stat().st_mtime
+        if _documents_index_cache is not None and _documents_index_mtime == current_mtime:
+            return _documents_index_cache
         data = json.loads(BL_DOCUMENTS_INDEX_FILE.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return data if isinstance(data, dict) else {}
+    normalized = data if isinstance(data, dict) else {}
+    _documents_index_cache = normalized
+    _documents_index_mtime = current_mtime
+    return normalized
 
 
 def _save_documents_index(data: dict[str, dict[str, Any]]) -> None:
     BL_DOCUMENTS_INDEX_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    global _documents_index_cache, _documents_index_mtime
+    _documents_index_cache = data
+    try:
+        _documents_index_mtime = BL_DOCUMENTS_INDEX_FILE.stat().st_mtime
+    except Exception:
+        _documents_index_mtime = None
+
+
+def _log_audit_event(
+    db: Session,
+    user_id: int,
+    action: str,
+    *,
+    bl_number: str = "",
+    container_number: str = "",
+    shipment_status: str = "",
+    details: dict[str, Any] | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            action=_clean_text(action),
+            bl_number=_clean_bl(bl_number),
+            container_number=_clean_container(container_number),
+            shipment_status=_clean_text(shipment_status).lower(),
+            details_json=json.dumps(details or {}, default=str),
+        )
+    )
+
+
+def _serialize_audit_log(entry: AuditLog) -> dict[str, Any]:
+    try:
+        details = json.loads(entry.details_json or "{}")
+    except Exception:
+        details = {}
+    if not isinstance(details, dict):
+        details = {"value": details}
+    return {
+        "id": entry.id,
+        "action": entry.action,
+        "bl_number": entry.bl_number,
+        "container_number": entry.container_number,
+        "shipment_status": entry.shipment_status,
+        "details": details,
+        "created_at": entry.created_at.strftime("%d-%m-%Y %H:%M:%S") if entry.created_at else "",
+    }
 
 
 def _documents_for_bl(bl_number: str) -> dict[str, Any]:
@@ -1390,6 +1448,13 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             container_number = _clean_container(shipment.container_number)
             if container_number in payloads:
                 _apply_tracking_payload(shipment, payloads[container_number])
+        _log_audit_event(
+            db,
+            user_id,
+            "shipment_all_refreshed",
+            shipment_status="active",
+            details={"refreshed_count": total},
+        )
         db.commit()
         _set_refresh_job(
             task_id,
@@ -1666,6 +1731,15 @@ def add_shipment(payload: ShipmentCreateRequest, db: Session = Depends(get_db), 
         movement_category="Hi Seas",
     )
     db.add(shipment)
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_added",
+        bl_number=shipment.bl_number,
+        container_number=shipment.container_number,
+        shipment_status=shipment.shipment_status,
+        details={"customer_name": shipment.customer_name},
+    )
     db.commit()
     db.refresh(shipment)
     return _shipment_to_dict(shipment)
@@ -1716,6 +1790,19 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
         if next_status == "completed":
             shipment.clearance_doc_number = clearance_doc_number
     effective_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments]) or clearance_doc_number
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_status_updated",
+        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
+        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
+        shipment_status=next_status,
+        details={
+            "count": len(shipments),
+            "container_numbers": [shipment.container_number for shipment in shipments],
+            "clearance_doc_number": effective_doc_number,
+        },
+    )
     db.commit()
     return {"updated": True, "count": len(shipments), "shipment_status": next_status, "clearance_doc_number": effective_doc_number}
 
@@ -1744,6 +1831,18 @@ def delete_shipment_group(payload: dict, db: Session = Depends(get_db), current_
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
     deleted_count = len(shipments)
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_deleted",
+        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
+        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
+        shipment_status="deleted",
+        details={
+            "count": deleted_count,
+            "container_numbers": [shipment.container_number for shipment in shipments],
+        },
+    )
     for shipment in shipments:
         db.delete(shipment)
     db.commit()
@@ -1828,6 +1927,19 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         existing_keys.add(shipment_key)
         imported_count += 1
     db.commit()
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_imported",
+        shipment_status="active",
+        details={
+            "imported_count": imported_count,
+            "duplicate_count": duplicate_count,
+            "skipped_blank_count": skipped_blank_count,
+            "mapping": mapping_json,
+        },
+    )
+    db.commit()
     try:
         file_path.unlink()
     except Exception:
@@ -1901,6 +2013,15 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
         container_number = _clean_container(shipment.container_number)
         if container_number in payloads:
             _apply_tracking_payload(shipment, payloads[container_number])
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_refreshed",
+        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
+        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
+        shipment_status="active",
+        details={"refreshed_count": len(unique_containers), "container_numbers": unique_containers},
+    )
     db.commit()
     return {"refreshed_count": len(unique_containers)}
 
@@ -1929,6 +2050,13 @@ def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_
         container_number = _clean_container(shipment.container_number)
         if container_number in payloads:
             _apply_tracking_payload(shipment, payloads[container_number])
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_all_refreshed",
+        shipment_status="active",
+        details={"refreshed_count": len(unique_containers)},
+    )
     db.commit()
     return {"refreshed_count": len(unique_containers), "message": f"Refreshed {len(unique_containers)} active containers"}
 
@@ -1969,6 +2097,37 @@ def get_refresh_all_tracking_status(
     return job
 
 
+@router.post("/audit/group")
+def get_group_audit_trail(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
+    container_numbers = {
+        _clean_container(value)
+        for value in (payload.get("container_numbers") or [])
+        if _clean_container(value)
+    }
+    query = select(AuditLog).where(AuditLog.user_id == current_user.id)
+    entries = list(db.execute(query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())).scalars())
+    filtered = []
+    for entry in entries:
+        entry_bl = _normalize_bl_number(entry.bl_number)
+        entry_container = _clean_container(entry.container_number)
+        details = _serialize_audit_log(entry).get("details", {})
+        detail_containers = {
+            _clean_container(value)
+            for value in (details.get("container_numbers") or [])
+            if _clean_container(value)
+        }
+        if normalized_bl and entry_bl == normalized_bl:
+            filtered.append(entry)
+            continue
+        if container_numbers and (
+            entry_container in container_numbers or bool(container_numbers.intersection(detail_containers))
+        ):
+            filtered.append(entry)
+    return {"items": [_serialize_audit_log(entry) for entry in filtered[:100]]}
+
+
 @router.post("/bl-documents/upload")
 async def upload_bl_document(
     bl_number: str = Form(...),
@@ -1985,6 +2144,15 @@ async def upload_bl_document(
     if not allowed:
         raise HTTPException(status_code=404, detail="Shipment BL not found")
     metadata = _save_document(bl_number, document_type, file)
+    _log_audit_event(
+        db,
+        current_user.id,
+        "bl_document_uploaded",
+        bl_number=normalized_bl,
+        shipment_status=allowed.shipment_status,
+        details={"document_type": document_type, "original_name": metadata.get("original_name", "")},
+    )
+    db.commit()
     return {"saved": True, "document": metadata}
 
 

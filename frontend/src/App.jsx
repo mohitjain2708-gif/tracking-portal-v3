@@ -223,6 +223,23 @@ function compareLocationByDistance(leftLocation, rightLocation, distanceMap) {
   return leftText.localeCompare(rightText, undefined, { sensitivity: "base" });
 }
 
+function exportRowsAsCsv(fileName, rows, columns) {
+  const escapeCsv = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const lines = [
+    columns.map((column) => escapeCsv(column.label)).join(","),
+    ...rows.map((row) => columns.map((column) => escapeCsv(column.value(row))).join(",")),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
+}
+
 function StatCard({ label, value, onClick, helperText }) {
   const Element = onClick ? "button" : "article";
   return (
@@ -495,7 +512,10 @@ function App() {
   const trackingRefreshPollRef = useRef(null);
   const [documentRow, setDocumentRow] = useState(null);
   const [recordsView, setRecordsView] = useState(null);
+  const [recordsSearch, setRecordsSearch] = useState("");
+  const [recordsMovementFilter, setRecordsMovementFilter] = useState("All");
   const [auditRow, setAuditRow] = useState(null);
+  const [auditEntries, setAuditEntries] = useState([]);
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
     packing_list: null,
@@ -776,6 +796,28 @@ function App() {
     }
     return shipments.filter((shipment) => rowMatchesShipment(auditRow, shipment));
   }, [auditRow, shipments]);
+
+  const visibleHistoryRows = useMemo(() => {
+    const sourceRows = recordsView === "completed" ? completedHistoryRows : archivedHistoryRows;
+    const query = cleanText(recordsSearch).toLowerCase();
+    return sourceRows.filter((row) => {
+      const matchesMovement =
+        recordsMovementFilter === "All" || row.movement_category === recordsMovementFilter;
+      const matchesSearch =
+        !query ||
+        [
+          row.customer_name,
+          row.bl_number,
+          row.latest_location,
+          row.clearance_doc_number,
+          ...(row.container_numbers || []),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      return matchesMovement && matchesSearch;
+    });
+  }, [archivedHistoryRows, completedHistoryRows, recordsMovementFilter, recordsSearch, recordsView]);
 
   const movementCounts = useMemo(() => {
     return normalizedRows.reduce(
@@ -1226,6 +1268,34 @@ function App() {
       setFeedback({ tone: "error", text: error.message || "Failed to download document" });
     }
   }, []);
+
+  useEffect(() => {
+    if (!auditRow) {
+      setAuditEntries([]);
+      return undefined;
+    }
+    let active = true;
+    api
+      .getGroupAuditTrail({
+        bl_number: auditRow.bl_number,
+        container_numbers: auditRow.container_numbers || [auditRow.primary_container_number].filter(Boolean),
+      })
+      .then((data) => {
+        if (!active) {
+          return;
+        }
+        setAuditEntries(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setAuditEntries([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [auditRow]);
 
   if (!authChecked) {
     return <main className="app-shell loading-shell">Loading portal...</main>;
@@ -1874,7 +1944,11 @@ function App() {
       {recordsView && (
         <Modal
           title={recordsView === "completed" ? "Completed Shipment Register" : "Archived Shipment Register"}
-          onClose={() => setRecordsView(null)}
+          onClose={() => {
+            setRecordsView(null);
+            setRecordsSearch("");
+            setRecordsMovementFilter("All");
+          }}
         >
           <div className="history-panel">
             <p className="panel-copy">
@@ -1882,6 +1956,42 @@ function App() {
                 ? "BL groups that have been completed and retained for follow-through."
                 : "BL groups removed from the live dashboard but preserved for record keeping."}
             </p>
+            <div className="history-tools">
+              <input
+                className="search-input"
+                placeholder="Search customer, BL, container, clearance doc"
+                value={recordsSearch}
+                onChange={(event) => setRecordsSearch(event.target.value)}
+              />
+              <select value={recordsMovementFilter} onChange={(event) => setRecordsMovementFilter(event.target.value)}>
+                {MOVEMENT_FILTERS.map((filter) => (
+                  <option key={filter.value} value={filter.value}>
+                    {filter.label}
+                  </option>
+                ))}
+              </select>
+              <ActionButton
+                type="button"
+                tone="secondary"
+                onClick={() =>
+                  exportRowsAsCsv(
+                    `${recordsView}-shipments.csv`,
+                    visibleHistoryRows,
+                    [
+                      { label: "Customer", value: (row) => row.customer_name },
+                      { label: "BL", value: (row) => row.bl_number },
+                      { label: "Containers", value: (row) => (row.container_numbers || []).join(", ") },
+                      { label: "Movement", value: (row) => row.movement_category },
+                      { label: "Latest Location", value: (row) => row.latest_location },
+                      { label: "Latest Date", value: (row) => row.latest_time },
+                      { label: "Clearance Doc", value: (row) => row.clearance_doc_number },
+                    ]
+                  )
+                }
+              >
+                Export CSV
+              </ActionButton>
+            </div>
             <div className="history-table-wrap">
               <table className="history-table">
                 <thead>
@@ -1896,12 +2006,12 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(recordsView === "completed" ? completedHistoryRows : archivedHistoryRows).length === 0 ? (
+                  {visibleHistoryRows.length === 0 ? (
                     <tr>
                       <td colSpan="7" className="empty-cell">No shipment groups available.</td>
                     </tr>
                   ) : (
-                    (recordsView === "completed" ? completedHistoryRows : archivedHistoryRows).map((row) => (
+                    visibleHistoryRows.map((row) => (
                       <tr key={row.group_key}>
                         <td>{row.customer_name || "-"}</td>
                         <td>{row.bl_number || "-"}</td>
@@ -1919,6 +2029,19 @@ function App() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="modal-actions">
+              <ActionButton
+                type="button"
+                tone="ghost"
+                onClick={() => {
+                  setRecordsView(null);
+                  setRecordsSearch("");
+                  setRecordsMovementFilter("All");
+                }}
+              >
+                Close
+              </ActionButton>
             </div>
           </div>
         </Modal>
@@ -2005,6 +2128,63 @@ function App() {
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="audit-journal">
+              <div className="preview-header">
+                <div>
+                  <h3>Action Journal</h3>
+                  <p>Backend audit trail for this BL or shipment group.</p>
+                </div>
+                <ActionButton
+                  type="button"
+                  tone="secondary"
+                  onClick={() =>
+                    exportRowsAsCsv(
+                      "shipment-audit.csv",
+                      auditEntries,
+                      [
+                        { label: "Created At", value: (row) => row.created_at },
+                        { label: "Action", value: (row) => row.action },
+                        { label: "BL", value: (row) => row.bl_number },
+                        { label: "Container", value: (row) => row.container_number },
+                        { label: "Status", value: (row) => row.shipment_status },
+                        { label: "Details", value: (row) => JSON.stringify(row.details || {}) },
+                      ]
+                    )
+                  }
+                >
+                  Export Audit
+                </ActionButton>
+              </div>
+              <div className="history-table-wrap">
+                <table className="history-table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Action</th>
+                      <th>Status</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditEntries.length === 0 ? (
+                      <tr>
+                        <td colSpan="4" className="empty-cell">No audit trail available yet.</td>
+                      </tr>
+                    ) : (
+                      auditEntries.map((entry) => (
+                        <tr key={entry.id}>
+                          <td>{entry.created_at || "-"}</td>
+                          <td>{entry.action || "-"}</td>
+                          <td>{entry.shipment_status || "-"}</td>
+                          <td className="details-cell">{JSON.stringify(entry.details || {})}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </Modal>

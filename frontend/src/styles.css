@@ -1165,6 +1165,18 @@ select:focus {
   gap: 14px;
 }
 
+.history-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.history-tools .search-input {
+  min-width: 260px;
+  flex: 1 1 260px;
+}
+
 .history-table-wrap {
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1225,6 +1237,20 @@ select:focus {
   grid-template-columns: max-content 1fr;
   row-gap: 8px;
   column-gap: 12px;
+}
+
+.audit-journal {
+  display: grid;
+  gap: 10px;
+}
+
+.details-cell {
+  max-width: 420px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
 }
 
 .confirm-warning {
@@ -1340,6 +1366,11 @@ select:focus {
 
   .audit-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .history-tools {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .tool-row {

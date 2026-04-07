@@ -292,6 +292,12 @@ export const api = {
   getRefreshAllTrackingStatus: (taskId) =>
     request(`/api/shipments/refresh-all/status/${encodeURIComponent(taskId)}`),
 
+  getGroupAuditTrail: (payload) =>
+    request("/api/shipments/audit/group", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   refreshOneTracking: (containerNumber) =>
     request("/api/shipments/refresh-one", {
       method: "POST",
