@@ -5,6 +5,35 @@ const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
 let portalSessionPromise = null;
 
+function normalizeErrorDetail(detail, fallback = "Request failed") {
+  if (!detail) {
+    return fallback;
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === "string") {
+          return item;
+        }
+        if (item?.msg) {
+          return item.msg;
+        }
+        return JSON.stringify(item);
+      })
+      .join("; ");
+  }
+  if (typeof detail === "object") {
+    if (detail.msg) {
+      return detail.msg;
+    }
+    return JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
 function getToken() {
   return localStorage.getItem("tp_token");
 }
@@ -48,7 +77,7 @@ async function ensurePortalSession(path = "") {
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data?.access_token) {
-          throw new Error(data?.detail || data?.message || "Portal session failed");
+          throw new Error(normalizeErrorDetail(data?.detail || data?.message, "Portal session failed"));
         }
         setToken(data.access_token);
         return data.access_token;
@@ -69,7 +98,7 @@ async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data?.detail || data?.message || "Request failed");
+    throw new Error(normalizeErrorDetail(data?.detail || data?.message, "Request failed"));
   }
 
   return data;
@@ -107,7 +136,7 @@ async function requestBlob(path, options = {}) {
     let detail = "Request failed";
     try {
       const data = await response.json();
-      detail = data?.detail || data?.message || detail;
+      detail = normalizeErrorDetail(data?.detail || data?.message, detail);
     } catch {
       // ignore json parse issues for non-json responses
     }
@@ -129,7 +158,7 @@ async function requestBlobUrl(url, options = {}) {
     let detail = "Request failed";
     try {
       const data = await response.json();
-      detail = data?.detail || data?.message || detail;
+      detail = normalizeErrorDetail(data?.detail || data?.message, detail);
     } catch {
       // ignore json parse issues for non-json responses
     }

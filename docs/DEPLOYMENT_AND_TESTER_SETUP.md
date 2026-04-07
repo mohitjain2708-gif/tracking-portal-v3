@@ -41,7 +41,7 @@ CORS_ORIGINS=https://your-frontend-domain
 ALLOW_DEMO_PORTAL_FALLBACK=false
 ALLOW_DEMO_ACCOUNT_BOOTSTRAP=false
 ENABLE_DEMO_SHIPMENT_ADOPTION=false
-SEED_TEST_USERS=[{"email":"tester1@portal.local","password":"Portal@123"},{"email":"tester2@portal.local","password":"Portal@234"},{"email":"tester3@portal.local","password":"Portal@345"},{"email":"tester4@portal.local","password":"Portal@456"}]
+SEED_TEST_USERS=[{"email":"tester1@example.com","password":"Portal@123"},{"email":"tester2@example.com","password":"Portal@234"},{"email":"tester3@example.com","password":"Portal@345"},{"email":"tester4@example.com","password":"Portal@456"}]
 ```
 
 ### Frontend environment
@@ -53,10 +53,10 @@ VITE_ENABLE_DEMO_SESSION=false
 ## Suggested tester accounts to share
 
 ### Option A
-- `tester1@portal.local` / `Portal@123`
-- `tester2@portal.local` / `Portal@234`
-- `tester3@portal.local` / `Portal@345`
-- `tester4@portal.local` / `Portal@456`
+- `tester1@example.com` / `Portal@123`
+- `tester2@example.com` / `Portal@234`
+- `tester3@example.com` / `Portal@345`
+- `tester4@example.com` / `Portal@456`
 
 ### Option B
 Ask each friend to self-register using the sign-up form.
