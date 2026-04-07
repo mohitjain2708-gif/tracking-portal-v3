@@ -1,0 +1,1780 @@
+from __future__ import annotations
+
+import json
+import re
+import time
+from datetime import datetime, timedelta
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+from uuid import uuid4
+
+import requests
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from jose import JWTError, jwt
+from openpyxl import load_workbook
+from sqlalchemy import func, inspect, select, text
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.database import engine, get_db
+from app.core.security import hash_password
+from app.models.customer_directory import CustomerDirectory
+from app.models.shipment import Shipment
+from app.models.user import User
+from app.schemas.shipment import ShipmentCreateRequest, ShipmentStatusUpdateRequest
+
+router = APIRouter()
+
+BASE_DIR = Path(__file__).resolve().parents[3]
+RUNTIME_DIR = BASE_DIR / "runtime_data"
+TEMP_IMPORT_DIR = RUNTIME_DIR / "temp_imports"
+STATE_FILE = RUNTIME_DIR / "shipment_state.json"
+CACHE_FILE = RUNTIME_DIR / "tracking_cache.json"
+BL_DOCUMENTS_DIR = RUNTIME_DIR / "bl_documents"
+BL_DOCUMENTS_INDEX_FILE = RUNTIME_DIR / "bl_documents_index.json"
+LOCATION_DISTANCE_CACHE_FILE = RUNTIME_DIR / "location_distance_cache.json"
+DEFAULT_LOCAL_USER_EMAIL = settings.demo_email
+
+RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+BL_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+LDB_API_URL = "https://www.ldb.co.in/api/ldb/container/search"
+CONCOR_API_URL = "https://www.concorindia.co.in/api/multipalContainer"
+CACHE_DURATION_MINUTES = 30
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving"
+BIRGUNJ_REFERENCE = {"lat": 27.0104, "lon": 84.8774}
+LOCATION_COORDINATE_FALLBACKS = [
+    {"patterns": ["BIRGUNJ", "BIRGANJ"], "lat": 27.0104, "lon": 84.8774},
+    {"patterns": ["RAXAUL"], "lat": 26.9795, "lon": 84.8507},
+    {"patterns": ["MUZAFFARPUR"], "lat": 26.1209, "lon": 85.3647},
+    {"patterns": ["SONPUR"], "lat": 25.6992, "lon": 85.1949},
+    {"patterns": ["PATNA"], "lat": 25.5941, "lon": 85.1376},
+    {"patterns": ["KHURDA ROAD", "KHORDHA ROAD"], "lat": 20.1535, "lon": 85.7086},
+    {"patterns": ["BANSPANI"], "lat": 21.6309, "lon": 85.5850},
+    {"patterns": ["DANGOAPOSI"], "lat": 22.0644, "lon": 85.6432},
+    {"patterns": ["TATANAGAR", "JAMSHEDPUR"], "lat": 22.8046, "lon": 86.2029},
+    {"patterns": ["KOLKATA", "SYAMA PRASAD", "SMP"], "lat": 22.5726, "lon": 88.3639},
+    {"patterns": ["HALDIA", "HICT"], "lat": 22.0257, "lon": 88.0583},
+    {"patterns": ["VISHAKAPATNAM", "VISAKHAPATNAM", "VIZAG", "MMLP VISHAKAPATNAM"], "lat": 17.6868, "lon": 83.2185},
+]
+VALID_DOCUMENT_TYPES = ("invoice", "packing_list", "bl_copy")
+SHIPMENT_STATUS_PRIORITY = {"active": 3, "completed": 2, "archived": 1}
+MOVEMENT_PRIORITY = {"Arrived Birgunj": 4, "On Rail": 3, "At Port": 2, "Hi Seas": 1}
+BUSINESS_SUFFIXES = {
+    "PVT",
+    "PVT.",
+    "LTD",
+    "LTD.",
+    "LLP",
+    "LLC",
+    "INC",
+    "INC.",
+    "CO",
+    "CO.",
+    "PLC",
+}
+CUSTOMER_IGNORE_TOKENS = BUSINESS_SUFFIXES | {
+    "PRIVATE",
+    "LIMITED",
+    "ENTERPRISE",
+    "ENTERPRISES",
+    "INTERNATIONAL",
+    "TRADING",
+}
+
+SHIPMENT_COLUMN_DEFINITIONS = {
+    "latest_location": "TEXT NOT NULL DEFAULT ''",
+    "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
+    "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "rail_status": "VARCHAR(64) NOT NULL DEFAULT ''",
+    "movement_category": "VARCHAR(64) NOT NULL DEFAULT 'Hi Seas'",
+    "delay_days": "FLOAT NOT NULL DEFAULT 0",
+    "wagon_no": "VARCHAR(64) NOT NULL DEFAULT ''",
+    "train_origin": "TEXT NOT NULL DEFAULT ''",
+    "train_destination": "TEXT NOT NULL DEFAULT ''",
+    "shipping_line": "VARCHAR(255) NOT NULL DEFAULT ''",
+    "tracking_source": "VARCHAR(64) NOT NULL DEFAULT ''",
+    "last_refresh_at": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "last_refresh_status": "VARCHAR(64) NOT NULL DEFAULT ''",
+    "last_refresh_error": "TEXT NOT NULL DEFAULT ''",
+    "clearance_doc_number": "VARCHAR(120) NOT NULL DEFAULT ''",
+}
+
+PORT_PATTERNS = [
+    "VISHAKAPATNAM", "VISAKHAPATNAM", "MMLP VISHAKAPATNAM", "MMLP/VISHAKAPATNAM",
+    "MMLP-VISHAKAPATNAM", "KOLKATA/SYAMA PRASAD MOOKERJEE PORT", "SYAMA PRASAD MOOKERJEE PORT",
+    "SMP, KOLKATA", "HALDIA INTERNATIONAL CONTAINER TERMINAL", "HICT",
+    "PURBA MEDINIPUR/HALDIA INTERNATIONAL CONTAINER TERMINAL", "VISAKHA CONTAINER TERMINAL",
+    "VPL INTEGRAL CFS", "KOLKATA", "HALDIA", "PORT", "CFS",
+]
+
+_storage_ready = False
+
+
+def _now_datetime() -> str:
+    return datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+
+
+def _now_iso_for_cache() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _load_state() -> dict[str, Any]:
+    if not STATE_FILE.exists():
+        return {"shipments": [], "shipment_id_counter": 1}
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"shipments": [], "shipment_id_counter": 1}
+    data.setdefault("shipments", [])
+    data.setdefault("shipment_id_counter", 1)
+    return data
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _clean_container(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _clean_bl(value: Any) -> str:
+    return _clean_text(value).upper()
+
+
+def _normalize_bl_number(value: Any) -> str:
+    return re.sub(r"\s+", "", _clean_bl(value))
+
+
+def _row_to_strings(row: list[Any]) -> list[str]:
+    return [_clean_text(value) for value in row]
+
+
+def _pick_header_row(rows: list[list[Any]]) -> tuple[int, list[str]]:
+    best_idx = 0
+    best_count = -1
+    best_headers: list[str] = []
+    for idx, row in enumerate(rows[:10]):
+        cleaned = _row_to_strings(row)
+        count = sum(1 for value in cleaned if value)
+        if count > best_count:
+            best_count = count
+            best_idx = idx
+            best_headers = cleaned
+    headers = [header if header else f"Column {index + 1}" for index, header in enumerate(best_headers)]
+    return best_idx + 1, headers
+
+
+def _read_sheet(file_path: Path) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]]]:
+    workbook = load_workbook(file_path, data_only=True)
+    sheet = _select_relevant_sheet(workbook)
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="Excel file is empty")
+    header_row, headers = _pick_header_row(rows)
+    preview_rows: list[dict[str, Any]] = []
+    for row in rows[header_row : header_row + 5]:
+        values = list(row)
+        record: dict[str, Any] = {}
+        for index, header in enumerate(headers):
+            record[header] = _clean_text(values[index] if index < len(values) else "")
+        if any(str(value).strip() for value in record.values()):
+            preview_rows.append(record)
+    return sheet.title, header_row, headers, preview_rows, rows
+
+
+def _score_sheet_relevance(sheet_name: str, rows: list[list[Any]]) -> tuple[int, int, int, int]:
+    normalized_sheet_name = _clean_text(sheet_name).upper()
+    header_row, headers = _pick_header_row(rows[:25] or rows)
+    normalized_headers = [_clean_text(header).upper() for header in headers]
+    container_header_score = sum(
+        1
+        for header in normalized_headers
+        if any(keyword in header for keyword in ("CONTAINER", "CNTR", "BL", "B/L", "BILL OF LADING"))
+    )
+    data_row_score = sum(1 for row in rows[header_row:] if any(_clean_text(value) for value in row))
+    non_empty_score = sum(1 for row in rows if any(_clean_text(value) for value in row))
+    title_score = 0
+    if data_row_score > 0:
+        if "OONC" in normalized_sheet_name:
+            title_score += 200
+        if "TRACK" in normalized_sheet_name:
+            title_score += 40
+    return title_score, container_header_score, data_row_score, non_empty_score
+
+
+def _select_relevant_sheet(workbook) -> Any:
+    best_sheet = None
+    best_score: tuple[int, int, int, int, int] | None = None
+    for index, sheet_name in enumerate(workbook.sheetnames):
+        sheet = workbook[sheet_name]
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            continue
+        score = (*_score_sheet_relevance(sheet_name, rows), -index)
+        if best_score is None or score > best_score:
+            best_sheet = sheet
+            best_score = score
+    if best_sheet is None:
+        raise HTTPException(status_code=400, detail="Excel file is empty")
+    return best_sheet
+
+
+def _is_arrived(location: str) -> bool:
+    location_text = _clean_text(location).upper()
+    return "BIRGUNJ" in location_text or "BIRGANJ" in location_text
+
+
+def _is_port(location: str) -> bool:
+    location_text = _clean_text(location).upper()
+    return bool(location_text) and any(pattern in location_text for pattern in PORT_PATTERNS)
+
+
+def _normalize_existing_movement(value: str) -> str:
+    movement = _clean_text(value)
+    if not movement or movement == "High Seas":
+        return "Hi Seas"
+    if movement in {"Arrived", "Arrived Birgunj"}:
+        return "Arrived Birgunj"
+    if movement in {"Moving", "In Transit", "On Rail"}:
+        return "On Rail"
+    if movement in {"At Origin", "Delayed", "At Port"}:
+        return "At Port"
+    return movement
+
+
+def _movement_category(location: str, train_no: str, departure: str, delay_days: float = 0) -> str:
+    location_text = _clean_text(location)
+    location_upper = location_text.upper()
+    train_number = _clean_text(train_no)
+    departure_text = _clean_text(departure)
+    if _is_arrived(location_text):
+        return "Arrived Birgunj"
+    if train_number or departure_text:
+        return "On Rail"
+    if _is_port(location_text) or "VIZAG" in location_upper or "VISHAKAPATNAM" in location_upper:
+        return "At Port"
+    if location_text:
+        return "On Rail"
+    if delay_days > 5:
+        return "At Port"
+    return "Hi Seas"
+
+
+def _extract_json_object_by_key(json_str: str, key_name: str) -> dict[str, Any] | None:
+    try:
+        key_pattern = f'"{key_name}"'
+        key_pos = json_str.find(key_pattern)
+        if key_pos == -1:
+            return None
+        brace_start = json_str.find("{", key_pos)
+        if brace_start == -1:
+            return None
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        for index in range(brace_start, len(json_str)):
+            char = json_str[index]
+            if escape_next:
+                escape_next = False
+                continue
+            if char == "\\":
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                brace_count += 1
+            elif char == "}":
+                brace_count -= 1
+                if brace_count == 0:
+                    return json.loads(json_str[brace_start : index + 1])
+    except Exception:
+        return None
+    return None
+
+
+def _json_value(obj: dict[str, Any] | None, key: str, default: str = "") -> str:
+    if not isinstance(obj, dict):
+        return default
+    value = obj.get(key, default)
+    return default if value is None else _clean_text(value)
+
+
+def _format_to_dd_mm_yyyy(date_str: str) -> str:
+    if not date_str:
+        return ""
+    if " " in date_str:
+        date_str = date_str.split(" ")[0]
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(date_str, fmt).strftime("%d-%m-%Y")
+        except Exception:
+            continue
+    return date_str
+
+
+def _format_ldb_date(iso_text: str) -> str:
+    if not iso_text:
+        return ""
+    try:
+        if "T" in iso_text:
+            iso_text = iso_text.split("T")[0]
+        return datetime.fromisoformat(iso_text).strftime("%d-%m-%Y")
+    except Exception:
+        return _format_to_dd_mm_yyyy(iso_text)
+
+
+def _parse_date(value: str) -> datetime | None:
+    text_value = _clean_text(value)
+    if not text_value:
+        return None
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text_value, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _date_sort_value(value: str) -> float:
+    parsed = _parse_date(value)
+    return parsed.timestamp() if parsed else 0.0
+
+
+def _classify_ldb_rail_status(location: str, event: str) -> str:
+    text_value = f"{location} {event}".upper()
+    if "BIRGANJ" in text_value or "BIRGUNJ" in text_value:
+        return "Arrived Birgunj"
+    if "DANGOAPOSI" in text_value or "STATION CROSSED" in text_value or "RAIL" in text_value:
+        return "On Rail"
+    if _is_port(text_value):
+        return "At Port"
+    return "On Rail" if _clean_text(location) else "Hi Seas"
+
+
+def _compute_delay_days(latest_date: str) -> float:
+    parsed = _parse_date(latest_date)
+    if not parsed:
+        return 0
+    return round((datetime.now() - parsed).total_seconds() / 86400, 2)
+
+
+def _get_cached_data(container_number: str) -> dict[str, Any] | None:
+    if not CACHE_FILE.exists():
+        return None
+    try:
+        cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        cached = cache.get(container_number)
+        if not cached:
+            return None
+        cached_time = datetime.fromisoformat(cached.get("cached_at", "2000-01-01T00:00:00"))
+        if datetime.now() - cached_time < timedelta(minutes=CACHE_DURATION_MINUTES):
+            return cached.get("data")
+    except Exception:
+        return None
+    return None
+
+
+def _save_to_cache(container_number: str, data: dict[str, Any]) -> None:
+    try:
+        cache = json.loads(CACHE_FILE.read_text(encoding="utf-8")) if CACHE_FILE.exists() else {}
+        cache[container_number] = {"data": data, "cached_at": _now_iso_for_cache()}
+        CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
+    try:
+        response = requests.get(
+            f"{LDB_API_URL}?cntrNo={quote(container_number)}&searchType=39",
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json, text/plain, */*", "Referer": f"https://www.ldb.co.in/ldb/containersearch/39/{container_number}"},
+        )
+        if response.status_code != 200 or not response.text:
+            return None
+        last_event = _extract_json_object_by_key(response.text, "lastEvent")
+        if not last_event:
+            try:
+                data = response.json()
+                if isinstance(data, dict):
+                    last_event = data.get("lastEvent") or data.get("data") or data.get("result")
+                    if isinstance(last_event, list) and last_event:
+                        last_event = last_event[0]
+            except Exception:
+                return None
+        if not isinstance(last_event, dict):
+            return None
+        location = _json_value(last_event, "currentLocation")
+        event = _json_value(last_event, "eventName")
+        timestamp = _json_value(last_event, "timestampTimezone")
+        latest_date = _format_ldb_date(timestamp)
+        return {"latest_location": location, "latest_time": latest_date, "rail_status": _classify_ldb_rail_status(location, event), "delay_days": _compute_delay_days(latest_date)}
+    except Exception:
+        return None
+
+
+def _fetch_concor(container_number: str) -> dict[str, Any] | None:
+    try:
+        response = requests.post(
+            CONCOR_API_URL,
+            json={"containerNo": [container_number]},
+            timeout=20,
+            headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Origin": "https://www.concorindia.co.in", "Referer": "https://www.concorindia.co.in/track-n-trace?lang=en"},
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("statusCode") == 404 or payload.get("status") == "error":
+            return None
+        actual_data = payload.get("data")
+        container_track = None
+        if isinstance(actual_data, dict):
+            container_info = actual_data.get(container_number)
+            if isinstance(container_info, dict):
+                container_track = container_info.get("containerTrack") or container_info
+            if not isinstance(container_track, dict):
+                for value in actual_data.values():
+                    if isinstance(value, dict):
+                        if "containerTrack" in value and isinstance(value["containerTrack"], dict):
+                            container_track = value["containerTrack"]
+                            break
+                        if "TRAIN_NUMBER" in value:
+                            container_track = value
+                            break
+            if not isinstance(container_track, dict) and "TRAIN_NUMBER" in actual_data:
+                container_track = actual_data
+        if not isinstance(container_track, dict):
+            return None
+        departure = _format_to_dd_mm_yyyy(_json_value(container_track, "DEPARTURE_DATE_&_TIME"))
+        last_reported_raw = _json_value(container_track, "LAST_REPORTED_STATION")
+        last_reported_date = ""
+        date_match = re.search(r"(\d{2}/\d{2}/\d{4})", last_reported_raw)
+        if date_match:
+            last_reported_date = _format_to_dd_mm_yyyy(date_match.group(1))
+        return {"train_no": _json_value(container_track, "TRAIN_NUMBER"), "wagon_no": _json_value(container_track, "WAGON_NUMBER"), "train_origin": _json_value(container_track, "TRAIN_ORIGNATING_STATION"), "train_destination": _json_value(container_track, "TRAIN_DESTINATION_STATION"), "departure": departure, "last_reported_station": last_reported_date, "shipping_line": ""}
+    except Exception:
+        return None
+
+
+def _title_case_word(word: str) -> str:
+    if not word:
+        return ""
+    if "*" in word:
+        return word.upper()
+    stripped = word.replace(".", "")
+    if stripped.upper() in BUSINESS_SUFFIXES:
+        return stripped.upper() + ("." if word.endswith(".") else "")
+    if len(word) == 1 and word.isalpha():
+        return word.upper()
+    return word[:1].upper() + word[1:].lower()
+
+
+def _format_customer_name(value: str) -> str:
+    compact = _clean_text(value).replace("_", " ")
+    compact = re.sub(r"\s*[--]+\s*", " ", compact)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if not compact:
+        return ""
+    formatted = " ".join(_title_case_word(word) for word in compact.split(" ") if word)
+    formatted = re.sub(r"\bPVT\.?\s+LTD\.?\b\.?", "PVT. LTD.", formatted)
+    formatted = re.sub(r"\bCO\.?\s+LTD\.?\b\.?", "CO. LTD.", formatted)
+    formatted = re.sub(r"\.{2,}", ".", formatted)
+    return formatted
+
+
+def _customer_tokens(value: str) -> list[str]:
+    cleaned = re.sub(r"[^A-Z0-9 ]+", " ", _clean_text(value).upper())
+    tokens = [token for token in cleaned.split() if token]
+    reduced = [token for token in tokens if token not in CUSTOMER_IGNORE_TOKENS]
+    return reduced or tokens
+
+
+def _customer_compact_key(value: str) -> str:
+    return "".join(_customer_tokens(value))
+
+
+def _customer_match_score(left: str, right: str) -> float:
+    left_tokens = _customer_tokens(left)
+    right_tokens = _customer_tokens(right)
+    left_compact = "".join(left_tokens)
+    right_compact = "".join(right_tokens)
+    if not left_compact or not right_compact:
+        return 0.0
+    sequence_score = SequenceMatcher(None, left_compact, right_compact).ratio()
+    left_set = set(left_tokens)
+    right_set = set(right_tokens)
+    overlap = len(left_set & right_set) / max(len(left_set | right_set), 1)
+    return max(sequence_score, (sequence_score + overlap) / 2)
+
+
+def _is_customer_match(left: str, right: str) -> bool:
+    left_tokens = _customer_tokens(left)
+    right_tokens = _customer_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    if len(left_tokens) != len(right_tokens):
+        return _customer_match_score(left, right) >= 0.9
+    token_scores = [
+        SequenceMatcher(None, left_token, right_token).ratio()
+        for left_token, right_token in zip(left_tokens, right_tokens)
+    ]
+    average_token_score = sum(token_scores) / max(len(token_scores), 1)
+    return _customer_match_score(left, right) >= 0.88 or average_token_score >= 0.92
+
+
+def _aliases_from_json(raw_value: str) -> list[str]:
+    try:
+        parsed = json.loads(raw_value or "[]")
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str) and item.strip()]
+
+
+def _pick_better_display_name(current: str, candidate: str) -> str:
+    current_name = _format_customer_name(current)
+    candidate_name = _format_customer_name(candidate)
+    if not current_name:
+        return candidate_name
+    if not candidate_name:
+        return current_name
+    current_penalty = current_name.count("..") + current_name.count(" .")
+    candidate_penalty = candidate_name.count("..") + candidate_name.count(" .")
+    current_score = (
+        0 if "*" in current_name else 1,
+        -current_penalty,
+        len(set(_customer_tokens(current_name))),
+        len(current_name),
+    )
+    candidate_score = (
+        0 if "*" in candidate_name else 1,
+        -candidate_penalty,
+        len(set(_customer_tokens(candidate_name))),
+        len(candidate_name),
+    )
+    return candidate_name if candidate_score > current_score else current_name
+
+
+def _sync_customer_directory(db: Session, raw_name: str) -> str:
+    formatted_name = _format_customer_name(raw_name)
+    if not formatted_name:
+        return ""
+    compact_key = _customer_compact_key(formatted_name)
+    if not compact_key:
+        return formatted_name
+    entries = list(
+        db.execute(
+            select(CustomerDirectory).order_by(
+                CustomerDirectory.source_count.desc(),
+                CustomerDirectory.updated_at.desc(),
+            )
+        ).scalars()
+    )
+    best_entry = None
+    best_score = 0.0
+    for entry in entries:
+        for alias in [entry.display_name, *_aliases_from_json(entry.aliases_json)]:
+            score = _customer_match_score(formatted_name, alias)
+            if score > best_score:
+                best_score = score
+                best_entry = entry
+    if best_entry and _is_customer_match(formatted_name, best_entry.display_name):
+        aliases = _aliases_from_json(best_entry.aliases_json)
+        if formatted_name not in aliases and formatted_name != best_entry.display_name:
+            aliases.append(formatted_name)
+            best_entry.aliases_json = json.dumps(sorted(set(aliases)), ensure_ascii=True)
+        best_entry.display_name = _pick_better_display_name(best_entry.display_name, formatted_name)
+        best_entry.source_count = (best_entry.source_count or 0) + 1
+        return best_entry.display_name
+    entry = db.execute(select(CustomerDirectory).where(CustomerDirectory.canonical_key == compact_key)).scalar_one_or_none()
+    if entry:
+        aliases = _aliases_from_json(entry.aliases_json)
+        if formatted_name not in aliases and formatted_name != entry.display_name:
+            aliases.append(formatted_name)
+            entry.aliases_json = json.dumps(sorted(set(aliases)), ensure_ascii=True)
+        entry.display_name = _pick_better_display_name(entry.display_name, formatted_name)
+        entry.source_count = (entry.source_count or 0) + 1
+        return entry.display_name
+    entry = CustomerDirectory(
+        canonical_key=compact_key,
+        display_name=formatted_name,
+        aliases_json=json.dumps([formatted_name], ensure_ascii=True),
+        source_count=1,
+    )
+    db.add(entry)
+    db.flush()
+    return entry.display_name
+
+
+def _load_documents_index() -> dict[str, dict[str, Any]]:
+    if not BL_DOCUMENTS_INDEX_FILE.exists():
+        return {}
+    try:
+        data = json.loads(BL_DOCUMENTS_INDEX_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_documents_index(data: dict[str, dict[str, Any]]) -> None:
+    BL_DOCUMENTS_INDEX_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _documents_for_bl(bl_number: str) -> dict[str, Any]:
+    normalized_bl = _normalize_bl_number(bl_number)
+    if not normalized_bl:
+        return {doc_type: None for doc_type in VALID_DOCUMENT_TYPES}
+    existing = _load_documents_index().get(normalized_bl) or {}
+    return {
+        doc_type: _serialize_document_metadata(normalized_bl, doc_type, existing.get(doc_type))
+        for doc_type in VALID_DOCUMENT_TYPES
+    }
+
+
+def _serialize_document_metadata(bl_number: str, document_type: str, metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    payload = dict(metadata)
+    payload["file_url"] = (
+        f"/api/shipments/bl-documents/file?bl_number={quote(bl_number)}&document_type={quote(document_type)}"
+    )
+    return payload
+
+
+def _save_document(bl_number: str, document_type: str, upload: UploadFile) -> dict[str, Any]:
+    normalized_bl = _normalize_bl_number(bl_number)
+    normalized_type = _clean_text(document_type).lower()
+    if not normalized_bl:
+        raise HTTPException(status_code=400, detail="BL number is required for document upload")
+    if normalized_type not in VALID_DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid document_type")
+    suffix = Path(upload.filename or "").suffix or ".bin"
+    stored_name = f"{normalized_bl}_{normalized_type}_{uuid4().hex}{suffix}"
+    target_path = BL_DOCUMENTS_DIR / stored_name
+    content = upload.file.read()
+    target_path.write_bytes(content)
+    metadata = {
+        "document_type": normalized_type,
+        "original_name": upload.filename or stored_name,
+        "stored_name": stored_name,
+        "content_type": upload.content_type or "application/octet-stream",
+        "size": len(content),
+        "uploaded_at": _now_datetime(),
+        "path": str(target_path),
+    }
+    index = _load_documents_index()
+    bucket = index.setdefault(normalized_bl, {})
+    previous = bucket.get(normalized_type)
+    previous_path = Path(previous.get("path", "")) if isinstance(previous, dict) else None
+    if previous_path and previous_path.exists() and previous_path.is_file():
+        previous_path.unlink(missing_ok=True)
+    bucket[normalized_type] = metadata
+    _save_documents_index(index)
+    return _serialize_document_metadata(normalized_bl, normalized_type, metadata)
+
+
+def _load_location_distance_cache() -> dict[str, dict[str, Any]]:
+    if not LOCATION_DISTANCE_CACHE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(LOCATION_DISTANCE_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_location_distance_cache(cache: dict[str, dict[str, Any]]) -> None:
+    LOCATION_DISTANCE_CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+
+
+def _normalize_location_key(location_name: str) -> str:
+    return re.sub(r"\s+", " ", _clean_text(location_name).upper())
+
+
+def _contains_location_pattern(normalized_location: str, pattern: str) -> bool:
+    escaped = re.escape(pattern.upper())
+    return re.search(rf"(^|[^A-Z]){escaped}([^A-Z]|$)", normalized_location) is not None
+
+
+def _fallback_location_coordinates(location_name: str) -> dict[str, Any] | None:
+    normalized_location = _normalize_location_key(location_name)
+    for entry in LOCATION_COORDINATE_FALLBACKS:
+        if any(_contains_location_pattern(normalized_location, pattern) for pattern in entry["patterns"]):
+            return {
+                "lat": float(entry["lat"]),
+                "lon": float(entry["lon"]),
+                "display_name": location_name,
+            }
+    return None
+
+
+def _haversine_distance_km(start: dict[str, float], end: dict[str, float]) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    radius_km = 6371
+    d_lat = radians(end["lat"] - start["lat"])
+    d_lon = radians(end["lon"] - start["lon"])
+    lat1 = radians(start["lat"])
+    lat2 = radians(end["lat"])
+    a = sin(d_lat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(d_lon / 2) ** 2
+    return 2 * radius_km * asin(sqrt(a))
+
+
+def _geocode_location(location_name: str) -> dict[str, Any] | None:
+    queries = [
+        location_name,
+        f"{location_name}, India",
+        f"{location_name}, Odisha, India",
+    ]
+    headers = {
+        "User-Agent": "shipment-portal/1.0 (contact: local-app)",
+        "Accept": "application/json",
+    }
+    for index, query in enumerate(queries):
+        try:
+            response = requests.get(
+                NOMINATIM_SEARCH_URL,
+                params={"q": query, "format": "jsonv2", "limit": 1},
+                timeout=20,
+                headers=headers,
+            )
+            if response.status_code != 200:
+                continue
+            payload = response.json()
+            if isinstance(payload, list) and payload:
+                first = payload[0]
+                return {
+                    "lat": float(first.get("lat")),
+                    "lon": float(first.get("lon")),
+                    "display_name": _clean_text(first.get("display_name")),
+                }
+        except Exception:
+            continue
+        finally:
+            if index < len(queries) - 1:
+                time.sleep(1.05)
+    return None
+
+
+def _route_distance_to_birgunj_km(lat: float, lon: float) -> float | None:
+    try:
+        response = requests.get(
+            f"{OSRM_ROUTE_URL}/{lon},{lat};{BIRGUNJ_REFERENCE['lon']},{BIRGUNJ_REFERENCE['lat']}",
+            params={"overview": "false"},
+            timeout=20,
+            headers={"User-Agent": "shipment-portal/1.0 (contact: local-app)"},
+        )
+        if response.status_code != 200:
+            return None
+        payload = response.json()
+        routes = payload.get("routes") if isinstance(payload, dict) else None
+        if not isinstance(routes, list) or not routes:
+            return None
+        distance_meters = routes[0].get("distance")
+        if distance_meters is None:
+            return None
+        return round(float(distance_meters) / 1000, 2)
+    except Exception:
+        return None
+
+
+def _resolve_location_distance(location_name: str) -> dict[str, Any]:
+    location_text = _clean_text(location_name)
+    if not location_text:
+        return {"found": False, "distance_km": None, "display_name": ""}
+
+    cache_key = _normalize_location_key(location_text)
+    cache = _load_location_distance_cache()
+    cached = cache.get(cache_key)
+    fallback_coordinates = _fallback_location_coordinates(location_text)
+    if isinstance(cached, dict) and (cached.get("found") or not fallback_coordinates):
+        if fallback_coordinates and cached.get("distance_km") is not None:
+            minimum_distance = round(
+                _haversine_distance_km(
+                    BIRGUNJ_REFERENCE,
+                    {"lat": fallback_coordinates["lat"], "lon": fallback_coordinates["lon"]},
+                ),
+                2,
+            )
+            if float(cached.get("distance_km") or 0) >= minimum_distance:
+                return cached
+        elif not fallback_coordinates:
+            return cached
+
+    geocoded = _geocode_location(location_text) or fallback_coordinates
+    if not geocoded:
+        result = {"found": False, "distance_km": None, "display_name": location_text}
+        cache[cache_key] = result
+        _save_location_distance_cache(cache)
+        return result
+
+    haversine_distance = round(
+        _haversine_distance_km(
+            BIRGUNJ_REFERENCE,
+            {"lat": geocoded["lat"], "lon": geocoded["lon"]},
+        ),
+        2,
+    )
+    route_distance = _route_distance_to_birgunj_km(geocoded["lat"], geocoded["lon"])
+    if route_distance is None:
+        route_distance = haversine_distance
+    else:
+        route_distance = max(round(route_distance, 2), haversine_distance)
+
+    result = {
+        "found": True,
+        "distance_km": route_distance,
+        "display_name": geocoded.get("display_name") or location_text,
+    }
+    cache[cache_key] = result
+    _save_location_distance_cache(cache)
+    return result
+
+
+def _reconcile_customer_directory(db: Session) -> bool:
+    entries = list(
+        db.execute(
+            select(CustomerDirectory).order_by(
+                CustomerDirectory.source_count.desc(),
+                CustomerDirectory.updated_at.desc(),
+            )
+        ).scalars()
+    )
+    touched = False
+    for index, entry in enumerate(entries):
+        if entry is None:
+            continue
+        for candidate in entries[index + 1 :]:
+            if candidate is None:
+                continue
+            if not _is_customer_match(entry.display_name, candidate.display_name):
+                continue
+            winner = entry
+            loser = candidate
+            winner.display_name = _pick_better_display_name(winner.display_name, loser.display_name)
+            merged_aliases = set(_aliases_from_json(winner.aliases_json))
+            merged_aliases.update(_aliases_from_json(loser.aliases_json))
+            merged_aliases.add(winner.display_name)
+            merged_aliases.add(loser.display_name)
+            winner.aliases_json = json.dumps(sorted(alias for alias in merged_aliases if alias), ensure_ascii=True)
+            winner.source_count = (winner.source_count or 0) + (loser.source_count or 0)
+            for shipment in db.execute(
+                select(Shipment).where(Shipment.customer_name == loser.display_name)
+            ).scalars():
+                shipment.customer_name = winner.display_name
+            db.delete(loser)
+            entries[entries.index(candidate)] = None
+            touched = True
+    canonical_names = {
+        entry.display_name
+        for entry in db.execute(select(CustomerDirectory)).scalars()
+    }
+    for shipment in db.execute(select(Shipment)).scalars():
+        canonical_customer = _sync_customer_directory(db, shipment.customer_name)
+        if canonical_customer and shipment.customer_name != canonical_customer:
+            shipment.customer_name = canonical_customer
+            touched = True
+        elif shipment.customer_name and shipment.customer_name not in canonical_names:
+            shipment.customer_name = _format_customer_name(shipment.customer_name)
+            touched = True
+    return touched
+
+def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
+    movement_category = _movement_category(
+        shipment.latest_location,
+        shipment.train_no,
+        shipment.departure,
+        shipment.delay_days,
+    )
+    return {
+        "id": shipment.id,
+        "customer_name": _format_customer_name(shipment.customer_name),
+        "container_number": shipment.container_number,
+        "bl_number": shipment.bl_number,
+        "shipment_status": shipment.shipment_status,
+        "latest_location": shipment.latest_location,
+        "latest_time": shipment.latest_time,
+        "train_no": shipment.train_no,
+        "departure": shipment.departure,
+        "rail_status": shipment.rail_status,
+        "movement_category": _normalize_existing_movement(movement_category),
+        "delay_days": shipment.delay_days,
+        "wagon_no": shipment.wagon_no,
+        "train_origin": shipment.train_origin,
+        "train_destination": shipment.train_destination,
+        "shipping_line": shipment.shipping_line,
+        "tracking_source": shipment.tracking_source,
+        "last_refresh_at": shipment.last_refresh_at,
+        "last_refresh_status": shipment.last_refresh_status,
+        "last_refresh_error": shipment.last_refresh_error,
+        "clearance_doc_number": shipment.clearance_doc_number,
+    }
+
+
+def _ensure_shipment_columns() -> None:
+    inspector = inspect(engine)
+    existing_columns = {column["name"] for column in inspector.get_columns("shipments")}
+    with engine.begin() as connection:
+        for column_name, definition in SHIPMENT_COLUMN_DEFINITIONS.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE shipments ADD COLUMN {column_name} {definition}"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_shipments_status ON shipments (shipment_status)"))
+
+
+def _resolve_default_user_id(db: Session) -> int:
+    user = db.execute(select(User).where(User.email == DEFAULT_LOCAL_USER_EMAIL)).scalar_one_or_none()
+    if user:
+        return user.id
+    user = db.execute(select(User).order_by(User.id.asc())).scalars().first()
+    if user:
+        return user.id
+    fallback_user = User(email=DEFAULT_LOCAL_USER_EMAIL, password_hash=hash_password(settings.demo_password))
+    db.add(fallback_user)
+    db.commit()
+    db.refresh(fallback_user)
+    return fallback_user.id
+
+
+def _apply_legacy_row(db: Session, shipment: Shipment, row: dict[str, Any], default_user_id: int) -> bool:
+    changed = False
+    canonical_customer = _sync_customer_directory(db, _clean_text(row.get("customer_name")))
+    field_updates = {
+        "user_id": shipment.user_id or default_user_id,
+        "customer_name": canonical_customer,
+        "container_number": _clean_container(row.get("container_number")),
+        "bl_number": _clean_bl(row.get("bl_number")),
+        "shipment_status": _clean_text(row.get("shipment_status")).lower() or "active",
+        "latest_location": _clean_text(row.get("latest_location")),
+        "latest_time": _clean_text(row.get("latest_time")),
+        "train_no": _clean_text(row.get("train_no")),
+        "departure": _clean_text(row.get("departure")),
+        "rail_status": _clean_text(row.get("rail_status")),
+        "movement_category": _normalize_existing_movement(_clean_text(row.get("movement_category")) or "Hi Seas"),
+        "delay_days": float(row.get("delay_days") or 0),
+        "wagon_no": _clean_text(row.get("wagon_no")),
+        "train_origin": _clean_text(row.get("train_origin")),
+        "train_destination": _clean_text(row.get("train_destination")),
+        "shipping_line": _clean_text(row.get("shipping_line")),
+        "tracking_source": _clean_text(row.get("tracking_source")),
+        "last_refresh_at": _clean_text(row.get("last_refresh_at")),
+        "last_refresh_status": _clean_text(row.get("last_refresh_status")),
+        "last_refresh_error": _clean_text(row.get("last_refresh_error")),
+        "clearance_doc_number": _clean_text(row.get("clearance_doc_number")),
+    }
+    for field_name, next_value in field_updates.items():
+        if getattr(shipment, field_name) != next_value:
+            setattr(shipment, field_name, next_value)
+            changed = True
+    return changed
+
+
+def _bootstrap_shipments_from_legacy_state(db: Session) -> None:
+    legacy_rows = _load_state().get("shipments", [])
+    default_user_id = _resolve_default_user_id(db)
+    existing_shipments = db.execute(select(Shipment)).scalars().all()
+    shipments_by_key = {
+        (shipment.container_number, _normalize_bl_number(shipment.bl_number), _format_customer_name(shipment.customer_name)): shipment
+        for shipment in existing_shipments
+    }
+    existing_ids = {shipment.id for shipment in existing_shipments}
+    touched = False
+    for row in legacy_rows:
+        container_number = _clean_container(row.get("container_number"))
+        if not container_number:
+            continue
+        canonical_customer = _sync_customer_directory(db, _clean_text(row.get("customer_name")))
+        row_key = (container_number, _normalize_bl_number(row.get("bl_number")), canonical_customer)
+        shipment = shipments_by_key.get(row_key)
+        if shipment is None:
+            shipment = Shipment(user_id=default_user_id, customer_name="", container_number=container_number, bl_number="")
+            row_id = row.get("id")
+            if isinstance(row_id, int) and row_id not in existing_ids:
+                shipment.id = row_id
+                existing_ids.add(row_id)
+            db.add(shipment)
+            shipments_by_key[row_key] = shipment
+            touched = True
+        if _apply_legacy_row(db, shipment, row, default_user_id):
+            touched = True
+    if _reconcile_customer_directory(db):
+        touched = True
+    if touched:
+        db.commit()
+
+
+def _ensure_storage_ready(db: Session) -> None:
+    global _storage_ready
+    if _storage_ready:
+        return
+    _ensure_shipment_columns()
+    _bootstrap_shipments_from_legacy_state(db)
+    _storage_ready = True
+
+
+def _adopt_demo_shipments_for_user(db: Session, current_user: User) -> None:
+    if not settings.enable_demo_shipment_adoption:
+        return
+    if current_user.email == DEFAULT_LOCAL_USER_EMAIL:
+        return
+    user_has_shipments = db.execute(
+        select(func.count()).select_from(Shipment).where(Shipment.user_id == current_user.id)
+    ).scalar_one()
+    if user_has_shipments:
+        return
+    demo_user = db.execute(select(User).where(User.email == DEFAULT_LOCAL_USER_EMAIL)).scalar_one_or_none()
+    if not demo_user or demo_user.id == current_user.id:
+        return
+    other_owner_count = db.execute(
+        select(func.count())
+        .select_from(Shipment)
+        .where(Shipment.user_id.not_in([demo_user.id, current_user.id]))
+    ).scalar_one()
+    if other_owner_count:
+        return
+    demo_shipments = list(db.execute(select(Shipment).where(Shipment.user_id == demo_user.id)).scalars())
+    if not demo_shipments:
+        return
+    for shipment in demo_shipments:
+        shipment.user_id = current_user.id
+    db.commit()
+
+
+def _ensure_user_scope_ready(db: Session, current_user: User) -> None:
+    _ensure_storage_ready(db)
+    _adopt_demo_shipments_for_user(db, current_user)
+
+
+def _user_shipment_select(current_user: User):
+    return select(Shipment).where(Shipment.user_id == current_user.id)
+
+
+def _user_from_access_token(db: Session, access_token: str) -> User:
+    token = _clean_text(access_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def get_portal_user(
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> User:
+    auth_text = _clean_text(authorization)
+    if auth_text.lower().startswith("bearer "):
+        return _user_from_access_token(db, auth_text.split(" ", 1)[1])
+    if not settings.allow_demo_portal_fallback:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    default_user_id = _resolve_default_user_id(db)
+    fallback_user = db.get(User, default_user_id)
+    if not fallback_user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return fallback_user
+
+
+def _refresh_one_shipment(shipment: Shipment, use_cache: bool = True) -> Shipment:
+    container_number = _clean_container(shipment.container_number)
+    if not container_number:
+        shipment.last_refresh_status = "error"
+        shipment.last_refresh_error = "Missing container number"
+        shipment.last_refresh_at = _now_datetime()
+        return shipment
+    if use_cache:
+        cached_data = _get_cached_data(container_number)
+        if cached_data:
+            for key, value in cached_data.items():
+                setattr(shipment, key, value or "")
+            shipment.movement_category = _normalize_existing_movement(shipment.movement_category)
+            shipment.last_refresh_at = _now_datetime()
+            shipment.last_refresh_status = "success-cached"
+            shipment.last_refresh_error = ""
+            return shipment
+    ldb_data = _fetch_ldb(container_number)
+    concor_data = _fetch_concor(container_number)
+    latest_location = ldb_data.get("latest_location", "") if ldb_data else ""
+    latest_time = ldb_data.get("latest_time", "") if ldb_data else ""
+    rail_status = ldb_data.get("rail_status", "") if ldb_data else ""
+    delay_days = float(ldb_data.get("delay_days", 0)) if ldb_data else 0
+    train_no = concor_data.get("train_no", "") if concor_data else ""
+    departure = concor_data.get("departure", "") if concor_data else ""
+    wagon_no = concor_data.get("wagon_no", "") if concor_data else ""
+    train_origin = concor_data.get("train_origin", "") if concor_data else ""
+    train_destination = concor_data.get("train_destination", "") if concor_data else ""
+    shipping_line = concor_data.get("shipping_line", "") if concor_data else ""
+    if not latest_location and concor_data and concor_data.get("last_reported_station"):
+        latest_location = concor_data["last_reported_station"]
+    movement_category = _movement_category(latest_location, train_no, departure, delay_days)
+    shipment.latest_location = latest_location
+    shipment.latest_time = latest_time
+    shipment.train_no = train_no
+    shipment.departure = departure
+    shipment.rail_status = rail_status
+    shipment.movement_category = movement_category
+    shipment.delay_days = delay_days
+    shipment.wagon_no = wagon_no
+    shipment.train_origin = train_origin
+    shipment.train_destination = train_destination
+    shipment.shipping_line = shipping_line
+    shipment.tracking_source = "+".join(source for source, data in (("ldb", ldb_data), ("concor", concor_data)) if data)
+    shipment.last_refresh_at = _now_datetime()
+    if ldb_data or concor_data:
+        shipment.last_refresh_status = "success"
+        shipment.last_refresh_error = "" if train_no or not concor_data else "CONCOR returned but no train number"
+        _save_to_cache(container_number, {"latest_location": latest_location, "latest_time": latest_time, "train_no": train_no, "departure": departure, "rail_status": rail_status, "movement_category": movement_category, "delay_days": delay_days, "wagon_no": wagon_no, "train_origin": train_origin, "train_destination": train_destination, "shipping_line": shipping_line})
+    else:
+        shipment.last_refresh_status = "no_data"
+        shipment.last_refresh_error = "No data from any API"
+    return shipment
+
+
+def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
+    return list(
+        db.execute(_user_shipment_select(current_user).order_by(Shipment.updated_at.desc(), Shipment.id.desc())).scalars()
+    )
+
+
+def _first_non_empty(values: list[str]) -> str:
+    for value in values:
+        text_value = _clean_text(value)
+        if text_value:
+            return text_value
+    return ""
+
+
+def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for shipment in shipments:
+        row = _shipment_to_dict(shipment)
+        normalized_bl = _normalize_bl_number(row.get("bl_number"))
+        group_key = f"BL:{normalized_bl}" if normalized_bl else f"SHIP:{row['id']}"
+        grouped.setdefault(group_key, []).append(row)
+
+    rows: list[dict[str, Any]] = []
+    for group_key, entries in grouped.items():
+        sorted_entries = sorted(
+            entries,
+            key=lambda item: (
+                MOVEMENT_PRIORITY.get(item.get("movement_category") or "Hi Seas", 0),
+                bool(_clean_text(item.get("train_no"))),
+                _date_sort_value(item.get("latest_time", "")),
+                item.get("id", 0),
+            ),
+            reverse=True,
+        )
+        lead = sorted_entries[0]
+        bl_number = _first_non_empty([item.get("bl_number", "") for item in sorted_entries])
+        container_numbers = sorted({item.get("container_number", "") for item in sorted_entries if item.get("container_number")})
+        shipment_status = max(
+            (item.get("shipment_status") or "archived" for item in sorted_entries),
+            key=lambda status: SHIPMENT_STATUS_PRIORITY.get(status, 0),
+        )
+        documents = _documents_for_bl(bl_number)
+        rows.append(
+            {
+                "group_key": group_key,
+                "id": lead.get("id"),
+                "customer_name": _first_non_empty([item.get("customer_name", "") for item in sorted_entries]),
+                "primary_container_number": lead.get("container_number", ""),
+                "container_number": lead.get("container_number", ""),
+                "container_numbers": container_numbers,
+                "container_count": len(container_numbers),
+                "bl_number": bl_number,
+                "shipment_status": shipment_status,
+                "movement_category": lead.get("movement_category") or "Hi Seas",
+                "latest_location": _first_non_empty([item.get("latest_location", "") for item in sorted_entries]),
+                "latest_time": _first_non_empty([item.get("latest_time", "") for item in sorted_entries]),
+                "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
+                "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
+                "documents": documents,
+                "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            SHIPMENT_STATUS_PRIORITY.get(item.get("shipment_status") or "archived", 0),
+            MOVEMENT_PRIORITY.get(item.get("movement_category") or "Hi Seas", 0),
+            _date_sort_value(item.get("latest_time", "")),
+            item.get("customer_name", ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _format_customer_count_items(counter: dict[str, int]) -> list[dict[str, Any]]:
+    return [
+        {"customer_name": name, "container_count": count}
+        for name, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
+    active_shipments = [shipment for shipment in shipments if shipment.shipment_status != "archived"]
+    containers: dict[str, Shipment] = {}
+    container_customers: dict[str, set[str]] = {}
+    for shipment in active_shipments:
+        container_number = _clean_container(shipment.container_number)
+        if not container_number:
+            continue
+        container_customers.setdefault(container_number, set()).add(_format_customer_name(shipment.customer_name))
+        if container_number in containers:
+            continue
+        containers[container_number] = shipment
+
+    today_text = datetime.now().strftime("%d-%m-%Y")
+    rolling_week_cutoff = (datetime.now() - timedelta(days=7)).date()
+    total_at_icd_birgunj = 0
+    today_arrivals = 0
+    approaching_birgunj = 0
+    railed_out_this_week = 0
+    today_arrival_customers: dict[str, int] = {}
+    approaching_birgunj_customers: dict[str, int] = {}
+    railed_out_this_week_customers: dict[str, int] = {}
+
+    for container_number, shipment in containers.items():
+        movement_category = _movement_category(
+            shipment.latest_location,
+            shipment.train_no,
+            shipment.departure,
+            shipment.delay_days,
+        )
+        arrived = movement_category == "Arrived Birgunj"
+        if arrived:
+            total_at_icd_birgunj += 1
+            if _format_to_dd_mm_yyyy(shipment.latest_time) == today_text:
+                today_arrivals += 1
+                for customer_name in container_customers.get(container_number, set()):
+                    today_arrival_customers[customer_name] = today_arrival_customers.get(customer_name, 0) + 1
+            continue
+
+        location_text = _clean_text(shipment.latest_location)
+        if not location_text:
+            continue
+        distance_info = _resolve_location_distance(location_text)
+        distance_km = distance_info.get("distance_km")
+        if distance_info.get("found") and isinstance(distance_km, (int, float)) and float(distance_km) < 40:
+            approaching_birgunj += 1
+            for customer_name in container_customers.get(container_number, set()):
+                approaching_birgunj_customers[customer_name] = approaching_birgunj_customers.get(customer_name, 0) + 1
+
+        departure_date = _parse_date(shipment.departure)
+        if departure_date and departure_date.date() >= rolling_week_cutoff:
+            railed_out_this_week += 1
+            for customer_name in container_customers.get(container_number, set()):
+                railed_out_this_week_customers[customer_name] = railed_out_this_week_customers.get(customer_name, 0) + 1
+
+    return {
+        "total_at_icd_birgunj": total_at_icd_birgunj,
+        "today_arrivals": today_arrivals,
+        "approaching_birgunj": approaching_birgunj,
+        "railed_out_this_week": railed_out_this_week,
+        "today_arrival_customers": _format_customer_count_items(today_arrival_customers),
+        "approaching_birgunj_customers": _format_customer_count_items(approaching_birgunj_customers),
+        "railed_out_this_week_customers": _format_customer_count_items(railed_out_this_week_customers),
+    }
+
+
+@router.get("")
+def list_shipments(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    return [_shipment_to_dict(shipment) for shipment in _get_shipments(db, current_user)]
+
+
+@router.get("/dashboard")
+def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    shipments = _get_shipments(db, current_user)
+    return {
+        "rows": _group_dashboard_rows(shipments),
+        "identifiers": _dashboard_identifiers(shipments),
+    }
+
+
+@router.get("/customers")
+def customer_suggestions(q: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    query = _clean_text(q).upper()
+    items = sorted({_format_customer_name(shipment.customer_name) for shipment in _get_shipments(db, current_user) if shipment.customer_name})
+    if query:
+        items = [item for item in items if query in item.upper()]
+    return {"items": items[:12]}
+
+
+@router.post("/location-distances")
+def location_distances(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    locations = payload.get("locations") or []
+    if not isinstance(locations, list):
+        raise HTTPException(status_code=400, detail="locations must be a list")
+    results: dict[str, Any] = {}
+    for location in locations:
+        location_text = _clean_text(location)
+        if not location_text:
+            continue
+        results[location_text] = _resolve_location_distance(location_text)
+    return {"items": results}
+
+
+@router.post("/add")
+def add_shipment(payload: ShipmentCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    container_number = _clean_container(payload.container_number)
+    if not container_number:
+        raise HTTPException(status_code=400, detail="Container required")
+    canonical_customer = _sync_customer_directory(db, payload.customer_name)
+    normalized_bl = _normalize_bl_number(payload.bl_number)
+    existing = db.execute(
+        select(Shipment).where(
+            Shipment.user_id == current_user.id,
+            Shipment.container_number == container_number,
+            Shipment.shipment_status != "archived",
+            Shipment.bl_number == normalized_bl,
+            Shipment.customer_name == canonical_customer,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Duplicate shipment")
+    shipment = Shipment(
+        user_id=current_user.id,
+        customer_name=canonical_customer,
+        container_number=container_number,
+        bl_number=normalized_bl,
+        shipment_status="active",
+        movement_category="Hi Seas",
+    )
+    db.add(shipment)
+    db.commit()
+    db.refresh(shipment)
+    return _shipment_to_dict(shipment)
+
+
+@router.patch("/{shipment_id}/status")
+def update_status(shipment_id: int, payload: ShipmentStatusUpdateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    next_status = _clean_text(payload.shipment_status).lower()
+    if next_status not in {"active", "completed", "archived"}:
+        raise HTTPException(status_code=400, detail="Invalid shipment status")
+    shipment = db.get(Shipment, shipment_id)
+    if not shipment or shipment.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    shipment.shipment_status = next_status
+    db.commit()
+    db.refresh(shipment)
+    return _shipment_to_dict(shipment)
+
+
+@router.patch("/actions/group/status")
+def update_group_status(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    next_status = _clean_text(payload.get("shipment_status")).lower()
+    if next_status not in {"active", "completed", "archived"}:
+        raise HTTPException(status_code=400, detail="Invalid shipment status")
+    clearance_doc_number = _clean_text(payload.get("clearance_doc_number"))
+    if next_status == "completed" and not clearance_doc_number:
+        raise HTTPException(status_code=400, detail="clearance_doc_number is required to complete a shipment")
+    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
+    shipments: list[Shipment] = []
+    if normalized_bl:
+        shipments = [
+            shipment
+            for shipment in db.execute(
+                _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
+            ).scalars()
+            if _normalize_bl_number(shipment.bl_number) == normalized_bl
+        ]
+    if not shipments:
+        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
+        shipments = (
+            list(
+                db.execute(
+                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
+                ).scalars()
+            )
+            if container_numbers
+            else []
+        )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+    for shipment in shipments:
+        shipment.shipment_status = next_status
+        if next_status == "completed":
+            shipment.clearance_doc_number = clearance_doc_number
+    db.commit()
+    return {"updated": True, "count": len(shipments), "shipment_status": next_status, "clearance_doc_number": clearance_doc_number}
+
+
+@router.delete("/{shipment_id}")
+def delete_shipment(shipment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    shipment = db.get(Shipment, shipment_id)
+    if not shipment or shipment.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(shipment)
+    db.commit()
+    return {"deleted": True}
+
+
+@router.delete("/group")
+def delete_shipment_group(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
+    shipments: list[Shipment] = []
+    if normalized_bl:
+        shipments = [
+            shipment
+            for shipment in db.execute(_user_shipment_select(current_user)).scalars()
+            if _normalize_bl_number(shipment.bl_number) == normalized_bl
+        ]
+    if not shipments:
+        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
+        shipments = (
+            list(
+                db.execute(
+                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
+                ).scalars()
+            )
+            if container_numbers
+            else []
+        )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+    deleted_count = len(shipments)
+    for shipment in shipments:
+        db.delete(shipment)
+    db.commit()
+    return {"deleted": True, "count": deleted_count}
+
+
+@router.post("/group/delete")
+def delete_shipment_group_post(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    return delete_shipment_group(payload, db, current_user)
+
+@router.post("/import-preview")
+async def import_preview(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    filename = file.filename or ""
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".xlsx", ".xlsm"}:
+        raise HTTPException(status_code=400, detail="Only .xlsx and .xlsm files are supported")
+    token = f"{uuid4().hex}{suffix}"
+    file_path = TEMP_IMPORT_DIR / token
+    file_path.write_bytes(await file.read())
+    sheet_name, header_row, headers, preview_rows, _rows = _read_sheet(file_path)
+    return {"temp_file_token": token, "sheet_name": sheet_name, "header_row": header_row, "available_columns": headers, "preview_rows": preview_rows}
+
+
+@router.post("/import-confirm")
+async def import_confirm(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    token = _clean_text(payload.get("temp_file_token"))
+    mapping_json = payload.get("mapping_json") or {}
+    if not token:
+        raise HTTPException(status_code=400, detail="temp_file_token is required")
+    file_path = TEMP_IMPORT_DIR / token
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Temporary import file not found")
+    customer_col = _clean_text(mapping_json.get("customer_name"))
+    container_col = _clean_text(mapping_json.get("container_number"))
+    bl_col = _clean_text(mapping_json.get("bl_number"))
+    if not container_col:
+        raise HTTPException(status_code=400, detail="Container Number mapping is required")
+    _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
+    header_index = header_row - 1
+    existing_keys = {
+        (
+            shipment.container_number,
+            _normalize_bl_number(shipment.bl_number),
+            _format_customer_name(shipment.customer_name),
+        )
+        for shipment in db.execute(
+            _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
+        ).scalars()
+    }
+    imported_count = 0
+    duplicate_count = 0
+    skipped_blank_count = 0
+    user_id = current_user.id
+    for raw_row in rows[header_index + 1 :]:
+        values = list(raw_row)
+        row_obj: dict[str, Any] = {}
+        for index, header in enumerate(headers):
+            row_obj[header] = _clean_text(values[index] if index < len(values) else "")
+        if not any(str(value).strip() for value in row_obj.values()):
+            continue
+        container_number = _clean_container(row_obj.get(container_col))
+        if not container_number:
+            skipped_blank_count += 1
+            continue
+        canonical_customer = _sync_customer_directory(db, row_obj.get(customer_col))
+        bl_number = _normalize_bl_number(row_obj.get(bl_col))
+        shipment_key = (container_number, bl_number, canonical_customer)
+        if shipment_key in existing_keys:
+            duplicate_count += 1
+            continue
+        shipment = Shipment(
+            user_id=user_id,
+            customer_name=canonical_customer,
+            container_number=container_number,
+            bl_number=bl_number,
+            shipment_status="active",
+            movement_category="Hi Seas",
+        )
+        db.add(shipment)
+        existing_keys.add(shipment_key)
+        imported_count += 1
+    db.commit()
+    try:
+        file_path.unlink()
+    except Exception:
+        pass
+    return {"imported_count": imported_count, "duplicate_count": duplicate_count, "skipped_blank_count": skipped_blank_count, "total_rows": imported_count + duplicate_count + skipped_blank_count}
+
+
+@router.post("/refresh-one")
+def refresh_one(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    container_number = _clean_container(payload.get("container_number"))
+    if not container_number:
+        raise HTTPException(status_code=400, detail="container_number is required")
+    shipments = list(
+        db.execute(_user_shipment_select(current_user).where(Shipment.container_number == container_number)).scalars()
+    )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment not found")
+    primary = shipments[0]
+    _refresh_one_shipment(primary, use_cache=False)
+    for shipment in shipments[1:]:
+        shipment.latest_location = primary.latest_location
+        shipment.latest_time = primary.latest_time
+        shipment.train_no = primary.train_no
+        shipment.departure = primary.departure
+        shipment.rail_status = primary.rail_status
+        shipment.movement_category = primary.movement_category
+        shipment.delay_days = primary.delay_days
+        shipment.wagon_no = primary.wagon_no
+        shipment.train_origin = primary.train_origin
+        shipment.train_destination = primary.train_destination
+        shipment.shipping_line = primary.shipping_line
+        shipment.tracking_source = primary.tracking_source
+        shipment.last_refresh_at = primary.last_refresh_at
+        shipment.last_refresh_status = primary.last_refresh_status
+        shipment.last_refresh_error = primary.last_refresh_error
+    db.commit()
+    db.refresh(primary)
+    return _shipment_to_dict(primary)
+
+
+@router.post("/refresh-group")
+def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
+    shipments: list[Shipment] = []
+    if normalized_bl:
+        shipments = [
+            shipment
+            for shipment in db.execute(
+                _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
+            ).scalars()
+            if _normalize_bl_number(shipment.bl_number) == normalized_bl
+        ]
+    if not shipments:
+        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
+        shipments = (
+            list(
+                db.execute(
+                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
+                ).scalars()
+            )
+            if container_numbers
+            else []
+        )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+    refreshed_containers: set[str] = set()
+    for shipment in shipments:
+        if shipment.container_number in refreshed_containers:
+            continue
+        refresh_one({"container_number": shipment.container_number}, db, current_user)
+        refreshed_containers.add(shipment.container_number)
+    return {"refreshed_count": len(refreshed_containers)}
+
+
+@router.post("/refresh-all")
+def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    shipments = list(db.execute(_user_shipment_select(current_user).where(Shipment.shipment_status == "active")).scalars())
+    refreshed_containers: set[str] = set()
+    for shipment in shipments:
+        if shipment.container_number in refreshed_containers:
+            continue
+        refresh_one({"container_number": shipment.container_number}, db, current_user)
+        refreshed_containers.add(shipment.container_number)
+    return {"refreshed_count": len(refreshed_containers), "message": f"Refreshed {len(refreshed_containers)} active containers"}
+
+
+@router.post("/bl-documents/upload")
+async def upload_bl_document(
+    bl_number: str = Form(...),
+    document_type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    normalized_bl = _normalize_bl_number(bl_number)
+    allowed = db.execute(
+        _user_shipment_select(current_user).where(Shipment.bl_number == normalized_bl)
+    ).scalars().first()
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Shipment BL not found")
+    metadata = _save_document(bl_number, document_type, file)
+    return {"saved": True, "document": metadata}
+
+
+@router.get("/bl-documents/file")
+def get_bl_document_file(
+    bl_number: str,
+    document_type: str,
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+    access_token: str | None = None,
+):
+    _ensure_storage_ready(db)
+    if access_token:
+        current_user = _user_from_access_token(db, access_token)
+    else:
+        auth_text = _clean_text(authorization)
+        if auth_text.lower().startswith("bearer "):
+            current_user = _user_from_access_token(db, auth_text.split(" ", 1)[1])
+        elif settings.allow_demo_portal_fallback:
+            current_user = db.get(User, _resolve_default_user_id(db))
+        else:
+            raise HTTPException(status_code=401, detail="Missing authentication token")
+    if not current_user:
+        raise HTTPException(status_code=401, detail="User not found")
+    _ensure_user_scope_ready(db, current_user)
+    normalized_bl = _normalize_bl_number(bl_number)
+    normalized_type = _clean_text(document_type).lower()
+    if not normalized_bl or normalized_type not in VALID_DOCUMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid document request")
+    allowed = db.execute(
+        _user_shipment_select(current_user).where(Shipment.bl_number == normalized_bl)
+    ).scalars().first()
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Document not found")
+    metadata = (_load_documents_index().get(normalized_bl) or {}).get(normalized_type)
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=404, detail="Document not found")
+    target_path = Path(metadata.get("path") or "")
+    if not target_path.exists() or not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Stored document file not found")
+    return FileResponse(
+        path=target_path,
+        media_type=metadata.get("content_type") or "application/octet-stream",
+        filename=metadata.get("original_name") or target_path.name,
+    )
+
+
+@router.get("/bl-documents/open")
+def open_bl_document_file(
+    bl_number: str,
+    document_type: str,
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+    access_token: str | None = None,
+):
+    return get_bl_document_file(bl_number, document_type, db, authorization, access_token)
+
+
+@router.get("/cache/clear")
+def clear_cache():
+    if CACHE_FILE.exists():
+        CACHE_FILE.unlink()
+    return {"message": "Cache cleared successfully"}
+
+
+@router.get("/cache/stats")
+def cache_stats():
+    if CACHE_FILE.exists():
+        try:
+            cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            return {"cache_size": len(cache), "cached_containers": list(cache.keys()), "cache_duration_minutes": CACHE_DURATION_MINUTES, "cache_file": str(CACHE_FILE)}
+        except Exception:
+            pass
+    return {"cache_size": 0, "cached_containers": [], "cache_duration_minutes": CACHE_DURATION_MINUTES}
+
+
+@router.get("/test-container/{container_number}")
+def test_container(container_number: str):
+    container_number = _clean_container(container_number)
+    ldb_result = _fetch_ldb(container_number)
+    concor_result = _fetch_concor(container_number)
+    return {"container": container_number, "ldb_api": {"success": ldb_result is not None, "data": ldb_result}, "concor_api": {"success": concor_result is not None, "data": concor_result}, "train_number_found": concor_result.get("train_no") if concor_result else None, "both_success": ldb_result is not None and concor_result is not None}
+
+
+@router.get("/debug/concor-raw/{container_number}")
+def debug_concor_raw(container_number: str):
+    container_number = _clean_container(container_number)
+    try:
+        response = requests.post(CONCOR_API_URL, json={"containerNo": [container_number]}, timeout=20, headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0", "Origin": "https://www.concorindia.co.in", "Referer": "https://www.concorindia.co.in/track-n-trace?lang=en"})
+        return {"container": container_number, "status_code": response.status_code, "response_text": response.text[:2000] if response.text else "Empty", "response_json": response.json() if response.status_code == 200 else None}
+    except Exception as error:
+        return {"container": container_number, "error": str(error)}
+
+
+@router.get("/system/status")
+def system_status(db: Session = Depends(get_db)):
+    _ensure_storage_ready(db)
+    total_shipments = db.execute(select(func.count()).select_from(Shipment)).scalar_one()
+    active_shipments = db.execute(select(func.count()).select_from(Shipment).where(Shipment.shipment_status == "active")).scalar_one()
+    customer_directory_count = db.execute(select(func.count()).select_from(CustomerDirectory)).scalar_one()
+    return {"status": "running", "total_shipments": total_shipments, "active_shipments": active_shipments, "customer_directory_count": customer_directory_count, "apis_configured": {"ldb": LDB_API_URL, "concor": CONCOR_API_URL}, "cache_enabled": True, "cache_duration_minutes": CACHE_DURATION_MINUTES}
+
+
+@router.get("/stats")
+def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    shipments = [_shipment_to_dict(shipment) for shipment in _get_shipments(db, current_user)]
+    grouped_rows = _group_dashboard_rows(_get_shipments(db, current_user))
+    movement_counts: dict[str, int] = {}
+    refresh_status_counts: dict[str, int] = {}
+    for shipment in grouped_rows:
+        movement = shipment.get("movement_category") or "Unknown"
+        movement_counts[movement] = movement_counts.get(movement, 0) + 1
+    for shipment in shipments:
+        refresh_status = shipment.get("last_refresh_status") or "not_refreshed"
+        refresh_status_counts[refresh_status] = refresh_status_counts.get(refresh_status, 0) + 1
+    active_shipments = [shipment for shipment in shipments if shipment.get("shipment_status") == "active"]
+    return {
+        "total_shipments": len(shipments),
+        "active_shipments": len(active_shipments),
+        "completed_shipments": len([s for s in shipments if s.get("shipment_status") == "completed"]),
+        "archived_shipments": len([s for s in shipments if s.get("shipment_status") == "archived"]),
+        "grouped_dashboard_rows": len(grouped_rows),
+        "shipments_with_train_number": len([s for s in shipments if s.get("train_no")]),
+        "shipments_with_location": len([s for s in shipments if s.get("latest_location")]),
+        "movement_breakdown": movement_counts,
+        "refresh_status_breakdown": refresh_status_counts,
+        "last_refresh_times": [{"container_number": shipment.get("container_number", ""), "last_refresh_at": shipment.get("last_refresh_at", ""), "last_refresh_status": shipment.get("last_refresh_status", ""), "last_refresh_error": shipment.get("last_refresh_error", "")} for shipment in active_shipments],
+    }
