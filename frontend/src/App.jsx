@@ -908,31 +908,35 @@ function App() {
           ...extra,
         });
         setDashboardRows((current) =>
-          current.map((item) =>
-            item.group_key === row.group_key
-              ? {
-                  ...item,
-                  shipment_status: shipmentStatus,
-                  clearance_doc_number: extra.clearance_doc_number || item.clearance_doc_number || "",
-                }
-              : item
-          )
-        );
-        setShipments((current) =>
-          current.map((shipment) =>
-            rowMatchesShipment(row, shipment)
-              ? {
-                  ...shipment,
-                  shipment_status: shipmentStatus,
-                  clearance_doc_number: extra.clearance_doc_number || shipment.clearance_doc_number || "",
-                }
-              : shipment
-          )
-        );
-        setFeedback({
-          tone: "success",
-          text: `${data.count ?? 0} shipment record(s) marked ${shipmentStatus}.`,
-        });
+            current.map((item) =>
+              item.group_key === row.group_key
+                ? {
+                    ...item,
+                    shipment_status: shipmentStatus,
+                    clearance_doc_number: extra.clearance_doc_number || item.clearance_doc_number || "",
+                  }
+                : item
+            )
+          );
+          if (shipmentStatus === "archived") {
+            setDashboardRows((current) => current.filter((item) => item.group_key !== row.group_key));
+          }
+          setShipments((current) =>
+            current
+              .map((shipment) =>
+                rowMatchesShipment(row, shipment)
+                  ? {
+                      ...shipment,
+                      shipment_status: shipmentStatus,
+                      clearance_doc_number: extra.clearance_doc_number || shipment.clearance_doc_number || "",
+                    }
+                  : shipment
+              )
+          );
+          setFeedback({
+            tone: "success",
+            text: `${data.count ?? 0} shipment record(s) marked ${shipmentStatus}.`,
+          });
         await loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Status update failed" });

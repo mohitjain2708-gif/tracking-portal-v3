@@ -1208,6 +1208,47 @@ def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
     )
 
 
+def _resolve_group_shipments(
+    db: Session,
+    current_user: User,
+    bl_number: Any = None,
+    container_numbers: list[Any] | None = None,
+    include_archived: bool = False,
+) -> list[Shipment]:
+    normalized_bl = _normalize_bl_number(bl_number)
+    base_query = _user_shipment_select(current_user)
+    if not include_archived:
+        base_query = base_query.where(Shipment.shipment_status != "archived")
+
+    if normalized_bl:
+        return [
+            shipment
+            for shipment in db.execute(base_query).scalars()
+            if _normalize_bl_number(shipment.bl_number) == normalized_bl
+        ]
+
+    cleaned_containers = [
+        _clean_container(value)
+        for value in (container_numbers or [])
+        if _clean_container(value)
+    ]
+    if not cleaned_containers:
+        return []
+
+    matched_shipments = list(
+        db.execute(base_query.where(Shipment.container_number.in_(cleaned_containers))).scalars()
+    )
+    derived_bl = _first_non_empty([shipment.bl_number for shipment in matched_shipments])
+    normalized_derived_bl = _normalize_bl_number(derived_bl)
+    if normalized_derived_bl:
+        return [
+            shipment
+            for shipment in db.execute(base_query).scalars()
+            if _normalize_bl_number(shipment.bl_number) == normalized_derived_bl
+        ]
+    return matched_shipments
+
+
 def _first_non_empty(values: list[str]) -> str:
     for value in values:
         text_value = _clean_text(value)
@@ -1219,6 +1260,8 @@ def _first_non_empty(values: list[str]) -> str:
 def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for shipment in shipments:
+        if shipment.shipment_status == "archived":
+            continue
         row = _shipment_to_dict(shipment)
         normalized_bl = _normalize_bl_number(row.get("bl_number"))
         group_key = f"BL:{normalized_bl}" if normalized_bl else f"SHIP:{row['id']}"
@@ -1260,6 +1303,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "latest_time": _first_non_empty([item.get("latest_time", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
+                "clearance_doc_number": _first_non_empty([item.get("clearance_doc_number", "") for item in sorted_entries]),
                 "documents": documents,
                 "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),
             }
@@ -1448,35 +1492,29 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
     clearance_doc_number = _clean_text(payload.get("clearance_doc_number"))
     if next_status == "completed" and not clearance_doc_number:
         raise HTTPException(status_code=400, detail="clearance_doc_number is required to complete a shipment")
-    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
-    shipments: list[Shipment] = []
-    if normalized_bl:
-        shipments = [
-            shipment
-            for shipment in db.execute(
-                _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
-            ).scalars()
-            if _normalize_bl_number(shipment.bl_number) == normalized_bl
-        ]
-    if not shipments:
-        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
-        shipments = (
-            list(
-                db.execute(
-                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
-                ).scalars()
-            )
-            if container_numbers
-            else []
-        )
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.get("bl_number"),
+        container_numbers=payload.get("container_numbers") or [],
+        include_archived=False,
+    )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
+    if next_status == "archived":
+        existing_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments])
+        if not existing_doc_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the BL with a clearance document number before archiving.",
+            )
     for shipment in shipments:
         shipment.shipment_status = next_status
         if next_status == "completed":
             shipment.clearance_doc_number = clearance_doc_number
+    effective_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments]) or clearance_doc_number
     db.commit()
-    return {"updated": True, "count": len(shipments), "shipment_status": next_status, "clearance_doc_number": clearance_doc_number}
+    return {"updated": True, "count": len(shipments), "shipment_status": next_status, "clearance_doc_number": effective_doc_number}
 
 
 @router.delete("/{shipment_id}")
@@ -1493,25 +1531,13 @@ def delete_shipment(shipment_id: int, db: Session = Depends(get_db), current_use
 @router.delete("/group")
 def delete_shipment_group(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
-    shipments: list[Shipment] = []
-    if normalized_bl:
-        shipments = [
-            shipment
-            for shipment in db.execute(_user_shipment_select(current_user)).scalars()
-            if _normalize_bl_number(shipment.bl_number) == normalized_bl
-        ]
-    if not shipments:
-        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
-        shipments = (
-            list(
-                db.execute(
-                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
-                ).scalars()
-            )
-            if container_numbers
-            else []
-        )
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.get("bl_number"),
+        container_numbers=payload.get("container_numbers") or [],
+        include_archived=True,
+    )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
     deleted_count = len(shipments)
@@ -1643,27 +1669,13 @@ def refresh_one(payload: dict, db: Session = Depends(get_db), current_user: User
 @router.post("/refresh-group")
 def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    normalized_bl = _normalize_bl_number(payload.get("bl_number"))
-    shipments: list[Shipment] = []
-    if normalized_bl:
-        shipments = [
-            shipment
-            for shipment in db.execute(
-                _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
-            ).scalars()
-            if _normalize_bl_number(shipment.bl_number) == normalized_bl
-        ]
-    if not shipments:
-        container_numbers = [_clean_container(value) for value in payload.get("container_numbers") or [] if _clean_container(value)]
-        shipments = (
-            list(
-                db.execute(
-                    _user_shipment_select(current_user).where(Shipment.container_number.in_(container_numbers))
-                ).scalars()
-            )
-            if container_numbers
-            else []
-        )
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.get("bl_number"),
+        container_numbers=payload.get("container_numbers") or [],
+        include_archived=False,
+    )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
     unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
