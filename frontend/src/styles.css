@@ -387,6 +387,12 @@ select:focus {
   color: var(--danger);
 }
 
+.banner-info {
+  border-color: rgba(19, 58, 99, 0.18);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

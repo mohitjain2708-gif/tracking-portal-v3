@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -47,6 +48,8 @@ BL_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 LDB_API_URL = "https://www.ldb.co.in/api/ldb/container/search"
 CONCOR_API_URL = "https://www.concorindia.co.in/api/multipalContainer"
 CACHE_DURATION_MINUTES = 30
+TRACKING_SOURCE_TIMEOUT_SECONDS = 10
+TRACKING_POOL_WORKERS = 6
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving"
 BIRGUNJ_REFERENCE = {"lat": 27.0104, "lon": 84.8774}
@@ -401,7 +404,7 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
     try:
         response = requests.get(
             f"{LDB_API_URL}?cntrNo={quote(container_number)}&searchType=39",
-            timeout=20,
+            timeout=(4, TRACKING_SOURCE_TIMEOUT_SECONDS),
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json, text/plain, */*", "Referer": f"https://www.ldb.co.in/ldb/containersearch/39/{container_number}"},
         )
         if response.status_code != 200 or not response.text:
@@ -432,7 +435,7 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
         response = requests.post(
             CONCOR_API_URL,
             json={"containerNo": [container_number]},
-            timeout=20,
+            timeout=(4, TRACKING_SOURCE_TIMEOUT_SECONDS),
             headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Origin": "https://www.concorindia.co.in", "Referer": "https://www.concorindia.co.in/track-n-trace?lang=en"},
         )
         if response.status_code != 200:
@@ -1094,6 +1097,101 @@ def get_portal_user(
     return fallback_user
 
 
+def _build_tracking_payload(container_number: str, use_cache: bool = True) -> dict[str, Any]:
+    container_number = _clean_container(container_number)
+    if not container_number:
+        return {
+            "data": {},
+            "status": "error",
+            "error": "Missing container number",
+            "cached": False,
+            "has_data": False,
+        }
+    if use_cache:
+        cached_data = _get_cached_data(container_number)
+        if cached_data:
+            return {
+                "data": cached_data,
+                "status": "success-cached",
+                "error": "",
+                "cached": True,
+                "has_data": True,
+            }
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_ldb = executor.submit(_fetch_ldb, container_number)
+        future_concor = executor.submit(_fetch_concor, container_number)
+        ldb_data = future_ldb.result() or {}
+        concor_data = future_concor.result() or {}
+
+    latest_location = ldb_data.get("latest_location", "")
+    latest_time = ldb_data.get("latest_time", "")
+    rail_status = ldb_data.get("rail_status", "")
+    delay_days = float(ldb_data.get("delay_days", 0) or 0)
+    train_no = concor_data.get("train_no", "")
+    departure = concor_data.get("departure", "")
+    wagon_no = concor_data.get("wagon_no", "")
+    train_origin = concor_data.get("train_origin", "")
+    train_destination = concor_data.get("train_destination", "")
+    shipping_line = concor_data.get("shipping_line", "")
+    if not latest_location and concor_data.get("last_reported_station"):
+        latest_location = concor_data["last_reported_station"]
+    movement_category = _movement_category(latest_location, train_no, departure, delay_days)
+
+    data = {
+        "latest_location": latest_location,
+        "latest_time": latest_time,
+        "train_no": train_no,
+        "departure": departure,
+        "rail_status": rail_status,
+        "movement_category": movement_category,
+        "delay_days": delay_days,
+        "wagon_no": wagon_no,
+        "train_origin": train_origin,
+        "train_destination": train_destination,
+        "shipping_line": shipping_line,
+        "tracking_source": "+".join(
+            source for source, payload in (("ldb", ldb_data), ("concor", concor_data)) if payload
+        ),
+    }
+    has_data = bool(ldb_data or concor_data)
+    status = "success" if has_data else "no_data"
+    error = "" if train_no or not concor_data else "CONCOR returned but no train number"
+    if not has_data:
+        error = "No data from any API"
+
+    if has_data:
+        _save_to_cache(container_number, data)
+
+    return {
+        "data": data,
+        "status": status,
+        "error": error,
+        "cached": False,
+        "has_data": has_data,
+    }
+
+
+def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Shipment:
+    data = payload.get("data") or {}
+    shipment.latest_location = data.get("latest_location", "") or ""
+    shipment.latest_time = data.get("latest_time", "") or ""
+    shipment.train_no = data.get("train_no", "") or ""
+    shipment.departure = data.get("departure", "") or ""
+    shipment.rail_status = data.get("rail_status", "") or ""
+    shipment.movement_category = _normalize_existing_movement(data.get("movement_category", "") or "Hi Seas")
+    shipment.delay_days = float(data.get("delay_days", 0) or 0)
+    shipment.wagon_no = data.get("wagon_no", "") or ""
+    shipment.train_origin = data.get("train_origin", "") or ""
+    shipment.train_destination = data.get("train_destination", "") or ""
+    shipment.shipping_line = data.get("shipping_line", "") or ""
+    shipment.tracking_source = data.get("tracking_source", "") or ""
+    shipment.last_refresh_at = _now_datetime()
+    shipment.last_refresh_status = payload.get("status", "success")
+    shipment.last_refresh_error = payload.get("error", "") or ""
+    return shipment
+
+
 def _refresh_one_shipment(shipment: Shipment, use_cache: bool = True) -> Shipment:
     container_number = _clean_container(shipment.container_number)
     if not container_number:
@@ -1101,52 +1199,7 @@ def _refresh_one_shipment(shipment: Shipment, use_cache: bool = True) -> Shipmen
         shipment.last_refresh_error = "Missing container number"
         shipment.last_refresh_at = _now_datetime()
         return shipment
-    if use_cache:
-        cached_data = _get_cached_data(container_number)
-        if cached_data:
-            for key, value in cached_data.items():
-                setattr(shipment, key, value or "")
-            shipment.movement_category = _normalize_existing_movement(shipment.movement_category)
-            shipment.last_refresh_at = _now_datetime()
-            shipment.last_refresh_status = "success-cached"
-            shipment.last_refresh_error = ""
-            return shipment
-    ldb_data = _fetch_ldb(container_number)
-    concor_data = _fetch_concor(container_number)
-    latest_location = ldb_data.get("latest_location", "") if ldb_data else ""
-    latest_time = ldb_data.get("latest_time", "") if ldb_data else ""
-    rail_status = ldb_data.get("rail_status", "") if ldb_data else ""
-    delay_days = float(ldb_data.get("delay_days", 0)) if ldb_data else 0
-    train_no = concor_data.get("train_no", "") if concor_data else ""
-    departure = concor_data.get("departure", "") if concor_data else ""
-    wagon_no = concor_data.get("wagon_no", "") if concor_data else ""
-    train_origin = concor_data.get("train_origin", "") if concor_data else ""
-    train_destination = concor_data.get("train_destination", "") if concor_data else ""
-    shipping_line = concor_data.get("shipping_line", "") if concor_data else ""
-    if not latest_location and concor_data and concor_data.get("last_reported_station"):
-        latest_location = concor_data["last_reported_station"]
-    movement_category = _movement_category(latest_location, train_no, departure, delay_days)
-    shipment.latest_location = latest_location
-    shipment.latest_time = latest_time
-    shipment.train_no = train_no
-    shipment.departure = departure
-    shipment.rail_status = rail_status
-    shipment.movement_category = movement_category
-    shipment.delay_days = delay_days
-    shipment.wagon_no = wagon_no
-    shipment.train_origin = train_origin
-    shipment.train_destination = train_destination
-    shipment.shipping_line = shipping_line
-    shipment.tracking_source = "+".join(source for source, data in (("ldb", ldb_data), ("concor", concor_data)) if data)
-    shipment.last_refresh_at = _now_datetime()
-    if ldb_data or concor_data:
-        shipment.last_refresh_status = "success"
-        shipment.last_refresh_error = "" if train_no or not concor_data else "CONCOR returned but no train number"
-        _save_to_cache(container_number, {"latest_location": latest_location, "latest_time": latest_time, "train_no": train_no, "departure": departure, "rail_status": rail_status, "movement_category": movement_category, "delay_days": delay_days, "wagon_no": wagon_no, "train_origin": train_origin, "train_destination": train_destination, "shipping_line": shipping_line})
-    else:
-        shipment.last_refresh_status = "no_data"
-        shipment.last_refresh_error = "No data from any API"
-    return shipment
+    return _apply_tracking_payload(shipment, _build_tracking_payload(container_number, use_cache=use_cache))
 
 
 def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
@@ -1613,26 +1666,56 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
         )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
-    refreshed_containers: set[str] = set()
+    unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
+    payloads: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, len(unique_containers)))) as executor:
+        futures = {executor.submit(_build_tracking_payload, container_number, False): container_number for container_number in unique_containers}
+        for future in as_completed(futures):
+            container_number = futures[future]
+            try:
+                payloads[container_number] = future.result()
+            except Exception:
+                payloads[container_number] = {
+                    "data": {},
+                    "status": "error",
+                    "error": "Tracking fetch failed",
+                    "cached": False,
+                    "has_data": False,
+                }
     for shipment in shipments:
-        if shipment.container_number in refreshed_containers:
-            continue
-        refresh_one({"container_number": shipment.container_number}, db, current_user)
-        refreshed_containers.add(shipment.container_number)
-    return {"refreshed_count": len(refreshed_containers)}
+        container_number = _clean_container(shipment.container_number)
+        if container_number in payloads:
+            _apply_tracking_payload(shipment, payloads[container_number])
+    db.commit()
+    return {"refreshed_count": len(unique_containers)}
 
 
 @router.post("/refresh-all")
 def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     shipments = list(db.execute(_user_shipment_select(current_user).where(Shipment.shipment_status == "active")).scalars())
-    refreshed_containers: set[str] = set()
+    unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
+    payloads: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, len(unique_containers)))) as executor:
+        futures = {executor.submit(_build_tracking_payload, container_number, False): container_number for container_number in unique_containers}
+        for future in as_completed(futures):
+            container_number = futures[future]
+            try:
+                payloads[container_number] = future.result()
+            except Exception:
+                payloads[container_number] = {
+                    "data": {},
+                    "status": "error",
+                    "error": "Tracking fetch failed",
+                    "cached": False,
+                    "has_data": False,
+                }
     for shipment in shipments:
-        if shipment.container_number in refreshed_containers:
-            continue
-        refresh_one({"container_number": shipment.container_number}, db, current_user)
-        refreshed_containers.add(shipment.container_number)
-    return {"refreshed_count": len(refreshed_containers), "message": f"Refreshed {len(refreshed_containers)} active containers"}
+        container_number = _clean_container(shipment.container_number)
+        if container_number in payloads:
+            _apply_tracking_payload(shipment, payloads[container_number])
+    db.commit()
+    return {"refreshed_count": len(unique_containers), "message": f"Refreshed {len(unique_containers)} active containers"}
 
 
 @router.post("/bl-documents/upload")

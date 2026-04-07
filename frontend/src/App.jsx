@@ -826,8 +826,13 @@ function App() {
 
   const handleRefreshAllTracking = useCallback(async () => {
     setFeedback(null);
+    setRefreshing(true);
 
     try {
+      setFeedback({
+        tone: "info",
+        text: "Fetching live tracking from LDB and CONCOR. This can take a short while for multiple containers.",
+      });
       const data = await api.refreshAllTracking();
       setFeedback({
         tone: "success",
@@ -836,14 +841,21 @@ function App() {
       await loadDashboard({ silent: true });
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
+    } finally {
+      setRefreshing(false);
     }
   }, [loadDashboard]);
 
   const handleRefreshGroup = useCallback(
     async (row) => {
       setFeedback(null);
+      setRefreshing(true);
 
       try {
+        setFeedback({
+          tone: "info",
+          text: "Fetching live tracking from LDB and CONCOR for the selected shipment group.",
+        });
         const data = await api.refreshGroupTracking({
           bl_number: row.bl_number,
           container_numbers: row.container_numbers,
@@ -855,6 +867,8 @@ function App() {
         await loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Refresh failed" });
+      } finally {
+        setRefreshing(false);
       }
     },
     [loadDashboard]
