@@ -131,6 +131,66 @@ function rowMatchesShipment(row, shipment) {
   return rowContainers.includes(shipmentContainer);
 }
 
+function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
+  const grouped = {};
+  (Array.isArray(shipments) ? shipments : []).forEach((shipment) => {
+    if (statusFilter && shipment.shipment_status !== statusFilter) {
+      return;
+    }
+    const normalizedBl = cleanText(shipment.bl_number).toUpperCase().replace(/\s+/g, "");
+    const groupKey = normalizedBl ? `BL:${normalizedBl}` : `SHIP:${shipment.id}`;
+    if (!grouped[groupKey]) {
+      grouped[groupKey] = [];
+    }
+    grouped[groupKey].push({
+      ...shipment,
+      movement_category: normalizeMovementCategory(shipment.movement_category),
+    });
+  });
+
+  return Object.entries(grouped)
+    .map(([groupKey, entries]) => {
+      const sortedEntries = [...entries].sort((left, right) => {
+        const movementDiff =
+          (MOVEMENT_PRIORITY[right.movement_category] || 0) - (MOVEMENT_PRIORITY[left.movement_category] || 0);
+        if (movementDiff !== 0) {
+          return movementDiff;
+        }
+        const dateDiff = compareDateStrings(right.latest_time, left.latest_time);
+        if (dateDiff !== 0) {
+          return dateDiff;
+        }
+        return (right.id || 0) - (left.id || 0);
+      });
+      const lead = sortedEntries[0];
+      const containerNumbers = Array.from(
+        new Set(sortedEntries.map((item) => cleanText(item.container_number)).filter(Boolean))
+      ).sort();
+      return {
+        group_key: groupKey,
+        id: lead.id,
+        customer_name: cleanText(lead.customer_name) || "-",
+        primary_container_number: cleanText(lead.container_number),
+        container_numbers: containerNumbers,
+        container_count: containerNumbers.length,
+        bl_number: cleanText(lead.bl_number),
+        shipment_status: cleanText(lead.shipment_status) || "active",
+        movement_category: lead.movement_category || "Hi Seas",
+        latest_location: cleanText(lead.latest_location),
+        latest_time: cleanText(lead.latest_time),
+        train_no: cleanText(lead.train_no),
+        departure: cleanText(lead.departure),
+        tracking_source: cleanText(lead.tracking_source),
+        last_refresh_at: cleanText(lead.last_refresh_at),
+        last_refresh_status: cleanText(lead.last_refresh_status),
+        last_refresh_error: cleanText(lead.last_refresh_error),
+        clearance_doc_number: cleanText(lead.clearance_doc_number),
+        raw_shipments: sortedEntries,
+      };
+    })
+    .sort((left, right) => compareDateStrings(right.latest_time, left.latest_time));
+}
+
 function compareLocationByDistance(leftLocation, rightLocation, distanceMap) {
   const leftText = cleanText(leftLocation);
   const rightText = cleanText(rightLocation);
@@ -163,12 +223,14 @@ function compareLocationByDistance(leftLocation, rightLocation, distanceMap) {
   return leftText.localeCompare(rightText, undefined, { sensitivity: "base" });
 }
 
-function StatCard({ label, value }) {
+function StatCard({ label, value, onClick, helperText }) {
+  const Element = onClick ? "button" : "article";
   return (
-    <article className="stat-card">
+    <Element className={`stat-card ${onClick ? "stat-card-interactive" : ""}`} onClick={onClick} type={onClick ? "button" : undefined}>
       <p className="stat-label">{label}</p>
       <strong className="stat-value">{value}</strong>
-    </article>
+      {helperText ? <span className="stat-helper">{helperText}</span> : null}
+    </Element>
   );
 }
 
@@ -432,6 +494,8 @@ function App() {
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
   const [documentRow, setDocumentRow] = useState(null);
+  const [recordsView, setRecordsView] = useState(null);
+  const [auditRow, setAuditRow] = useState(null);
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
     packing_list: null,
@@ -695,6 +759,23 @@ function App() {
       { total: 0, active: 0, completed: 0, archived: 0 }
     );
   }, [shipments]);
+
+  const completedHistoryRows = useMemo(
+    () => buildGroupedRowsFromShipments(shipments, "completed"),
+    [shipments]
+  );
+
+  const archivedHistoryRows = useMemo(
+    () => buildGroupedRowsFromShipments(shipments, "archived"),
+    [shipments]
+  );
+
+  const auditShipments = useMemo(() => {
+    if (!auditRow) {
+      return [];
+    }
+    return shipments.filter((shipment) => rowMatchesShipment(auditRow, shipment));
+  }, [auditRow, shipments]);
 
   const movementCounts = useMemo(() => {
     return normalizedRows.reduce(
@@ -1130,6 +1211,22 @@ function App() {
     }
   }, []);
 
+  const handleDownloadDocument = useCallback(async (blNumber, documentType, fileName) => {
+    try {
+      const { blob } = await api.fetchBLDocument(blNumber, documentType);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = fileName || `${blNumber}-${documentType}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Failed to download document" });
+    }
+  }, []);
+
   if (!authChecked) {
     return <main className="app-shell loading-shell">Loading portal...</main>;
   }
@@ -1190,10 +1287,20 @@ function App() {
       </section>
 
       <section className="stats-grid">
-        <StatCard label="Total Shipments" value={shipmentCounts.total} />
-        <StatCard label="Active" value={shipmentCounts.active} />
-        <StatCard label="Completed" value={shipmentCounts.completed} />
-        <StatCard label="Archived" value={shipmentCounts.archived} />
+        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment records" />
+        <StatCard label="Active" value={shipmentCounts.active} helperText="Currently on the live board" />
+        <StatCard
+          label="Completed"
+          value={shipmentCounts.completed}
+          helperText="Open completion history"
+          onClick={() => setRecordsView("completed")}
+        />
+        <StatCard
+          label="Archived"
+          value={shipmentCounts.archived}
+          helperText="Open archive register"
+          onClick={() => setRecordsView("archived")}
+        />
       </section>
 
         {trackingRefreshActive && (
@@ -1492,7 +1599,11 @@ function App() {
               ) : (
                 filteredRows.map((row) => {
                   return (
-                    <tr key={row.group_key || row.id}>
+                    <tr
+                      key={row.group_key || row.id}
+                      className="interactive-row"
+                      onClick={() => setAuditRow(row)}
+                    >
                       <td>
                         <div className="cell-title customer-name">{row.customer_name || "-"}</div>
                       </td>
@@ -1523,14 +1634,20 @@ function App() {
                           <span className={`docs-status ${row.documents_complete ? "is-complete" : ""}`}>
                             {row.documents_complete ? "Complete" : "Pending"}
                           </span>
-                          <ActionButton type="button" tone="ghost" onClick={() => setDocumentRow(row)}>
+                          <ActionButton type="button" tone="ghost" onClick={(event) => {
+                            event.stopPropagation();
+                            setDocumentRow(row);
+                          }}>
                             {row.documents_complete ? "Documents Submitted" : "Submit Documents"}
                           </ActionButton>
                         </div>
                       </td>
                       <td className="td-center">
                         <div className="action-group compact-actions-row">
-                          <ActionButton type="button" tone="ghost" onClick={() => setActionRow(row)}>
+                          <ActionButton type="button" tone="ghost" onClick={(event) => {
+                            event.stopPropagation();
+                            setActionRow(row);
+                          }}>
                             Take Action
                           </ActionButton>
                         </div>
@@ -1546,12 +1663,30 @@ function App() {
 
       {actionRow && (
         <Modal title={`Actions for ${actionRow.bl_number || actionRow.primary_container_number}`} onClose={() => setActionRow(null)}>
+          <div className="action-summary">
+            <div className="summary-list">
+              <span>Status</span>
+              <strong>{actionRow.shipment_status || "active"}</strong>
+              <span>Movement</span>
+              <strong>{actionRow.movement_category || "Hi Seas"}</strong>
+              <span>Containers</span>
+              <strong>{actionRow.container_count || actionRow.container_numbers?.length || 1}</strong>
+              <span>Clearance Doc</span>
+              <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
+            </div>
+          </div>
           <div className="modal-actions">
             <ActionButton type="button" tone="secondary" onClick={async () => {
               await handleRefreshGroup(actionRow);
               setActionRow(null);
             }}>
               Refresh Tracking
+            </ActionButton>
+            <ActionButton type="button" tone="ghost" onClick={() => {
+              setAuditRow(actionRow);
+              setActionRow(null);
+            }}>
+              View Audit
             </ActionButton>
                             <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
                               Activate
@@ -1676,13 +1811,28 @@ function App() {
               <label className="document-field" key={key}>
                 <span>{label}</span>
                 {documentRow.documents?.[key] ? (
-                  <button
-                    type="button"
-                    className="document-link"
-                    onClick={() => handleOpenDocument(documentRow.bl_number, key)}
-                  >
-                    {documentRow.documents[key].original_name}
-                  </button>
+                  <div className="document-actions-inline">
+                    <button
+                      type="button"
+                      className="document-link"
+                      onClick={() => handleOpenDocument(documentRow.bl_number, key)}
+                    >
+                      {documentRow.documents[key].original_name}
+                    </button>
+                    <button
+                      type="button"
+                      className="document-mini-link"
+                      onClick={() =>
+                        handleDownloadDocument(
+                          documentRow.bl_number,
+                          key,
+                          documentRow.documents[key].original_name
+                        )
+                      }
+                    >
+                      Download
+                    </button>
+                  </div>
                 ) : (
                   <small className="muted-text">No file uploaded yet</small>
                 )}
@@ -1696,7 +1846,9 @@ function App() {
                   }
                 />
                 <small className="muted-text">
-                  {documentFiles[key]?.name
+                  {documentUploadState[`${documentRow.bl_number}:${key}`]
+                    ? "Uploading replacement file..."
+                    : documentFiles[key]?.name
                     ? `New file selected: ${documentFiles[key].name}`
                     : documentRow.documents?.[key]
                       ? "Choose a new file only if you want to replace the current one."
@@ -1715,6 +1867,145 @@ function App() {
             <ActionButton type="button" tone="primary" onClick={handleDocumentSubmit}>
               {documentRow.documents_complete ? "Save Changes" : "Submit Documents"}
             </ActionButton>
+          </div>
+        </Modal>
+      )}
+
+      {recordsView && (
+        <Modal
+          title={recordsView === "completed" ? "Completed Shipment Register" : "Archived Shipment Register"}
+          onClose={() => setRecordsView(null)}
+        >
+          <div className="history-panel">
+            <p className="panel-copy">
+              {recordsView === "completed"
+                ? "BL groups that have been completed and retained for follow-through."
+                : "BL groups removed from the live dashboard but preserved for record keeping."}
+            </p>
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>BL</th>
+                    <th>Containers</th>
+                    <th>Movement</th>
+                    <th>Date</th>
+                    <th>Clearance Doc</th>
+                    <th>Audit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(recordsView === "completed" ? completedHistoryRows : archivedHistoryRows).length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="empty-cell">No shipment groups available.</td>
+                    </tr>
+                  ) : (
+                    (recordsView === "completed" ? completedHistoryRows : archivedHistoryRows).map((row) => (
+                      <tr key={row.group_key}>
+                        <td>{row.customer_name || "-"}</td>
+                        <td>{row.bl_number || "-"}</td>
+                        <td>{(row.container_numbers || []).join(", ") || "-"}</td>
+                        <td>{row.movement_category || "-"}</td>
+                        <td>{row.latest_time || "-"}</td>
+                        <td>{row.clearance_doc_number || "-"}</td>
+                        <td>
+                          <ActionButton type="button" tone="ghost" onClick={() => setAuditRow(row)}>
+                            View
+                          </ActionButton>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {auditRow && (
+        <Modal
+          title={`Shipment Audit${auditRow.bl_number ? ` - ${auditRow.bl_number}` : ` - ${auditRow.primary_container_number}`}`}
+          onClose={() => setAuditRow(null)}
+        >
+          <div className="audit-panel">
+            <div className="audit-summary-grid">
+              <article className="audit-card">
+                <span>Customer</span>
+                <strong>{auditRow.customer_name || "-"}</strong>
+              </article>
+              <article className="audit-card">
+                <span>Movement</span>
+                <strong>{auditRow.movement_category || "Hi Seas"}</strong>
+              </article>
+              <article className="audit-card">
+                <span>Last Refresh</span>
+                <strong>{auditRow.last_refresh_at || "Not refreshed"}</strong>
+              </article>
+              <article className="audit-card">
+                <span>Tracking Source</span>
+                <strong>{auditRow.tracking_source || "Not available"}</strong>
+              </article>
+            </div>
+
+            <div className="summary-list audit-list">
+              <span>BL Number</span>
+              <strong>{auditRow.bl_number || "Not linked"}</strong>
+              <span>Containers</span>
+              <strong>{(auditRow.container_numbers || []).join(", ") || auditRow.primary_container_number || "-"}</strong>
+              <span>Latest Location</span>
+              <strong>{auditRow.latest_location || "Not available"}</strong>
+              <span>Latest Date</span>
+              <strong>{auditRow.latest_time || "-"}</strong>
+              <span>Train No</span>
+              <strong>{auditRow.train_no || "-"}</strong>
+              <span>Departure</span>
+              <strong>{auditRow.departure || "-"}</strong>
+              <span>Clearance Doc</span>
+              <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
+              <span>Refresh Status</span>
+              <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
+            </div>
+
+            {auditRow.last_refresh_error ? (
+              <div className="confirm-warning">
+                Last refresh note: <strong>{auditRow.last_refresh_error}</strong>
+              </div>
+            ) : null}
+
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Container</th>
+                    <th>Status</th>
+                    <th>Movement</th>
+                    <th>Latest Location</th>
+                    <th>Latest Date</th>
+                    <th>Refresh Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditShipments.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="empty-cell">No row-level records available.</td>
+                    </tr>
+                  ) : (
+                    auditShipments.map((shipment) => (
+                      <tr key={shipment.id}>
+                        <td>{shipment.container_number || "-"}</td>
+                        <td>{shipment.shipment_status || "-"}</td>
+                        <td>{normalizeMovementCategory(shipment.movement_category) || "-"}</td>
+                        <td>{shipment.latest_location || "-"}</td>
+                        <td>{shipment.latest_time || "-"}</td>
+                        <td>{shipment.last_refresh_status || "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </Modal>
       )}
