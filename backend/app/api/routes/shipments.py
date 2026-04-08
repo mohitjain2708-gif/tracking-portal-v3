@@ -500,6 +500,22 @@ def _effective_shipment_movement(shipment: Shipment) -> str:
     )
 
 
+def _movement_since_date(
+    movement_category: str,
+    latest_time: str,
+    port_arrival_date: str,
+    departure: str,
+) -> str:
+    movement = _normalize_existing_movement(movement_category or "")
+    if movement == "Arrived Birgunj":
+        return _clean_text(latest_time)
+    if movement == "On Rail":
+        return _clean_text(departure) or _clean_text(latest_time)
+    if movement == "At Port":
+        return _clean_text(port_arrival_date) or _clean_text(latest_time)
+    return _clean_text(latest_time)
+
+
 def _extract_json_object_by_key(json_str: str, key_name: str) -> dict[str, Any] | None:
     try:
         key_pattern = f'"{key_name}"'
@@ -1333,6 +1349,12 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     movement_category = _effective_shipment_movement(shipment)
     source_type = _clean_text(getattr(shipment, "source_type", "")) or "manual"
     source_label = _clean_text(getattr(shipment, "source_label", "")) or ("Manual Entry" if source_type == "manual" else "")
+    movement_since_date = _movement_since_date(
+        movement_category,
+        shipment.latest_time,
+        shipment.port_arrival_date,
+        shipment.departure,
+    )
     return {
         "id": shipment.id,
         "customer_name": _format_customer_name(shipment.customer_name),
@@ -1341,6 +1363,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "shipment_status": shipment.shipment_status,
         "latest_location": shipment.latest_location,
         "latest_time": shipment.latest_time,
+        "movement_since_date": movement_since_date,
         "port_arrival_date": shipment.port_arrival_date,
         "train_no": shipment.train_no,
         "departure": shipment.departure,
@@ -2165,6 +2188,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "movement_category": lead.get("movement_category") or "Hi Seas",
                 "latest_location": _first_non_empty([item.get("latest_location", "") for item in sorted_entries]),
                 "latest_time": _first_non_empty([item.get("latest_time", "") for item in sorted_entries]),
+                "movement_since_date": _earliest_non_empty_date([item.get("movement_since_date", "") for item in sorted_entries]),
                 "port_arrival_date": _earliest_non_empty_date([item.get("port_arrival_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),

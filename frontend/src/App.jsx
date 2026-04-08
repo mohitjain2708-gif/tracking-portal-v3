@@ -342,7 +342,7 @@ function earliestDateString(values) {
 }
 
 function compareValues(left, right, key) {
-  if (key === "latest_time" || key === "departure") {
+  if (key === "latest_time" || key === "departure" || key === "movement_since_date") {
     return compareDateStrings(left, right);
   }
 
@@ -417,6 +417,7 @@ function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         movement_category: lead.movement_category || "Hi Seas",
         latest_location: cleanText(lead.latest_location),
         latest_time: cleanText(lead.latest_time),
+        movement_since_date: earliestDateString(sortedEntries.map((item) => cleanText(item.movement_since_date))),
         port_arrival_date: earliestDateString(sortedEntries.map((item) => cleanText(item.port_arrival_date))),
         train_no: cleanText(lead.train_no),
         departure: cleanText(lead.departure),
@@ -752,7 +753,7 @@ function App() {
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState("all");
-  const [sortConfig, setSortConfig] = useState({ key: "latest_time", direction: "desc" });
+  const [sortConfig, setSortConfig] = useState({ key: "movement_since_date", direction: "desc" });
   const [documentUploadState, setDocumentUploadState] = useState({});
   const [locationDistanceMap, setLocationDistanceMap] = useState({});
   const [stickyHeaderActive, setStickyHeaderActive] = useState(false);
@@ -2266,7 +2267,7 @@ function App() {
               <div>Status</div>
               <div>Movement</div>
               <div>Latest Location</div>
-              <div>Latest Date</div>
+              <div>Movement Since</div>
               <div>Train No</div>
               <div>Departure</div>
               <div className="th-center">Documents</div>
@@ -2284,7 +2285,7 @@ function App() {
                 <SortableHeader label="Status" columnKey="shipment_status" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Movement" columnKey="movement_category" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Latest Location" columnKey="latest_location" sortConfig={sortConfig} onSort={handleSort} />
-                <SortableHeader label="Latest Date" columnKey="latest_time" sortConfig={sortConfig} onSort={handleSort} />
+                <SortableHeader label="Movement Since" columnKey="movement_since_date" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Train No" columnKey="train_no" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Departure" columnKey="departure" sortConfig={sortConfig} onSort={handleSort} />
                 <th className="th-center">Documents</th>
@@ -2334,7 +2335,7 @@ function App() {
                         </span>
                       </td>
                       <td>{row.latest_location || "Not available"}</td>
-                      <td className="date-cell">{row.latest_time || "-"}</td>
+                      <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
                       <td className="td-center">
@@ -2631,7 +2632,7 @@ function App() {
                       { label: "Containers", value: (row) => (row.container_numbers || []).join(", ") },
                       { label: "Movement", value: (row) => row.movement_category },
                       { label: "Latest Location", value: (row) => row.latest_location },
-                      { label: "Latest Date", value: (row) => row.latest_time },
+                      { label: "Movement Since", value: (row) => row.movement_since_date || row.latest_time },
                       { label: "Clearance Doc", value: (row) => row.clearance_doc_number },
                     ]
                   )
@@ -2666,7 +2667,7 @@ function App() {
                         <td>{row.bl_number || "-"}</td>
                         <td>{(row.container_numbers || []).join(", ") || "-"}</td>
                         <td>{row.movement_category || "-"}</td>
-                        <td>{row.latest_time || "-"}</td>
+                        <td>{row.movement_since_date || row.latest_time || "-"}</td>
                         <td>{row.clearance_doc_number || "-"}</td>
                         {recordsView === "archived" ? (
                           <td>
@@ -2817,7 +2818,11 @@ function App() {
                 </div>
                 <div className="audit-kv-grid">
                   <div>
-                    <span>Latest Date</span>
+                    <span>Movement Since</span>
+                    <strong>{auditRow.movement_since_date || auditRow.latest_time || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Latest Activity</span>
                     <strong>{auditRow.latest_time || "-"}</strong>
                   </div>
                 </div>
@@ -2856,7 +2861,7 @@ function App() {
                     <th>Status</th>
                     <th>Movement</th>
                     <th>Latest Location</th>
-                    <th>Latest Date</th>
+                    <th>Latest Activity</th>
                     <th>Check Result</th>
                   </tr>
                 </thead>

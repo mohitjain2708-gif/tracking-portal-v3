@@ -28,6 +28,8 @@ class ShipmentResponse(BaseModel):
     shipment_status: str
     latest_location: str = ""
     latest_time: str = ""
+    movement_since_date: str = ""
+    port_arrival_date: str = ""
     train_no: str = ""
     departure: str = ""
     rail_status: str = ""
