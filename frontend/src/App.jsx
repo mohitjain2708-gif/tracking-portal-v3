@@ -323,6 +323,14 @@ function compareDateStrings(left, right) {
   return toValue(left) - toValue(right);
 }
 
+function earliestDateString(values) {
+  const dates = (Array.isArray(values) ? values : []).filter((value) => cleanText(value));
+  if (!dates.length) {
+    return "";
+  }
+  return [...dates].sort((left, right) => compareDateStrings(left, right))[0] || "";
+}
+
 function compareValues(left, right, key) {
   if (key === "latest_time" || key === "departure") {
     return compareDateStrings(left, right);
@@ -399,6 +407,7 @@ function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         movement_category: lead.movement_category || "Hi Seas",
         latest_location: cleanText(lead.latest_location),
         latest_time: cleanText(lead.latest_time),
+        port_arrival_date: earliestDateString(sortedEntries.map((item) => cleanText(item.port_arrival_date))),
         train_no: cleanText(lead.train_no),
         departure: cleanText(lead.departure),
         tracking_source: cleanText(lead.tracking_source),
@@ -2548,6 +2557,10 @@ function App() {
               <section className="audit-detail-card">
                 <p className="audit-detail-title">Rail Context</p>
                 <div className="audit-kv-grid">
+                  <div>
+                    <span>Port Arrival</span>
+                    <strong>{auditRow.port_arrival_date || "-"}</strong>
+                  </div>
                   <div>
                     <span>Train No</span>
                     <strong>{auditRow.train_no || "-"}</strong>

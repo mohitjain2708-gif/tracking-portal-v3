@@ -99,6 +99,7 @@ CUSTOMER_IGNORE_TOKENS = BUSINESS_SUFFIXES | {
 SHIPMENT_COLUMN_DEFINITIONS = {
     "latest_location": "TEXT NOT NULL DEFAULT ''",
     "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
     "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
     "rail_status": "VARCHAR(64) NOT NULL DEFAULT ''",
@@ -577,6 +578,14 @@ def _date_sort_value(value: str) -> float:
     return parsed.timestamp() if parsed else 0.0
 
 
+def _earliest_non_empty_date(values: list[str]) -> str:
+    dated = [(_date_sort_value(value), value) for value in values if _clean_text(value)]
+    dated = [item for item in dated if item[0] > 0]
+    if not dated:
+        return _first_non_empty(values)
+    return min(dated, key=lambda item: item[0])[1]
+
+
 def _classify_ldb_rail_status(location: str, event: str) -> str:
     text_value = f"{location} {event}".upper()
     if "BIRGANJ" in text_value or "BIRGUNJ" in text_value:
@@ -629,23 +638,63 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
         )
         if response.status_code != 200 or not response.text:
             return None
+        payload_json = None
+        try:
+            payload_json = response.json()
+        except Exception:
+            payload_json = None
+
         last_event = _extract_json_object_by_key(response.text, "lastEvent")
+        track_log = None
         if not last_event:
             try:
-                data = response.json()
+                data = payload_json
                 if isinstance(data, dict):
                     last_event = data.get("lastEvent") or data.get("data") or data.get("result")
                     if isinstance(last_event, list) and last_event:
                         last_event = last_event[0]
             except Exception:
                 return None
+        if isinstance(payload_json, dict):
+            object_payload = payload_json.get("object") if isinstance(payload_json.get("object"), dict) else payload_json
+            candidate_track_log = object_payload.get("trackLog") if isinstance(object_payload, dict) else None
+            if isinstance(candidate_track_log, list):
+                track_log = candidate_track_log
         if not isinstance(last_event, dict):
             return None
         location = _json_value(last_event, "currentLocation")
         event = _json_value(last_event, "eventName")
         timestamp = _json_value(last_event, "timestampTimezone")
         latest_date = _format_ldb_date(timestamp)
-        return {"latest_location": location, "latest_time": latest_date, "rail_status": _classify_ldb_rail_status(location, event), "delay_days": _compute_delay_days(latest_date)}
+        current_cycle_id = last_event.get("cntrCycleId") if isinstance(last_event, dict) else None
+        port_arrival_date = ""
+        if isinstance(track_log, list) and track_log:
+            cycle_events = [
+                entry
+                for entry in track_log
+                if isinstance(entry, dict)
+                and (
+                    current_cycle_id in (None, "", 0)
+                    or entry.get("cntrCycleId") == current_cycle_id
+                )
+            ]
+            port_dates = []
+            for entry in cycle_events:
+                port_location = _json_value(entry, "currentLocation")
+                if not _is_port(port_location):
+                    continue
+                port_timestamp = _json_value(entry, "timestampTimezone")
+                formatted_port_date = _format_ldb_date(port_timestamp)
+                if formatted_port_date:
+                    port_dates.append(formatted_port_date)
+            port_arrival_date = _earliest_non_empty_date(port_dates)
+        return {
+            "latest_location": location,
+            "latest_time": latest_date,
+            "port_arrival_date": port_arrival_date,
+            "rail_status": _classify_ldb_rail_status(location, event),
+            "delay_days": _compute_delay_days(latest_date),
+        }
     except Exception:
         return None
 
@@ -1276,6 +1325,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "shipment_status": shipment.shipment_status,
         "latest_location": shipment.latest_location,
         "latest_time": shipment.latest_time,
+        "port_arrival_date": shipment.port_arrival_date,
         "train_no": shipment.train_no,
         "departure": shipment.departure,
         "rail_status": shipment.rail_status,
@@ -1515,6 +1565,7 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
     data = {
         "latest_location": latest_location,
         "latest_time": latest_time,
+        "port_arrival_date": ldb_data.get("port_arrival_date", ""),
         "train_no": train_no,
         "departure": departure,
         "rail_status": rail_status,
@@ -1552,6 +1603,7 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     data = payload.get("data") or {}
     shipment.latest_location = data.get("latest_location", "") or ""
     shipment.latest_time = data.get("latest_time", "") or ""
+    shipment.port_arrival_date = data.get("port_arrival_date", "") or ""
     shipment.train_no = data.get("train_no", "") or ""
     shipment.departure = data.get("departure", "") or ""
     shipment.rail_status = data.get("rail_status", "") or ""
@@ -1866,6 +1918,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "movement_category": lead.get("movement_category") or "Hi Seas",
                 "latest_location": _first_non_empty([item.get("latest_location", "") for item in sorted_entries]),
                 "latest_time": _first_non_empty([item.get("latest_time", "") for item in sorted_entries]),
+                "port_arrival_date": _earliest_non_empty_date([item.get("port_arrival_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
                 "clearance_doc_number": _first_non_empty([item.get("clearance_doc_number", "") for item in sorted_entries]),
