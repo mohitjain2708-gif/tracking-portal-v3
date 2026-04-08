@@ -373,17 +373,12 @@ def _movement_category(location: str, train_no: str, departure: str, delay_days:
     return "Hi Seas"
 
 
-def _effective_shipment_movement(shipment: Shipment) -> str:
+def _has_reached_birgunj(shipment: Shipment) -> bool:
     stored_movement = _normalize_existing_movement(shipment.movement_category or "")
     tracking_source = _clean_text(shipment.tracking_source).lower()
     rail_status = _normalize_existing_movement(shipment.rail_status or "")
     latest_location = _clean_text(shipment.latest_location)
     shipment_status = _clean_text(shipment.shipment_status).lower()
-
-    # Once a shipment has been completed or archived, the product should preserve
-    # its destination milestone rather than keep following later empty return moves.
-    if shipment_status in {"completed", "archived"}:
-        return "Arrived Birgunj"
 
     if (
         stored_movement == "Arrived Birgunj"
@@ -391,6 +386,15 @@ def _effective_shipment_movement(shipment: Shipment) -> str:
         or "pristine" in tracking_source
         or _is_arrived(latest_location)
     ):
+        return True
+
+    # Finished shipment cycles should preserve the destination milestone even if
+    # the empty container later moves away from Birgunj in downstream live feeds.
+    return shipment_status in {"completed", "archived"}
+
+
+def _effective_shipment_movement(shipment: Shipment) -> str:
+    if _has_reached_birgunj(shipment):
         return "Arrived Birgunj"
 
     return _normalize_existing_movement(
