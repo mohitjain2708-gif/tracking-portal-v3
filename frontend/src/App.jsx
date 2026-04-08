@@ -45,6 +45,63 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function normalizeLooseText(value) {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeIdentifierText(value) {
+  return cleanText(value).toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+function isLikelyIdentifierQuery(value) {
+  const raw = cleanText(value);
+  const normalized = normalizeIdentifierText(raw);
+  return !/\s/.test(raw) && normalized.length >= 4 && /\d/.test(normalized);
+}
+
+function rowMatchesSearch(row, query) {
+  const cleanedQuery = cleanText(query);
+  if (!cleanedQuery) {
+    return true;
+  }
+
+  if (isLikelyIdentifierQuery(cleanedQuery)) {
+    const identifierQuery = normalizeIdentifierText(cleanedQuery);
+    const identifierFields = [
+      row.primary_container_number,
+      row.bl_number,
+      row.train_no,
+      ...(row.container_numbers || []),
+    ]
+      .map((value) => normalizeIdentifierText(value))
+      .filter(Boolean);
+
+    return identifierFields.some(
+      (value) => value === identifierQuery || value.includes(identifierQuery)
+    );
+  }
+
+  const looseQuery = normalizeLooseText(cleanedQuery);
+  const searchableText = normalizeLooseText(
+    [
+      row.customer_name,
+      row.bl_number,
+      row.latest_location,
+      row.train_no,
+      row.shipment_status,
+      row.movement_category,
+      row.clearance_doc_number,
+      ...(row.container_numbers || []),
+    ].join(" ")
+  );
+  return searchableText.includes(looseQuery);
+}
+
 function guessColumns(columns) {
   const availableColumns = Array.isArray(columns) ? columns : [];
 
@@ -799,22 +856,10 @@ function App() {
 
   const visibleHistoryRows = useMemo(() => {
     const sourceRows = recordsView === "completed" ? completedHistoryRows : archivedHistoryRows;
-    const query = cleanText(recordsSearch).toLowerCase();
     return sourceRows.filter((row) => {
       const matchesMovement =
         recordsMovementFilter === "All" || row.movement_category === recordsMovementFilter;
-      const matchesSearch =
-        !query ||
-        [
-          row.customer_name,
-          row.bl_number,
-          row.latest_location,
-          row.clearance_doc_number,
-          ...(row.container_numbers || []),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(query);
+      const matchesSearch = rowMatchesSearch(row, recordsSearch);
       return matchesMovement && matchesSearch;
     });
   }, [archivedHistoryRows, completedHistoryRows, recordsMovementFilter, recordsSearch, recordsView]);
@@ -834,27 +879,12 @@ function App() {
   }, [normalizedRows]);
 
   const filteredRows = useMemo(() => {
-    const loweredSearch = search.trim().toLowerCase();
-
     const visibleRows = normalizedRows.filter((row) => {
       const matchesStatus =
         shipmentStatusFilter === "all" || row.shipment_status === shipmentStatusFilter;
       const matchesMovement =
         movementFilter === "All" || row.movement_category === movementFilter;
-      const matchesSearch =
-        !loweredSearch ||
-        [
-          row.customer_name,
-          row.primary_container_number,
-          row.bl_number,
-          row.latest_location,
-          row.train_no,
-          row.shipment_status,
-          ...(row.container_numbers || []),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(loweredSearch);
+      const matchesSearch = rowMatchesSearch(row, search);
 
       return matchesStatus && matchesMovement && matchesSearch;
     });
@@ -2072,23 +2102,67 @@ function App() {
               </article>
             </div>
 
-            <div className="summary-list audit-list">
-              <span>BL Number</span>
-              <strong>{auditRow.bl_number || "Not linked"}</strong>
-              <span>Containers</span>
-              <strong>{(auditRow.container_numbers || []).join(", ") || auditRow.primary_container_number || "-"}</strong>
-              <span>Latest Location</span>
-              <strong>{auditRow.latest_location || "Not available"}</strong>
-              <span>Latest Date</span>
-              <strong>{auditRow.latest_time || "-"}</strong>
-              <span>Train No</span>
-              <strong>{auditRow.train_no || "-"}</strong>
-              <span>Departure</span>
-              <strong>{auditRow.departure || "-"}</strong>
-              <span>Clearance Doc</span>
-              <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
-              <span>Refresh Status</span>
-              <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
+            <div className="audit-detail-grid">
+              <section className="audit-detail-card audit-detail-card-wide">
+                <p className="audit-detail-title">Shipment Identity</p>
+                <div className="audit-kv-grid">
+                  <div>
+                    <span>BL Number</span>
+                    <strong>{auditRow.bl_number || "Not linked"}</strong>
+                  </div>
+                  <div>
+                    <span>Clearance Doc</span>
+                    <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
+                  </div>
+                </div>
+                <div className="audit-kv-block">
+                  <span>Containers</span>
+                  <div className="audit-container-chips">
+                    {(auditRow.container_numbers?.length
+                      ? auditRow.container_numbers
+                      : [auditRow.primary_container_number]
+                    )
+                      .filter(Boolean)
+                      .map((container) => (
+                        <span key={container} className="audit-container-chip">
+                          {container}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="audit-detail-card">
+                <p className="audit-detail-title">Live Tracking</p>
+                <div className="audit-kv-block">
+                  <span>Latest Location</span>
+                  <strong>{auditRow.latest_location || "Not available"}</strong>
+                </div>
+                <div className="audit-kv-grid">
+                  <div>
+                    <span>Latest Date</span>
+                    <strong>{auditRow.latest_time || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Refresh Status</span>
+                    <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="audit-detail-card">
+                <p className="audit-detail-title">Rail Context</p>
+                <div className="audit-kv-grid">
+                  <div>
+                    <span>Train No</span>
+                    <strong>{auditRow.train_no || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Departure</span>
+                    <strong>{auditRow.departure || "-"}</strong>
+                  </div>
+                </div>
+              </section>
             </div>
 
             {auditRow.last_refresh_error ? (
