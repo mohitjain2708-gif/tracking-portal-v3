@@ -193,6 +193,7 @@ function formatAuditActionLabel(value) {
     shipment_all_refreshed: "All active shipments refreshed",
     shipment_imported: "Shipment import completed",
     shipment_status_updated: "Shipment status updated",
+    shipment_group_restored: "Shipment restored to live dashboard",
     shipment_group_deleted: "Shipment group removed",
     shipment_document_uploaded: "Document submitted",
     shipment_orphans_reconciled: "Legacy duplicates cleaned",
@@ -1512,7 +1513,7 @@ function App() {
           if (shipmentStatus === "archived") {
             setDashboardRows((current) => current.filter((item) => item.group_key !== row.group_key));
           }
-          setShipments((current) =>
+        setShipments((current) =>
             current
               .map((shipment) =>
                 rowMatchesShipment(row, shipment)
@@ -1526,7 +1527,10 @@ function App() {
           );
           setFeedback({
             tone: "success",
-            text: `${data.count ?? 0} shipment record(s) marked ${shipmentStatus}.`,
+            text:
+              shipmentStatus === "active"
+                ? `${data.count ?? 0} archived shipment record(s) restored to the live dashboard.`
+                : `${data.count ?? 0} shipment record(s) marked ${shipmentStatus}.`,
           });
         await loadDashboard({ silent: true });
       } catch (error) {
@@ -2434,13 +2438,14 @@ function App() {
                     <th>Movement</th>
                     <th>Date</th>
                     <th>Clearance Doc</th>
+                    {recordsView === "archived" ? <th>Restore</th> : null}
                     <th>Audit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleHistoryRows.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="empty-cell">No shipment groups available.</td>
+                      <td colSpan={recordsView === "archived" ? 8 : 7} className="empty-cell">No shipment groups available.</td>
                     </tr>
                   ) : (
                     visibleHistoryRows.map((row) => (
@@ -2451,6 +2456,19 @@ function App() {
                         <td>{row.movement_category || "-"}</td>
                         <td>{row.latest_time || "-"}</td>
                         <td>{row.clearance_doc_number || "-"}</td>
+                        {recordsView === "archived" ? (
+                          <td>
+                            <ActionButton
+                              type="button"
+                              tone="secondary"
+                              onClick={async () => {
+                                await handleGroupStatusChange(row, "active");
+                              }}
+                            >
+                              Undo Archive
+                            </ActionButton>
+                          </td>
+                        ) : null}
                         <td>
                           <ActionButton type="button" tone="ghost" onClick={() => setAuditRow(row)}>
                             View

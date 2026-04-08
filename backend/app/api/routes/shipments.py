@@ -2262,10 +2262,38 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
         current_user,
         bl_number=payload.get("bl_number"),
         container_numbers=payload.get("container_numbers") or [],
-        include_archived=False,
+        include_archived=next_status == "active",
     )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
+    if next_status == "active":
+        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
+        restore_containers = sorted(
+            {
+                _clean_container(shipment.container_number)
+                for shipment in shipments
+                if _clean_container(shipment.container_number)
+            }
+        )
+        archived_candidates = list(
+            db.execute(
+                _user_shipment_select(current_user).where(
+                    Shipment.shipment_status == "archived",
+                    Shipment.container_number.in_(restore_containers),
+                )
+            ).scalars()
+        )
+        shipments_by_id: dict[int, Shipment] = {}
+        for candidate in archived_candidates:
+            candidate_bl = _normalize_bl_number(candidate.bl_number)
+            if target_bl:
+                if candidate_bl == target_bl or not candidate_bl:
+                    shipments_by_id[candidate.id] = candidate
+            elif not candidate_bl:
+                shipments_by_id[candidate.id] = candidate
+        shipments = list(shipments_by_id.values())
+        if not shipments:
+            raise HTTPException(status_code=404, detail="Archived shipment group not found")
     if next_status == "archived":
         existing_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments])
         if not existing_doc_number:
@@ -2303,7 +2331,7 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
     _log_audit_event(
         db,
         current_user.id,
-        "shipment_group_status_updated",
+        "shipment_group_restored" if next_status == "active" else "shipment_group_status_updated",
         bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
         container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
         shipment_status=next_status,
