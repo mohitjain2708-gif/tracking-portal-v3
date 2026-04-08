@@ -13,6 +13,8 @@ const INITIAL_MAPPING = {
   bl_number: "",
 };
 
+const IMPORT_FILE_SIZE_LIMIT_MB = 10;
+
 const MOVEMENT_FILTERS = [
   { value: "All", label: "All" },
   { value: "Arrived Birgunj", label: "Arrived Birgunj" },
@@ -1197,6 +1199,20 @@ function App() {
       return;
     }
 
+    const fileName = cleanText(shipmentImportFile.name).toLowerCase();
+    if (!(fileName.endsWith(".xlsx") || fileName.endsWith(".xlsm"))) {
+      setFeedback({ tone: "error", text: "Only .xlsx and .xlsm workbooks are supported for import." });
+      return;
+    }
+
+    if (shipmentImportFile.size > IMPORT_FILE_SIZE_LIMIT_MB * 1024 * 1024) {
+      setFeedback({
+        tone: "error",
+        text: `This workbook is larger than ${IMPORT_FILE_SIZE_LIMIT_MB} MB. Please split or reduce the file before importing.`,
+      });
+      return;
+    }
+
     setFeedback(null);
     setShipmentImportPreview(null);
     setShipmentImportReviewRows([]);
@@ -1209,7 +1225,13 @@ function App() {
       setShipmentImportMapping(guessColumns(preview.available_columns));
       setFeedback({ tone: "success", text: "Columns detected. Review the mapping and continue." });
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Shipment preview failed" });
+      const isFetchFailure = String(error?.message || "").toLowerCase().includes("fetch");
+      setFeedback({
+        tone: "error",
+        text: isFetchFailure
+          ? `Unable to reach the import service. Make sure the workbook is .xlsx/.xlsm and under ${IMPORT_FILE_SIZE_LIMIT_MB} MB, then try again.`
+          : error.message || "Shipment preview failed",
+      });
     }
   }, [shipmentImportFile]);
 
@@ -1851,6 +1873,7 @@ function App() {
               </ActionButton>
               {shipmentImportFile && <span className="file-chip">{shipmentImportFile.name}</span>}
             </div>
+            <p className="field-help">Supports `.xlsx` and `.xlsm` workbooks up to 10 MB.</p>
           </div>
 
           {shipmentImportPreview && (

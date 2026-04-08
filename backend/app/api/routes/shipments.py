@@ -669,25 +669,33 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
         current_cycle_id = last_event.get("cntrCycleId") if isinstance(last_event, dict) else None
         port_arrival_date = ""
         if isinstance(track_log, list) and track_log:
-            cycle_events = [
-                entry
-                for entry in track_log
-                if isinstance(entry, dict)
-                and (
-                    current_cycle_id in (None, "", 0)
-                    or entry.get("cntrCycleId") == current_cycle_id
-                )
-            ]
-            port_dates = []
-            for entry in cycle_events:
-                port_location = _json_value(entry, "currentLocation")
-                if not _is_port(port_location):
+            latest_port_in = ""
+            latest_port_out = ""
+            latest_origin_icd_in = ""
+            for entry in track_log:
+                if not isinstance(entry, dict):
                     continue
-                port_timestamp = _json_value(entry, "timestampTimezone")
-                formatted_port_date = _format_ldb_date(port_timestamp)
-                if formatted_port_date:
-                    port_dates.append(formatted_port_date)
-            port_arrival_date = _earliest_non_empty_date(port_dates)
+                entry_location = _json_value(entry, "currentLocation")
+                entry_event = _json_value(entry, "eventName").upper()
+                if not entry_location or _is_arrived(entry_location):
+                    continue
+                formatted_entry_date = _format_ldb_date(_json_value(entry, "timestampTimezone"))
+                if not formatted_entry_date:
+                    continue
+                if "PORT IN" in entry_event and _is_port(entry_location):
+                    latest_port_in = latest_port_in or formatted_entry_date
+                elif "PORT OUT" in entry_event and _is_port(entry_location):
+                    latest_port_out = latest_port_out or formatted_entry_date
+                elif (
+                    "ICD IN" in entry_event
+                    and _is_port(entry_location)
+                    and (
+                        current_cycle_id in (None, "", 0)
+                        or entry.get("cntrCycleId") in {current_cycle_id, current_cycle_id - 1}
+                    )
+                ):
+                    latest_origin_icd_in = latest_origin_icd_in or formatted_entry_date
+            port_arrival_date = latest_port_in or latest_port_out or latest_origin_icd_in
         return {
             "latest_location": location,
             "latest_time": latest_date,
@@ -1680,7 +1688,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             total=total,
             completed=0,
             progress=0,
-            message=f"Starting refresh for {total} container(s).",
+            message=f"Starting refresh for {total} shipment(s).",
         )
         if total == 0:
             _set_refresh_job(
@@ -1688,7 +1696,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
                 state="completed",
                 completed=0,
                 progress=100,
-                message="No active containers to refresh.",
+                message="No active shipments to refresh.",
                 refreshed_count=0,
             )
             return
@@ -1717,7 +1725,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
                     task_id,
                     completed=completed,
                     progress=round((completed / total) * 100),
-                    message=f"Refreshed {completed} of {total} container(s).",
+                    message=f"Refreshed {completed} of {total} shipments.",
                 )
 
         for shipment in shipments:
@@ -1737,7 +1745,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             state="completed",
             completed=total,
             progress=100,
-            message=f"Tracking refreshed for {total} active container(s).",
+            message=f"Tracking refreshed for {total} active shipments.",
             refreshed_count=total,
         )
     except Exception as exc:
@@ -2362,9 +2370,16 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     suffix = Path(filename).suffix.lower()
     if suffix not in {".xlsx", ".xlsm"}:
         raise HTTPException(status_code=400, detail="Only .xlsx and .xlsm files are supported")
+    file_bytes = await file.read()
+    max_upload_bytes = max(1, int(settings.max_upload_mb)) * 1024 * 1024
+    if len(file_bytes) > max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Workbook exceeds the {settings.max_upload_mb} MB upload limit.",
+        )
     token = f"{uuid4().hex}{suffix}"
     file_path = TEMP_IMPORT_DIR / token
-    file_path.write_bytes(await file.read())
+    file_path.write_bytes(file_bytes)
     sheet_name, header_row, headers, preview_rows, _rows = _read_sheet(file_path)
     return {"temp_file_token": token, "sheet_name": sheet_name, "header_row": header_row, "available_columns": headers, "preview_rows": preview_rows}
 
