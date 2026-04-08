@@ -378,6 +378,12 @@ def _effective_shipment_movement(shipment: Shipment) -> str:
     tracking_source = _clean_text(shipment.tracking_source).lower()
     rail_status = _normalize_existing_movement(shipment.rail_status or "")
     latest_location = _clean_text(shipment.latest_location)
+    shipment_status = _clean_text(shipment.shipment_status).lower()
+
+    # Once a shipment has been completed or archived, the product should preserve
+    # its destination milestone rather than keep following later empty return moves.
+    if shipment_status in {"completed", "archived"}:
+        return "Arrived Birgunj"
 
     if (
         stored_movement == "Arrived Birgunj"
