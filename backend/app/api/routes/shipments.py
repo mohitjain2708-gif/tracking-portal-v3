@@ -102,6 +102,7 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "latest_location": "TEXT NOT NULL DEFAULT ''",
     "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
     "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "birgunj_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
     "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
     "rail_status": "VARCHAR(64) NOT NULL DEFAULT ''",
@@ -504,11 +505,12 @@ def _movement_since_date(
     movement_category: str,
     latest_time: str,
     port_arrival_date: str,
+    birgunj_arrival_date: str,
     departure: str,
 ) -> str:
     movement = _normalize_existing_movement(movement_category or "")
     if movement == "Arrived Birgunj":
-        return _clean_text(latest_time)
+        return _clean_text(birgunj_arrival_date) or _clean_text(latest_time)
     if movement == "On Rail":
         return _clean_text(departure) or _clean_text(latest_time)
     if movement == "At Port":
@@ -595,6 +597,16 @@ def _parse_date(value: str) -> datetime | None:
     return None
 
 
+def _parse_ldb_timestamp(value: str) -> datetime | None:
+    text_value = _clean_text(value)
+    if not text_value:
+        return None
+    try:
+        return datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def _date_sort_value(value: str) -> float:
     parsed = _parse_date(value)
     return parsed.timestamp() if parsed else 0.0
@@ -606,6 +618,108 @@ def _earliest_non_empty_date(values: list[str]) -> str:
     if not dated:
         return _first_non_empty(values)
     return min(dated, key=lambda item: item[0])[1]
+
+
+def _entry_event_text(entry: dict[str, Any]) -> str:
+    return _json_value(entry, "eventName").upper()
+
+
+def _entry_location_text(entry: dict[str, Any]) -> str:
+    return _json_value(entry, "currentLocation")
+
+
+def _is_origin_port_event(entry: dict[str, Any]) -> bool:
+    entry_location = _entry_location_text(entry)
+    entry_event = _entry_event_text(entry)
+    if not entry_location or _is_arrived(entry_location):
+        return False
+    if not _is_port(entry_location):
+        return False
+    return any(keyword in entry_event for keyword in ("PORT IN", "PORT OUT", "ICD IN", "CFS IN", "CFS OUT"))
+
+
+def _is_birgunj_event(entry: dict[str, Any]) -> bool:
+    return _is_arrived(_entry_location_text(entry))
+
+
+def _derive_ldb_milestones(last_event: dict[str, Any], track_log: list[dict[str, Any]] | None) -> dict[str, str]:
+    latest_date = _format_ldb_date(_json_value(last_event, "timestampTimezone"))
+    if not isinstance(track_log, list) or not track_log:
+        return {
+            "latest_location": _json_value(last_event, "currentLocation"),
+            "latest_time": latest_date,
+            "port_arrival_date": "",
+            "birgunj_arrival_date": latest_date if _is_arrived(_json_value(last_event, "currentLocation")) else "",
+        }
+
+    ordered_entries = []
+    for entry in track_log:
+        if not isinstance(entry, dict):
+            continue
+        parsed_timestamp = _parse_ldb_timestamp(_json_value(entry, "timestampTimezone"))
+        if not parsed_timestamp:
+            continue
+        ordered_entries.append((parsed_timestamp, entry))
+
+    if not ordered_entries:
+        return {
+            "latest_location": _json_value(last_event, "currentLocation"),
+            "latest_time": latest_date,
+            "port_arrival_date": "",
+            "birgunj_arrival_date": latest_date if _is_arrived(_json_value(last_event, "currentLocation")) else "",
+        }
+
+    ordered_entries.sort(key=lambda item: item[0])
+    entries = [entry for _, entry in ordered_entries]
+
+    birgunj_indices = [index for index, entry in enumerate(entries) if _is_birgunj_event(entry)]
+    latest_birgunj_index = birgunj_indices[-1] if birgunj_indices else -1
+
+    boundary_index = latest_birgunj_index
+    if latest_birgunj_index >= 0:
+        last_origin_before_latest_birgunj = max(
+            (index for index, entry in enumerate(entries[:latest_birgunj_index]) if _is_origin_port_event(entry)),
+            default=-1,
+        )
+        if last_origin_before_latest_birgunj >= 0:
+            boundary_index = max(
+                (index for index in birgunj_indices if index < last_origin_before_latest_birgunj),
+                default=-1,
+            )
+
+    relevant_entries = entries[boundary_index + 1 :] if boundary_index >= 0 else entries
+
+    port_in_dates: list[str] = []
+    port_out_dates: list[str] = []
+    origin_icd_in_dates: list[str] = []
+    birgunj_dates: list[str] = []
+
+    for entry in relevant_entries:
+        entry_location = _entry_location_text(entry)
+        entry_event = _entry_event_text(entry)
+        formatted_entry_date = _format_ldb_date(_json_value(entry, "timestampTimezone"))
+        if not formatted_entry_date:
+            continue
+        if _is_arrived(entry_location):
+            birgunj_dates.append(formatted_entry_date)
+            continue
+        if not _is_port(entry_location):
+            continue
+        if "PORT IN" in entry_event:
+            port_in_dates.append(formatted_entry_date)
+        elif "PORT OUT" in entry_event:
+            port_out_dates.append(formatted_entry_date)
+        elif "ICD IN" in entry_event:
+            origin_icd_in_dates.append(formatted_entry_date)
+
+    return {
+        "latest_location": _json_value(last_event, "currentLocation"),
+        "latest_time": latest_date,
+        "port_arrival_date": _earliest_non_empty_date(port_in_dates)
+        or _earliest_non_empty_date(port_out_dates)
+        or _earliest_non_empty_date(origin_icd_in_dates),
+        "birgunj_arrival_date": _earliest_non_empty_date(birgunj_dates),
+    }
 
 
 def _classify_ldb_rail_status(location: str, event: str) -> str:
@@ -684,51 +798,15 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
                 track_log = candidate_track_log
         if not isinstance(last_event, dict):
             return None
-        location = _json_value(last_event, "currentLocation")
+        milestones = _derive_ldb_milestones(last_event, track_log)
+        location = milestones["latest_location"]
         event = _json_value(last_event, "eventName")
-        timestamp = _json_value(last_event, "timestampTimezone")
-        latest_date = _format_ldb_date(timestamp)
-        current_cycle_id = last_event.get("cntrCycleId") if isinstance(last_event, dict) else None
-        port_arrival_date = ""
-        if isinstance(track_log, list) and track_log:
-            port_in_dates: list[str] = []
-            port_out_dates: list[str] = []
-            origin_icd_in_dates: list[str] = []
-            for entry in track_log:
-                if not isinstance(entry, dict):
-                    continue
-                entry_location = _json_value(entry, "currentLocation")
-                entry_event = _json_value(entry, "eventName").upper()
-                if not entry_location or _is_arrived(entry_location):
-                    continue
-                formatted_entry_date = _format_ldb_date(_json_value(entry, "timestampTimezone"))
-                if not formatted_entry_date:
-                    continue
-                entry_cycle_id = entry.get("cntrCycleId")
-                in_current_cycle = (
-                    current_cycle_id in (None, "", 0)
-                    or entry_cycle_id in {current_cycle_id, current_cycle_id - 1}
-                )
-                if not in_current_cycle:
-                    continue
-                if "PORT IN" in entry_event and _is_port(entry_location):
-                    port_in_dates.append(formatted_entry_date)
-                elif "PORT OUT" in entry_event and _is_port(entry_location):
-                    port_out_dates.append(formatted_entry_date)
-                elif (
-                    "ICD IN" in entry_event
-                    and _is_port(entry_location)
-                ):
-                    origin_icd_in_dates.append(formatted_entry_date)
-            port_arrival_date = (
-                _earliest_non_empty_date(port_in_dates)
-                or _earliest_non_empty_date(port_out_dates)
-                or _earliest_non_empty_date(origin_icd_in_dates)
-            )
+        latest_date = milestones["latest_time"]
         return {
             "latest_location": location,
             "latest_time": latest_date,
-            "port_arrival_date": port_arrival_date,
+            "port_arrival_date": milestones["port_arrival_date"],
+            "birgunj_arrival_date": milestones["birgunj_arrival_date"],
             "rail_status": _classify_ldb_rail_status(location, event),
             "delay_days": _compute_delay_days(latest_date),
         }
@@ -1360,6 +1438,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         movement_category,
         shipment.latest_time,
         shipment.port_arrival_date,
+        getattr(shipment, "birgunj_arrival_date", ""),
         shipment.departure,
     )
     return {
@@ -1372,6 +1451,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "latest_time": shipment.latest_time,
         "movement_since_date": movement_since_date,
         "port_arrival_date": shipment.port_arrival_date,
+        "birgunj_arrival_date": getattr(shipment, "birgunj_arrival_date", ""),
         "train_no": shipment.train_no,
         "departure": shipment.departure,
         "rail_status": shipment.rail_status,
@@ -1818,15 +1898,15 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
 
     if pristine_data.get("arrival_date"):
         latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
-        latest_time = pristine_data["arrival_date"]
         rail_status = "Arrived Birgunj"
         movement_category = "Arrived Birgunj"
-        delay_days = _compute_delay_days(latest_time)
+        delay_days = _compute_delay_days(latest_time or pristine_data["arrival_date"])
 
     data = {
         "latest_location": latest_location,
         "latest_time": latest_time,
         "port_arrival_date": ldb_data.get("port_arrival_date", ""),
+        "birgunj_arrival_date": pristine_data.get("arrival_date") or ldb_data.get("birgunj_arrival_date", ""),
         "train_no": train_no,
         "departure": departure,
         "rail_status": rail_status,
@@ -1865,6 +1945,7 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     shipment.latest_location = data.get("latest_location", "") or ""
     shipment.latest_time = data.get("latest_time", "") or ""
     shipment.port_arrival_date = data.get("port_arrival_date", "") or ""
+    shipment.birgunj_arrival_date = data.get("birgunj_arrival_date", "") or ""
     shipment.train_no = data.get("train_no", "") or ""
     shipment.departure = data.get("departure", "") or ""
     shipment.rail_status = data.get("rail_status", "") or ""
@@ -2197,6 +2278,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "latest_time": _first_non_empty([item.get("latest_time", "") for item in sorted_entries]),
                 "movement_since_date": _earliest_non_empty_date([item.get("movement_since_date", "") for item in sorted_entries]),
                 "port_arrival_date": _earliest_non_empty_date([item.get("port_arrival_date", "") for item in sorted_entries]),
+                "birgunj_arrival_date": _earliest_non_empty_date([item.get("birgunj_arrival_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
                 "tracking_source": ",".join(tracking_sources),
@@ -2259,7 +2341,8 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
         arrived = movement_category == "Arrived Birgunj"
         if arrived:
             total_at_icd_birgunj += 1
-            if _format_to_dd_mm_yyyy(shipment.latest_time) == today_text:
+            arrival_date = _clean_text(getattr(shipment, "birgunj_arrival_date", "")) or shipment.latest_time
+            if _format_to_dd_mm_yyyy(arrival_date) == today_text:
                 today_arrivals += 1
                 for customer_name in container_customers.get(container_number, set()):
                     today_arrival_customers[customer_name] = today_arrival_customers.get(customer_name, 0) + 1

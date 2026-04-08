@@ -18,6 +18,7 @@ class Shipment(Base):
     latest_location: Mapped[str] = mapped_column(Text, nullable=False, default="")
     latest_time: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     port_arrival_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    birgunj_arrival_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     train_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     departure: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     rail_status: Mapped[str] = mapped_column(String(64), nullable=False, default="")
