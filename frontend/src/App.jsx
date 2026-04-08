@@ -1920,8 +1920,9 @@ function App() {
         <article className="surface panel-card">
           <div className="panel-heading compact-heading">
             <div>
-              <p className="eyebrow">Manual Intake</p>
+              <p className="eyebrow">Manual Entry</p>
               <h2>Add Shipment</h2>
+              <p className="panel-copy">Enter one shipment cycle cleanly, with one or more containers linked to the same BL.</p>
             </div>
           </div>
 
@@ -1975,8 +1976,9 @@ function App() {
         <article className="surface panel-card">
           <div className="panel-heading compact-heading">
             <div>
-              <p className="eyebrow">Bulk Intake</p>
+              <p className="eyebrow">Import</p>
               <h2>Import Shipments</h2>
+              <p className="panel-copy">Review the workbook, confirm the mapping, and correct any rows that need attention before they enter tracking.</p>
             </div>
           </div>
 
@@ -1985,7 +1987,7 @@ function App() {
               <div className="source-batch-strip">
                 <div className="source-batch-strip-copy">
                   <strong>Recent import batches</strong>
-                  <span>Imported shipments now retain source and batch memory.</span>
+                  <span>Each import now keeps its source memory, row history, and batch identity.</span>
                 </div>
                 <div className="source-batch-list">
                   {sourceBatches.slice(0, 3).map((batch) => (
@@ -2006,7 +2008,7 @@ function App() {
               <div className="source-batch-strip">
                 <div className="source-batch-strip-copy">
                   <strong>Remembered mapping profiles</strong>
-                  <span>The portal now remembers import layouts by source sheet for later reuse.</span>
+                  <span>When a familiar sheet returns, the portal can reuse the layout instead of starting from scratch.</span>
                 </div>
                 <div className="source-batch-list">
                   {sourceMappings.slice(0, 3).map((profile) => (
@@ -2030,7 +2032,7 @@ function App() {
 
             <div className="button-row compact-row">
               <ActionButton type="button" tone="secondary" onClick={handleShipmentImportPreview}>
-                Upload and Detect
+                Review Workbook
               </ActionButton>
               {shipmentImportFile && <span className="file-chip">{shipmentImportFile.name}</span>}
             </div>
@@ -2043,14 +2045,14 @@ function App() {
                 <div>
                   <h3>Column Mapping</h3>
                   <p>
-                    Sheet <strong>{shipmentImportPreview.sheet_name}</strong>, Header Row{" "}
+                    Sheet <strong>{shipmentImportPreview.sheet_name}</strong>, header row{" "}
                     {shipmentImportPreview.header_row}
                   </p>
                 </div>
                 <div className="file-chip-row">
                   <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
                   {shipmentImportPreview.remembered_mapping?.container_number ? (
-                    <span className="file-chip">Previous mapping remembered</span>
+                    <span className="file-chip">Layout remembered</span>
                   ) : null}
                   {shipmentImportPreview.remembered_profile?.profile_label ? (
                     <span className="file-chip">{shipmentImportPreview.remembered_profile.profile_label}</span>
@@ -2088,7 +2090,7 @@ function App() {
                 disabled={shipmentImporting}
                 onClick={handleShipmentImportConfirm}
               >
-                {shipmentImporting ? "Importing..." : "Commit Import"}
+                {shipmentImporting ? "Importing..." : "Import Shipments"}
               </ActionButton>
 
               {shipmentImportReviewSummary?.invalid_count ? (
@@ -2115,12 +2117,13 @@ function App() {
             <div>
               <p className="eyebrow">Cloud Sources</p>
               <h2>Google Sheets</h2>
+              <p className="panel-copy">Save the source once so its sheet, tab, and mapping profile stay together.</p>
             </div>
           </div>
 
           <div className="stack-form">
             <p className="field-help">
-              Start defining Google Sheets sources now. The saved connection and mapping profile will power read-only sync in the next Phase 2 slice.
+              This is the source foundation. Once saved, the sheet becomes a repeatable intake path instead of a one-off file.
             </p>
 
             <label className="field-label" htmlFor="google_sheet_label">
@@ -2179,7 +2182,7 @@ function App() {
               <div className="source-batch-strip">
                 <div className="source-batch-strip-copy">
                   <strong>Saved Google Sheets connections</strong>
-                  <span>These source definitions are ready for the upcoming read-only sync flow.</span>
+                  <span>These source definitions are ready for repeatable sync and mapping reuse.</span>
                 </div>
                 <div className="source-batch-list">
                   {sourceConnections
@@ -2202,7 +2205,7 @@ function App() {
         <div className="panel-heading compact-heading">
           <div>
             <p className="eyebrow">Movement Summary</p>
-            <h2>Container Position Indicators</h2>
+            <h2>Shipment Position</h2>
           </div>
         </div>
         <div className="dashboard-header-metrics">
@@ -2418,9 +2421,9 @@ function App() {
             const canArchive = actionStatus !== "archived";
             return (
           <div className="action-modal-shell">
-            <section className="action-modal-hero">
+            <section className="action-modal-hero action-modal-hero-balanced">
               <div className="action-modal-copy">
-                <p className="action-modal-eyebrow">Shipment</p>
+                <p className="action-modal-eyebrow">Manage this shipment cycle</p>
                 <h4>{actionRow.customer_name || "Shipment group"}</h4>
                 <div className="action-modal-chips">
                   <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
@@ -2435,34 +2438,34 @@ function App() {
                   </span>
                 </div>
               </div>
-            </section>
 
-            <section className="action-modal-summary">
-              <div className="action-summary-item">
-                <span>State</span>
-                <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
-              </div>
-              <div className="action-summary-item">
-                <span>Movement Since</span>
-                <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
-              </div>
-              <div className="action-summary-item action-summary-item-wide">
-                <span>Current Location</span>
-                <strong>{actionRow.latest_location || "Not available"}</strong>
-              </div>
-              {["completed", "archived"].includes(actionStatus) ? (
-                <div className="action-summary-item">
-                  <span>Clearance Doc</span>
-                  <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
+              <div className="action-modal-facts">
+                <div className="action-fact-card">
+                  <span>State</span>
+                  <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
                 </div>
-              ) : null}
+                <div className="action-fact-card">
+                  <span>Movement Since</span>
+                  <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
+                </div>
+                <div className="action-fact-card action-fact-card-wide">
+                  <span>Current Location</span>
+                  <strong>{actionRow.latest_location || "Not available"}</strong>
+                </div>
+                {["completed", "archived"].includes(actionStatus) ? (
+                  <div className="action-fact-card">
+                    <span>Clearance Doc</span>
+                    <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
+                  </div>
+                ) : null}
+              </div>
             </section>
 
             <div className="action-modal-grid">
               <section className="action-modal-section">
                 <div className="action-modal-section-head">
                   <span>Inspect</span>
-                  <p>Refresh, review, or correct this shipment.</p>
+                  <p>Refresh the tracking, open the detail view, or correct shipment information.</p>
                 </div>
                 <div className="action-modal-buttons action-modal-buttons-stacked">
                   <ActionButton type="button" tone="secondary" onClick={async () => {
@@ -2497,7 +2500,7 @@ function App() {
               <section className="action-modal-section">
                 <div className="action-modal-section-head">
                   <span>Shipment State</span>
-                  <p>Advance the shipment only when the cycle really changes.</p>
+                  <p>Change the shipment only when the real operational stage has moved forward.</p>
                 </div>
                 <div className="action-modal-buttons action-modal-buttons-stacked">
                   {canActivate ? (
@@ -2530,10 +2533,10 @@ function App() {
                 </div>
               </section>
 
-              <section className="action-modal-section action-modal-section-danger">
+              <section className="action-modal-section action-modal-section-danger action-modal-section-full">
                 <div className="action-modal-section-head">
                   <span>Danger Zone</span>
-                  <p>This removes the shipment cycle from your working records.</p>
+                  <p>Delete only if this shipment cycle should no longer exist in your working record.</p>
                 </div>
                 <div className="action-modal-buttons action-modal-buttons-stacked">
                   <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
@@ -2705,7 +2708,7 @@ function App() {
 
       {recordsView && (
         <Modal
-          title={recordsView === "completed" ? "Completed Shipment Register" : "Archived Shipment Register"}
+          title={recordsView === "completed" ? "Completion Register" : "Archive Register"}
           onClose={() => {
             setRecordsView(null);
             setRecordsSearch("");
@@ -2715,13 +2718,13 @@ function App() {
           <div className="history-panel">
             <p className="panel-copy">
               {recordsView === "completed"
-                ? "BL groups that have been completed and retained for follow-through."
-                : "BL groups removed from the live dashboard but preserved for record keeping."}
+                ? "Finished shipment cycles kept for follow-through and record clarity."
+                : "Shipment cycles removed from the live board but kept in archive history."}
             </p>
             <div className="history-tools">
               <input
                 className="search-input"
-                placeholder="Search customer, BL, container, clearance doc"
+                placeholder="Search customer, BL, container, or clearance doc"
                 value={recordsSearch}
                 onChange={(event) => setRecordsSearch(event.target.value)}
               />
@@ -2762,10 +2765,10 @@ function App() {
                     <th>BL</th>
                     <th>Containers</th>
                     <th>Movement</th>
-                    <th>Date</th>
+                    <th>Movement Since</th>
                     <th>Clearance Doc</th>
                     {recordsView === "archived" ? <th>Restore</th> : null}
-                    <th>Audit</th>
+                    <th>Detail</th>
                   </tr>
                 </thead>
                 <tbody>
