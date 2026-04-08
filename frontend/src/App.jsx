@@ -233,7 +233,7 @@ function formatAuditDetails(details) {
 
   if (Array.isArray(details.container_numbers) && details.container_numbers.length) {
     if (typeof details.refreshed_count === "number") {
-      return `${details.refreshed_count} containers refreshed: ${details.container_numbers.join(", ")}`;
+      return `${details.refreshed_count} shipments refreshed: ${details.container_numbers.join(", ")}`;
     }
     return `Containers: ${details.container_numbers.join(", ")}`;
   }

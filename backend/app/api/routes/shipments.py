@@ -2432,7 +2432,7 @@ def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_
         details={"refreshed_count": len(unique_containers)},
     )
     db.commit()
-    return {"refreshed_count": len(unique_containers), "message": f"Refreshed {len(unique_containers)} active containers"}
+    return {"refreshed_count": len(unique_containers), "message": f"Refreshed {len(unique_containers)} active shipments"}
 
 
 @router.post("/refresh-all/start")
