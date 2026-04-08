@@ -1058,6 +1058,23 @@ function App() {
     return shipments.filter((shipment) => rowMatchesShipment(auditRow, shipment));
   }, [auditRow, shipments]);
 
+  useEffect(() => {
+    if (!auditRow) {
+      return;
+    }
+    const refreshedAuditRow =
+      normalizedRows.find((row) => row.group_key === auditRow.group_key) ||
+      normalizedRows.find((row) => rowMatchesShipment(auditRow, row));
+    if (!refreshedAuditRow) {
+      return;
+    }
+    const currentIdentity = `${auditRow.group_key}|${auditRow.latest_time}|${auditRow.last_refresh_at}|${auditRow.last_refresh_status}`;
+    const nextIdentity = `${refreshedAuditRow.group_key}|${refreshedAuditRow.latest_time}|${refreshedAuditRow.last_refresh_at}|${refreshedAuditRow.last_refresh_status}`;
+    if (currentIdentity !== nextIdentity) {
+      setAuditRow(refreshedAuditRow);
+    }
+  }, [auditRow, normalizedRows]);
+
   const visibleHistoryRows = useMemo(() => {
     const sourceRows = recordsView === "completed" ? completedHistoryRows : archivedHistoryRows;
     return sourceRows.filter((row) => {
@@ -2694,20 +2711,32 @@ function App() {
 
       {auditRow && (
         <Modal
-          title={`Shipment Audit${auditRow.bl_number ? ` - ${auditRow.bl_number}` : ` - ${auditRow.primary_container_number}`}`}
+          title={`Shipment Detail${auditRow.bl_number ? ` - ${auditRow.bl_number}` : ` - ${auditRow.primary_container_number}`}`}
           onClose={() => setAuditRow(null)}
           size="wide"
           actions={
-            <ActionButton
-              type="button"
-              tone="secondary"
-              onClick={() => {
-                openEditShipment(auditRow);
-                setAuditRow(null);
-              }}
-            >
-              Edit Details
-            </ActionButton>
+            <>
+              <ActionButton
+                type="button"
+                tone="secondary"
+                disabled={refreshing}
+                onClick={async () => {
+                  await handleRefreshGroup(auditRow);
+                }}
+              >
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </ActionButton>
+              <ActionButton
+                type="button"
+                tone="secondary"
+                onClick={() => {
+                  openEditShipment(auditRow);
+                  setAuditRow(null);
+                }}
+              >
+                Edit Details
+              </ActionButton>
+            </>
           }
         >
           <div className="audit-panel">
@@ -2733,25 +2762,16 @@ function App() {
               </section>
 
               <section className="audit-summary-card">
-                <p className="audit-detail-title">Live Check</p>
                 <div className="audit-summary-row">
-                  <span>Checked</span>
-                  <strong>{auditRow.last_refresh_at || "No live check yet"}</strong>
+                  <span>Last Updated</span>
+                  <strong>{auditRow.last_refresh_at || "No refresh yet"}</strong>
                 </div>
                 <div className="audit-summary-row">
-                  <span>Feeds</span>
+                  <span>Sources</span>
                   <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
                 </div>
                 <div className="audit-summary-row">
-                  <span>Intake</span>
-                  <strong>
-                    {auditRow.source_batch_id
-                      ? `${auditRow.source_label || "Imported"} · Batch #${auditRow.source_batch_id}`
-                      : auditRow.source_label || "Manual Entry"}
-                  </strong>
-                </div>
-                <div className="audit-summary-row">
-                  <span>Outcome</span>
+                  <span>Status</span>
                   <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
                 </div>
               </section>
