@@ -1699,6 +1699,11 @@ def _reconcile_orphan_shipments_for_user(db: Session, current_user: User) -> Non
 
 def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     suppressed_orphan_keys: set[tuple[str, str]] = set()
+    archived_containers = {
+        _clean_container(shipment.container_number)
+        for shipment in shipments
+        if shipment.shipment_status == "archived" and _clean_container(shipment.container_number)
+    }
     for shipment in shipments:
         if shipment.shipment_status == "archived":
             continue
@@ -1708,6 +1713,8 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for shipment in shipments:
         if shipment.shipment_status == "archived":
+            continue
+        if _clean_container(shipment.container_number) in archived_containers:
             continue
         if not _normalize_bl_number(shipment.bl_number) and _shipment_identity_key(shipment) in suppressed_orphan_keys:
             continue
@@ -2096,6 +2103,25 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
                 status_code=400,
                 detail="Complete the BL with a clearance document number before archiving.",
             )
+        archive_containers = sorted(
+            {
+                _clean_container(shipment.container_number)
+                for shipment in shipments
+                if _clean_container(shipment.container_number)
+            }
+        )
+        related_active_shipments = list(
+            db.execute(
+                _user_shipment_select(current_user).where(
+                    Shipment.shipment_status != "archived",
+                    Shipment.container_number.in_(archive_containers),
+                )
+            ).scalars()
+        )
+        shipments_by_id = {shipment.id: shipment for shipment in shipments}
+        for related in related_active_shipments:
+            shipments_by_id.setdefault(related.id, related)
+        shipments = list(shipments_by_id.values())
     for shipment in shipments:
         shipment.shipment_status = next_status
         if next_status == "completed":
