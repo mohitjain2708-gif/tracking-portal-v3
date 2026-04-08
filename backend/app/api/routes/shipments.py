@@ -501,6 +501,17 @@ def _effective_shipment_movement(shipment: Shipment) -> str:
     )
 
 
+def _effective_shipment_location(shipment: Shipment) -> str:
+    tracking_source = _clean_text(getattr(shipment, "tracking_source", "")).lower()
+    birgunj_arrival_date = _clean_text(getattr(shipment, "birgunj_arrival_date", ""))
+    latest_location = _clean_text(getattr(shipment, "latest_location", ""))
+    if "pristine" in tracking_source and birgunj_arrival_date:
+        return "ICD BIRGANJ, Samastipur"
+    if _has_reached_birgunj(shipment) and _is_arrived(latest_location):
+        return "ICD BIRGANJ, Samastipur"
+    return latest_location
+
+
 def _movement_since_date(
     movement_category: str,
     latest_time: str,
@@ -1432,6 +1443,7 @@ def _reconcile_customer_directory(db: Session) -> bool:
 
 def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     movement_category = _effective_shipment_movement(shipment)
+    effective_location = _effective_shipment_location(shipment)
     source_type = _clean_text(getattr(shipment, "source_type", "")) or "manual"
     source_label = _clean_text(getattr(shipment, "source_label", "")) or ("Manual Entry" if source_type == "manual" else "")
     movement_since_date = _movement_since_date(
@@ -1447,7 +1459,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "container_number": shipment.container_number,
         "bl_number": shipment.bl_number,
         "shipment_status": shipment.shipment_status,
-        "latest_location": shipment.latest_location,
+        "latest_location": effective_location,
         "latest_time": shipment.latest_time,
         "movement_since_date": movement_since_date,
         "port_arrival_date": shipment.port_arrival_date,

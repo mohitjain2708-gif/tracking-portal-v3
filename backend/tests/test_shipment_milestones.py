@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from app.api.routes.shipments import _derive_ldb_milestones, _movement_since_date
+from app.api.routes.shipments import _derive_ldb_milestones, _effective_shipment_location, _movement_since_date
+from app.models.shipment import Shipment
 
 
 def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
@@ -14,6 +15,19 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 
 class ShipmentMilestoneTests(unittest.TestCase):
+    def test_pristine_confirmed_birgunj_locks_effective_location(self) -> None:
+        shipment = Shipment(
+            customer_name="A & A International",
+            container_number="NYKU9734848",
+            bl_number="ONEYTPEF98416400",
+            latest_location="MUZAFFARPUR JN., Sonpur Division",
+            movement_category="On Rail",
+            tracking_source="ldb+pristine",
+            birgunj_arrival_date="26-03-2026",
+        )
+
+        self.assertEqual(_effective_shipment_location(shipment), "ICD BIRGANJ, Samastipur")
+
     def test_at_port_uses_first_port_entry_not_latest_internal_move(self) -> None:
         last_event = _entry(
             "PORT IN",
