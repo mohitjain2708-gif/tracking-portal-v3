@@ -1256,6 +1256,7 @@ def _adopt_demo_shipments_for_user(db: Session, current_user: User) -> None:
 def _ensure_user_scope_ready(db: Session, current_user: User) -> None:
     _ensure_storage_ready(db)
     _adopt_demo_shipments_for_user(db, current_user)
+    _reconcile_orphan_shipments_for_user(db, current_user)
 
 
 def _user_shipment_select(current_user: User):
@@ -1580,10 +1581,63 @@ def _first_non_empty(values: list[str]) -> str:
     return ""
 
 
+def _shipment_identity_key(shipment: Shipment | dict[str, Any]) -> tuple[str, str]:
+    if isinstance(shipment, Shipment):
+        customer_name = shipment.customer_name
+        container_number = shipment.container_number
+    else:
+        customer_name = shipment.get("customer_name", "")
+        container_number = shipment.get("container_number", "")
+    return _format_customer_name(customer_name), _clean_container(container_number)
+
+
+def _reconcile_orphan_shipments_for_user(db: Session, current_user: User) -> None:
+    shipments = list(db.execute(_user_shipment_select(current_user)).scalars())
+    if not shipments:
+        return
+
+    valid_by_key: dict[tuple[str, str], list[Shipment]] = {}
+    orphan_rows: list[Shipment] = []
+    for shipment in shipments:
+        identity_key = _shipment_identity_key(shipment)
+        if not identity_key[1]:
+            continue
+        if _normalize_bl_number(shipment.bl_number):
+            valid_by_key.setdefault(identity_key, []).append(shipment)
+        else:
+            orphan_rows.append(shipment)
+
+    deleted_count = 0
+    for orphan in orphan_rows:
+        matches = valid_by_key.get(_shipment_identity_key(orphan), [])
+        if len(matches) == 1:
+            db.delete(orphan)
+            deleted_count += 1
+
+    if deleted_count:
+        _log_audit_event(
+            db,
+            current_user.id,
+            "shipment_orphans_reconciled",
+            shipment_status="active",
+            details={"deleted_count": deleted_count},
+        )
+        db.commit()
+
+
 def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
+    suppressed_orphan_keys: set[tuple[str, str]] = set()
+    for shipment in shipments:
+        if shipment.shipment_status == "archived":
+            continue
+        if _normalize_bl_number(shipment.bl_number):
+            suppressed_orphan_keys.add(_shipment_identity_key(shipment))
+
     grouped: dict[str, list[dict[str, Any]]] = {}
     for shipment in shipments:
         if shipment.shipment_status == "archived":
+            continue
+        if not _normalize_bl_number(shipment.bl_number) and _shipment_identity_key(shipment) in suppressed_orphan_keys:
             continue
         row = _shipment_to_dict(shipment)
         normalized_bl = _normalize_bl_number(row.get("bl_number"))
