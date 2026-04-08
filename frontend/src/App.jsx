@@ -2396,7 +2396,7 @@ function App() {
                             event.stopPropagation();
                             setActionRow(row);
                           }}>
-                            Take Action
+                            Manage
                           </ActionButton>
                         </div>
                       </td>
@@ -2410,7 +2410,13 @@ function App() {
       </section>
 
       {actionRow && (
-        <Modal title={`Shipment Controls${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`} onClose={() => setActionRow(null)}>
+        <Modal title={`Manage Shipment${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`} onClose={() => setActionRow(null)}>
+          {(() => {
+            const actionStatus = cleanText(actionRow.shipment_status).toLowerCase();
+            const canActivate = actionStatus !== "active";
+            const canComplete = !["completed", "archived"].includes(actionStatus);
+            const canArchive = actionStatus !== "archived";
+            return (
           <div className="action-modal-shell">
             <section className="action-modal-hero">
               <div className="action-modal-copy">
@@ -2429,102 +2435,116 @@ function App() {
                   </span>
                 </div>
               </div>
-              <div className="action-modal-facts">
-                <div>
-                  <span>Status</span>
-                  <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
-                </div>
-                <div>
-                  <span>Movement Since</span>
-                  <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
-                </div>
-                <div>
-                  <span>Latest Location</span>
-                  <strong>{actionRow.latest_location || "Not available"}</strong>
-                </div>
-                {["completed", "archived"].includes(cleanText(actionRow.shipment_status).toLowerCase()) ? (
-                  <div>
-                    <span>Clearance Doc</span>
-                    <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
-                  </div>
-                ) : null}
-              </div>
             </section>
 
-            <section className="action-modal-section">
-              <div className="action-modal-section-head">
-                <span>Inspect</span>
+            <section className="action-modal-summary">
+              <div className="action-summary-item">
+                <span>State</span>
+                <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
               </div>
-              <div className="action-modal-buttons">
-                <ActionButton type="button" tone="secondary" onClick={async () => {
-                  await handleRefreshGroup(actionRow);
-                  setActionRow(null);
-                }}>
-                  Refresh Shipment
-                </ActionButton>
-                <ActionButton
-                  type="button"
-                  tone="ghost"
-                  onClick={() => {
-                    setAuditRow(actionRow);
+              <div className="action-summary-item">
+                <span>Movement Since</span>
+                <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
+              </div>
+              <div className="action-summary-item action-summary-item-wide">
+                <span>Current Location</span>
+                <strong>{actionRow.latest_location || "Not available"}</strong>
+              </div>
+              {["completed", "archived"].includes(actionStatus) ? (
+                <div className="action-summary-item">
+                  <span>Clearance Doc</span>
+                  <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
+                </div>
+              ) : null}
+            </section>
+
+            <div className="action-modal-grid">
+              <section className="action-modal-section">
+                <div className="action-modal-section-head">
+                  <span>Inspect</span>
+                  <p>Refresh, review, or correct this shipment.</p>
+                </div>
+                <div className="action-modal-buttons action-modal-buttons-stacked">
+                  <ActionButton type="button" tone="secondary" onClick={async () => {
+                    await handleRefreshGroup(actionRow);
                     setActionRow(null);
-                  }}
-                >
-                  Open Detail
-                </ActionButton>
-                <ActionButton
-                  type="button"
-                  tone="ghost"
-                  onClick={() => {
-                    openEditShipment(actionRow);
-                    setActionRow(null);
-                  }}
-                >
-                  Edit Details
-                </ActionButton>
-              </div>
-            </section>
+                  }}>
+                    Refresh Shipment
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
+                    onClick={() => {
+                      setAuditRow(actionRow);
+                      setActionRow(null);
+                    }}
+                  >
+                    Open Detail
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
+                    onClick={() => {
+                      openEditShipment(actionRow);
+                      setActionRow(null);
+                    }}
+                  >
+                    Edit Details
+                  </ActionButton>
+                </div>
+              </section>
 
-            <section className="action-modal-section">
-              <div className="action-modal-section-head">
-                <span>Update Status</span>
-              </div>
-              <div className="action-modal-buttons">
-                <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
-                  Activate
-                </ActionButton>
-                <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
-                  Complete
-                </ActionButton>
-                <ActionButton
-                  type="button"
-                  tone="ghost"
-                  onClick={() => {
-                    if (!cleanText(actionRow?.clearance_doc_number)) {
-                      setFeedback({
-                        tone: "warning",
-                        text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
-                      });
-                    }
-                    setConfirmAction({ type: "archived", row: actionRow });
-                  }}
-                >
-                  Archive
-                </ActionButton>
-              </div>
-            </section>
+              <section className="action-modal-section">
+                <div className="action-modal-section-head">
+                  <span>Shipment State</span>
+                  <p>Advance the shipment only when the cycle really changes.</p>
+                </div>
+                <div className="action-modal-buttons action-modal-buttons-stacked">
+                  {canActivate ? (
+                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
+                      Restore to Live
+                    </ActionButton>
+                  ) : null}
+                  {canComplete ? (
+                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
+                      Mark Complete
+                    </ActionButton>
+                  ) : null}
+                  {canArchive ? (
+                    <ActionButton
+                      type="button"
+                      tone="ghost"
+                      onClick={() => {
+                        if (!cleanText(actionRow?.clearance_doc_number)) {
+                          setFeedback({
+                            tone: "warning",
+                            text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
+                          });
+                        }
+                        setConfirmAction({ type: "archived", row: actionRow });
+                      }}
+                    >
+                      Move to Archive
+                    </ActionButton>
+                  ) : null}
+                </div>
+              </section>
 
-            <section className="action-modal-section action-modal-section-danger">
-              <div className="action-modal-section-head">
-                <span>Danger Zone</span>
-              </div>
-              <div className="action-modal-buttons">
-                <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
-                  Delete Shipment
-                </ActionButton>
-              </div>
-            </section>
+              <section className="action-modal-section action-modal-section-danger">
+                <div className="action-modal-section-head">
+                  <span>Danger Zone</span>
+                  <p>This removes the shipment cycle from your working records.</p>
+                </div>
+                <div className="action-modal-buttons action-modal-buttons-stacked">
+                  <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
+                    Delete Shipment
+                  </ActionButton>
+                </div>
+              </section>
+            </div>
           </div>
+            );
+          })()}
         </Modal>
       )}
 

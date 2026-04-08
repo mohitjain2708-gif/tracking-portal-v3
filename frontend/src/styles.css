@@ -530,6 +530,7 @@ select:focus {
 .button {
   min-height: 36px;
   padding: 0 14px;
+  border: 1px solid transparent;
   border-radius: 9px;
   font-size: 12px;
   font-weight: 700;
@@ -559,6 +560,21 @@ select:focus {
 .button:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.button:hover:not(:disabled) {
+  border-color: rgba(19, 58, 99, 0.12);
+}
+
+.button:focus-visible,
+.modal-close:focus-visible,
+.header-sort:focus-visible,
+.movement-identifier:focus-visible,
+.document-link:focus-visible,
+.document-mini-link:focus-visible,
+.auth-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(13, 59, 102, 0.12);
 }
 
 .button-row,
@@ -1131,8 +1147,14 @@ select:focus {
 }
 
 .modal-close {
-  background: transparent;
-  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #f3f6f9;
+  color: #435468;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1146,19 +1168,19 @@ select:focus {
 
 .action-modal-shell {
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .action-modal-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.95fr);
-  gap: 18px;
-  padding: 4px 0 2px;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  padding: 2px 0 0;
 }
 
 .action-modal-copy {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .action-modal-eyebrow {
@@ -1183,44 +1205,63 @@ select:focus {
   align-items: center;
 }
 
-.action-modal-facts {
+.action-modal-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 18px;
-  padding: 18px 20px;
-  border: 1px solid rgba(19, 58, 99, 0.1);
-  border-radius: 24px;
-  background: rgba(248, 251, 255, 0.9);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
 }
 
-.action-modal-facts div {
+.action-summary-item {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  padding: 12px 18px;
+  min-height: 88px;
+  align-content: start;
 }
 
-.action-modal-facts span {
+.action-summary-item + .action-summary-item {
+  border-left: 1px solid var(--border);
+}
+
+.action-summary-item-wide {
+  grid-column: span 1;
+}
+
+.action-summary-item span {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-.action-modal-facts strong {
-  font-size: 16px;
+.action-summary-item strong {
+  font-size: 20px;
   color: var(--text);
+  line-height: 1.2;
+}
+
+.action-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .action-modal-section {
   display: grid;
-  gap: 12px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: rgba(248, 251, 255, 0.7);
+  align-content: start;
 }
 
 .action-modal-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  gap: 6px;
 }
 
 .action-modal-section-head span {
@@ -1230,14 +1271,30 @@ select:focus {
   letter-spacing: 0.08em;
 }
 
+.action-modal-section-head p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .action-modal-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
+.action-modal-buttons-stacked {
+  display: grid;
+  gap: 10px;
+}
+
+.action-modal-buttons-stacked .button {
+  width: 100%;
+  justify-content: center;
+}
+
 .action-modal-section-danger {
-  padding-top: 16px;
+  background: rgba(255, 241, 239, 0.55);
 }
 
 .action-modal-section-danger .action-modal-section-head span {
@@ -1264,12 +1321,17 @@ select:focus {
 }
 
 @media (max-width: 980px) {
-  .action-modal-hero {
+  .action-modal-summary {
     grid-template-columns: 1fr;
   }
 
-  .action-modal-facts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .action-summary-item + .action-summary-item {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .action-modal-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1278,8 +1340,9 @@ select:focus {
     font-size: 32px;
   }
 
-  .action-modal-facts {
-    grid-template-columns: 1fr;
+  .action-summary-item {
+    padding-inline: 0;
+    min-height: auto;
   }
 }
 
