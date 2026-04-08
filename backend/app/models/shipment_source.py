@@ -69,3 +69,21 @@ class RawSourceRow(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+class SourceMappingProfile(Base):
+    __tablename__ = "source_mapping_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="excel_upload")
+    source_sheet: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    profile_label: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    mapping_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

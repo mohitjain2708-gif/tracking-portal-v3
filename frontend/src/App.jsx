@@ -738,6 +738,7 @@ function App() {
   const [shipmentImportReviewOpen, setShipmentImportReviewOpen] = useState(false);
   const [sourceBatches, setSourceBatches] = useState([]);
   const [sourceBatchDetail, setSourceBatchDetail] = useState(null);
+  const [sourceMappings, setSourceMappings] = useState([]);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
@@ -841,15 +842,17 @@ function App() {
     }
 
     try {
-      const [shipmentsData, dashboardData, sourceBatchData] = await Promise.all([
+      const [shipmentsData, dashboardData, sourceBatchData, sourceMappingData] = await Promise.all([
         api.listShipments(),
         api.getShipmentDashboard(),
         api.listShipmentSourceBatches(8),
+        api.listShipmentSourceMappings(),
       ]);
 
       setShipments(Array.isArray(shipmentsData) ? shipmentsData : []);
       setDashboardRows(Array.isArray(dashboardData?.rows) ? dashboardData.rows : []);
       setSourceBatches(Array.isArray(sourceBatchData) ? sourceBatchData : []);
+      setSourceMappings(Array.isArray(sourceMappingData) ? sourceMappingData : []);
       setDashboardIdentifiers(dashboardData?.identifiers || {
         total_at_icd_birgunj: 0,
         today_arrivals: 0,
@@ -1904,6 +1907,22 @@ function App() {
                 </div>
               </div>
             ) : null}
+            {sourceMappings.length ? (
+              <div className="source-batch-strip">
+                <div className="source-batch-strip-copy">
+                  <strong>Remembered mapping profiles</strong>
+                  <span>The portal now remembers import layouts by source sheet for later reuse.</span>
+                </div>
+                <div className="source-batch-list">
+                  {sourceMappings.slice(0, 3).map((profile) => (
+                    <span key={profile.id} className="source-batch-chip source-batch-chip-static">
+                      <span>{profile.profile_label || profile.source_sheet || "Mapping Profile"}</span>
+                      <strong>{profile.source_sheet || "General"}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <label className="field-label" htmlFor="shipment_import_file">
               Workbook File
             </label>
@@ -1937,6 +1956,9 @@ function App() {
                   <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
                   {shipmentImportPreview.remembered_mapping?.container_number ? (
                     <span className="file-chip">Previous mapping remembered</span>
+                  ) : null}
+                  {shipmentImportPreview.remembered_profile?.profile_label ? (
+                    <span className="file-chip">{shipmentImportPreview.remembered_profile.profile_label}</span>
                   ) : null}
                 </div>
               </div>

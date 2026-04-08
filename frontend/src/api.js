@@ -287,6 +287,8 @@ export const api = {
 
   listShipmentSources: () => request("/api/shipments/sources"),
 
+  listShipmentSourceMappings: () => request("/api/shipments/source-mappings"),
+
   listShipmentSourceBatches: (limit = 20) =>
     request(`/api/shipments/source-batches?limit=${encodeURIComponent(limit)}`),
 

@@ -27,7 +27,7 @@ from app.core.security import hash_password
 from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
-from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource
+from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource, SourceMappingProfile
 from app.models.upload_session import UploadSession
 from app.models.user import User
 from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
@@ -1493,33 +1493,72 @@ def _load_recent_mapping_for_sheet(
 ) -> dict[str, Any]:
     normalized_sheet = _clean_text(sheet_name)
     if normalized_sheet:
-        matching_batch = db.execute(
-            select(ShipmentBatch)
+        profile = db.execute(
+            select(SourceMappingProfile)
             .where(
-                ShipmentBatch.user_id == current_user.id,
-                ShipmentBatch.source_sheet == normalized_sheet,
+                SourceMappingProfile.user_id == current_user.id,
+                SourceMappingProfile.source_type == "excel_upload",
+                SourceMappingProfile.source_sheet == normalized_sheet,
             )
-            .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+            .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
             .limit(1)
         ).scalar_one_or_none()
-        if matching_batch:
+        if profile:
             try:
-                return json.loads(matching_batch.mapping_json or "{}")
+                return json.loads(profile.mapping_json or "{}")
             except Exception:
                 return {}
 
-    recent_batch = db.execute(
-        select(ShipmentBatch)
-        .where(ShipmentBatch.user_id == current_user.id)
-        .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+    recent_profile = db.execute(
+        select(SourceMappingProfile)
+        .where(
+            SourceMappingProfile.user_id == current_user.id,
+            SourceMappingProfile.source_type == "excel_upload",
+        )
+        .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if not recent_batch:
+    if not recent_profile:
         return {}
     try:
-        return json.loads(recent_batch.mapping_json or "{}")
+        return json.loads(recent_profile.mapping_json or "{}")
     except Exception:
         return {}
+
+
+def _upsert_mapping_profile(
+    db: Session,
+    current_user: User,
+    *,
+    source_type: str,
+    source_sheet: str,
+    profile_label: str,
+    mapping_json: dict[str, Any],
+) -> SourceMappingProfile:
+    normalized_sheet = _clean_text(source_sheet)
+    profile = db.execute(
+        select(SourceMappingProfile).where(
+            SourceMappingProfile.user_id == current_user.id,
+            SourceMappingProfile.source_type == source_type,
+            SourceMappingProfile.source_sheet == normalized_sheet,
+        )
+    ).scalar_one_or_none()
+    if profile:
+        profile.profile_label = profile_label or profile.profile_label
+        profile.mapping_json = _json_dumps(mapping_json)
+        profile.updated_at = datetime.utcnow()
+        return profile
+
+    profile = SourceMappingProfile(
+        user_id=current_user.id,
+        source_type=source_type,
+        source_sheet=normalized_sheet,
+        profile_label=profile_label or normalized_sheet or source_type,
+        mapping_json=_json_dumps(mapping_json),
+    )
+    db.add(profile)
+    db.flush()
+    return profile
 
 
 def _resolve_default_user_id(db: Session) -> int:
@@ -2205,6 +2244,29 @@ def list_sources(db: Session = Depends(get_db), current_user: User = Depends(get
     ]
 
 
+@router.get("/source-mappings")
+def list_source_mappings(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    profiles = list(
+        db.execute(
+            select(SourceMappingProfile)
+            .where(SourceMappingProfile.user_id == current_user.id)
+            .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
+        ).scalars()
+    )
+    return [
+        {
+            "id": profile.id,
+            "source_type": profile.source_type,
+            "source_sheet": profile.source_sheet,
+            "profile_label": profile.profile_label,
+            "mapping_json": json.loads(profile.mapping_json or "{}"),
+            "updated_at": profile.updated_at.isoformat(),
+        }
+        for profile in profiles
+    ]
+
+
 @router.get("/source-batches")
 def list_source_batches(
     limit: int = 20,
@@ -2706,6 +2768,16 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     db.add(session)
     db.commit()
     remembered_mapping = _load_recent_mapping_for_sheet(db, current_user, sheet_name)
+    remembered_profile = db.execute(
+        select(SourceMappingProfile)
+        .where(
+            SourceMappingProfile.user_id == current_user.id,
+            SourceMappingProfile.source_type == "excel_upload",
+            SourceMappingProfile.source_sheet == _clean_text(sheet_name),
+        )
+        .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
     return {
         "temp_file_token": token,
         "upload_session_id": session.id,
@@ -2715,6 +2787,11 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
         "available_columns": headers,
         "preview_rows": preview_rows,
         "remembered_mapping": remembered_mapping,
+        "remembered_profile": {
+            "id": remembered_profile.id,
+            "profile_label": remembered_profile.profile_label,
+            "source_sheet": remembered_profile.source_sheet,
+        } if remembered_profile else None,
     }
 
 
@@ -2792,6 +2869,14 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "original_filename": upload_session.original_filename if upload_session else Path(file_path).name,
             "sheet_name": sheet_name,
         },
+    )
+    mapping_profile = _upsert_mapping_profile(
+        db,
+        current_user,
+        source_type="excel_upload",
+        source_sheet=sheet_name,
+        profile_label=f"Excel - {sheet_name}",
+        mapping_json=mapping_json,
     )
     batch = _create_import_batch(
         db,
@@ -2879,6 +2964,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "source_batch_id": batch.id,
             "source_type": source.source_type,
             "source_label": source.source_label,
+            "mapping_profile_id": mapping_profile.id,
         },
     )
     db.commit()
@@ -2894,6 +2980,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         "source_batch_id": batch.id,
         "source_label": source.source_label,
         "source_reference": source.source_reference,
+        "mapping_profile_id": mapping_profile.id,
         "total_rows": imported_count + duplicate_count + skipped_blank_count + skipped_invalid_count,
     }
 

@@ -1241,6 +1241,16 @@ select:focus {
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
 }
 
+.source-batch-chip-static {
+  cursor: default;
+}
+
+.source-batch-chip-static:hover {
+  transform: none;
+  border-color: rgba(19, 58, 99, 0.12);
+  box-shadow: none;
+}
+
 .source-batch-chip span {
   font-size: 12px;
   color: var(--muted);
