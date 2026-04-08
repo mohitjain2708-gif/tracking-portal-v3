@@ -285,6 +285,14 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  listShipmentSources: () => request("/api/shipments/sources"),
+
+  listShipmentSourceBatches: (limit = 20) =>
+    request(`/api/shipments/source-batches?limit=${encodeURIComponent(limit)}`),
+
+  getShipmentSourceBatch: (batchId) =>
+    request(`/api/shipments/source-batches/${encodeURIComponent(batchId)}`),
+
   validateShipmentImport: (payload) =>
     request("/api/shipments/import-validate", {
       method: "POST",

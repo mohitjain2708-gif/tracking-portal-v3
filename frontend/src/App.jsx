@@ -736,6 +736,8 @@ function App() {
   const [shipmentImportReviewRows, setShipmentImportReviewRows] = useState([]);
   const [shipmentImportReviewSummary, setShipmentImportReviewSummary] = useState(null);
   const [shipmentImportReviewOpen, setShipmentImportReviewOpen] = useState(false);
+  const [sourceBatches, setSourceBatches] = useState([]);
+  const [sourceBatchDetail, setSourceBatchDetail] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
@@ -839,13 +841,15 @@ function App() {
     }
 
     try {
-      const [shipmentsData, dashboardData] = await Promise.all([
+      const [shipmentsData, dashboardData, sourceBatchData] = await Promise.all([
         api.listShipments(),
         api.getShipmentDashboard(),
+        api.listShipmentSourceBatches(8),
       ]);
 
       setShipments(Array.isArray(shipmentsData) ? shipmentsData : []);
       setDashboardRows(Array.isArray(dashboardData?.rows) ? dashboardData.rows : []);
+      setSourceBatches(Array.isArray(sourceBatchData) ? sourceBatchData : []);
       setDashboardIdentifiers(dashboardData?.identifiers || {
         total_at_icd_birgunj: 0,
         today_arrivals: 0,
@@ -1226,7 +1230,13 @@ function App() {
     try {
       const preview = await api.previewShipmentImport(shipmentImportFile);
       setShipmentImportPreview(preview);
-      setShipmentImportMapping(guessColumns(preview.available_columns));
+      const guessedMapping = guessColumns(preview.available_columns);
+      const rememberedMapping = preview?.remembered_mapping || {};
+      setShipmentImportMapping({
+        customer_name: rememberedMapping.customer_name || guessedMapping.customer_name || "",
+        container_number: rememberedMapping.container_number || guessedMapping.container_number || "",
+        bl_number: rememberedMapping.bl_number || guessedMapping.bl_number || "",
+      });
       setFeedback({ tone: "success", text: "Columns detected. Review the mapping and continue." });
     } catch (error) {
       const isFetchFailure = String(error?.message || "").toLowerCase().includes("fetch");
@@ -1440,6 +1450,15 @@ function App() {
       setRefreshing(false);
     }
   }, [loadDashboard]);
+
+  const openSourceBatchDetail = useCallback(async (batchId) => {
+    try {
+      const detail = await api.getShipmentSourceBatch(batchId);
+      setSourceBatchDetail(detail);
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Failed to load source batch details" });
+    }
+  }, []);
 
   const handleRefreshGroup = useCallback(
     async (row) => {
@@ -1864,6 +1883,27 @@ function App() {
           </div>
 
           <div className="stack-form">
+            {sourceBatches.length ? (
+              <div className="source-batch-strip">
+                <div className="source-batch-strip-copy">
+                  <strong>Recent import batches</strong>
+                  <span>Imported shipments now retain source and batch memory.</span>
+                </div>
+                <div className="source-batch-list">
+                  {sourceBatches.slice(0, 3).map((batch) => (
+                    <button
+                      key={batch.id}
+                      type="button"
+                      className="source-batch-chip"
+                      onClick={() => openSourceBatchDetail(batch.id)}
+                    >
+                      <span>{batch.batch_label || batch.source_label || `Batch #${batch.id}`}</span>
+                      <strong>#{batch.id}</strong>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <label className="field-label" htmlFor="shipment_import_file">
               Workbook File
             </label>
@@ -1893,7 +1933,12 @@ function App() {
                     {shipmentImportPreview.header_row}
                   </p>
                 </div>
-                <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
+                <div className="file-chip-row">
+                  <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
+                  {shipmentImportPreview.remembered_mapping?.container_number ? (
+                    <span className="file-chip">Previous mapping remembered</span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="mapping-grid">
@@ -2797,6 +2842,95 @@ function App() {
                   </div>
                 </section>
               ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {sourceBatchDetail && (
+        <Modal
+          title={`Import Batch #${sourceBatchDetail.id}`}
+          onClose={() => setSourceBatchDetail(null)}
+          size="wide"
+        >
+          <div className="history-panel">
+            <div className="audit-detail-grid">
+              <section className="audit-detail-card">
+                <p className="audit-detail-title">Source</p>
+                <div className="audit-kv-grid">
+                  <div>
+                    <span>Label</span>
+                    <strong>{sourceBatchDetail.source?.source_label || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Reference</span>
+                    <strong>{sourceBatchDetail.source?.source_reference || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Sheet</span>
+                    <strong>{sourceBatchDetail.source_sheet || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Header Row</span>
+                    <strong>{sourceBatchDetail.header_row || "-"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="audit-detail-card">
+                <p className="audit-detail-title">Batch Summary</p>
+                <div className="audit-kv-grid">
+                  <div>
+                    <span>Imported</span>
+                    <strong>{sourceBatchDetail.imported_count || 0}</strong>
+                  </div>
+                  <div>
+                    <span>Duplicates</span>
+                    <strong>{sourceBatchDetail.duplicate_count || 0}</strong>
+                  </div>
+                  <div>
+                    <span>Invalid</span>
+                    <strong>{sourceBatchDetail.invalid_count || 0}</strong>
+                  </div>
+                  <div>
+                    <span>Blank</span>
+                    <strong>{sourceBatchDetail.skipped_blank_count || 0}</strong>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Row</th>
+                    <th>Status</th>
+                    <th>Customer</th>
+                    <th>BL</th>
+                    <th>Container</th>
+                    <th>Issue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(sourceBatchDetail.rows || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="empty-cell">No preserved source rows available.</td>
+                    </tr>
+                  ) : (
+                    sourceBatchDetail.rows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.source_row_number || "-"}</td>
+                        <td>{row.row_status || "-"}</td>
+                        <td>{row.mapped_row?.customer_name || "-"}</td>
+                        <td>{row.mapped_row?.bl_number || "-"}</td>
+                        <td>{row.mapped_row?.container_number || "-"}</td>
+                        <td>{row.row_error || "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </Modal>

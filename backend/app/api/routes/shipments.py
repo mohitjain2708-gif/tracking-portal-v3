@@ -1486,6 +1486,42 @@ def _record_raw_import_rows(
     return rows_by_source_number
 
 
+def _load_recent_mapping_for_sheet(
+    db: Session,
+    current_user: User,
+    sheet_name: str,
+) -> dict[str, Any]:
+    normalized_sheet = _clean_text(sheet_name)
+    if normalized_sheet:
+        matching_batch = db.execute(
+            select(ShipmentBatch)
+            .where(
+                ShipmentBatch.user_id == current_user.id,
+                ShipmentBatch.source_sheet == normalized_sheet,
+            )
+            .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if matching_batch:
+            try:
+                return json.loads(matching_batch.mapping_json or "{}")
+            except Exception:
+                return {}
+
+    recent_batch = db.execute(
+        select(ShipmentBatch)
+        .where(ShipmentBatch.user_id == current_user.id)
+        .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if not recent_batch:
+        return {}
+    try:
+        return json.loads(recent_batch.mapping_json or "{}")
+    except Exception:
+        return {}
+
+
 def _resolve_default_user_id(db: Session) -> int:
     user = db.execute(select(User).where(User.email == DEFAULT_LOCAL_USER_EMAIL)).scalar_one_or_none()
     if user:
@@ -2185,6 +2221,11 @@ def list_source_batches(
             .limit(safe_limit)
         ).scalars()
     )
+    source_ids = sorted({batch.source_id for batch in batches if batch.source_id})
+    source_map = {
+        source.id: source
+        for source in db.execute(select(ShipmentSource).where(ShipmentSource.id.in_(source_ids))).scalars()
+    } if source_ids else {}
     return [
         {
             "id": batch.id,
@@ -2198,9 +2239,66 @@ def list_source_batches(
             "invalid_count": batch.invalid_count,
             "skipped_blank_count": batch.skipped_blank_count,
             "created_at": batch.created_at.isoformat(),
+            "source_label": source_map.get(batch.source_id).source_label if source_map.get(batch.source_id) else "",
+            "source_type": source_map.get(batch.source_id).source_type if source_map.get(batch.source_id) else "",
+            "source_reference": source_map.get(batch.source_id).source_reference if source_map.get(batch.source_id) else "",
         }
         for batch in batches
     ]
+
+
+@router.get("/source-batches/{batch_id}")
+def get_source_batch_detail(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    batch = db.get(ShipmentBatch, batch_id)
+    if not batch or batch.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Source batch not found")
+    source = db.get(ShipmentSource, batch.source_id) if batch.source_id else None
+    raw_rows = list(
+        db.execute(
+            select(RawSourceRow)
+            .where(
+                RawSourceRow.user_id == current_user.id,
+                RawSourceRow.batch_id == batch.id,
+            )
+            .order_by(RawSourceRow.source_row_number.asc(), RawSourceRow.id.asc())
+            .limit(50)
+        ).scalars()
+    )
+    return {
+        "id": batch.id,
+        "batch_label": batch.batch_label,
+        "source_sheet": batch.source_sheet,
+        "header_row": batch.header_row,
+        "status": batch.status,
+        "imported_count": batch.imported_count,
+        "duplicate_count": batch.duplicate_count,
+        "invalid_count": batch.invalid_count,
+        "skipped_blank_count": batch.skipped_blank_count,
+        "created_at": batch.created_at.isoformat(),
+        "source": {
+            "id": source.id if source else 0,
+            "source_type": source.source_type if source else "",
+            "source_label": source.source_label if source else "",
+            "source_reference": source.source_reference if source else "",
+            "last_sync_at": source.last_sync_at.isoformat() if source and source.last_sync_at else "",
+        },
+        "rows": [
+            {
+                "id": row.id,
+                "source_row_number": row.source_row_number,
+                "row_status": row.row_status,
+                "row_error": row.row_error,
+                "raw_row": json.loads(row.raw_row_json or "{}"),
+                "mapped_row": json.loads(row.mapped_row_json or "{}"),
+            }
+            for row in raw_rows
+        ],
+    }
 
 
 @router.get("/dashboard")
@@ -2607,6 +2705,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     )
     db.add(session)
     db.commit()
+    remembered_mapping = _load_recent_mapping_for_sheet(db, current_user, sheet_name)
     return {
         "temp_file_token": token,
         "upload_session_id": session.id,
@@ -2615,6 +2714,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
         "header_row": header_row,
         "available_columns": headers,
         "preview_rows": preview_rows,
+        "remembered_mapping": remembered_mapping,
     }
 
 
