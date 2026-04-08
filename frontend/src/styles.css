@@ -1545,6 +1545,61 @@ select:focus {
   gap: 14px;
 }
 
+.related-cycles-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.related-cycle-list {
+  display: grid;
+  gap: 12px;
+}
+
+.related-cycle-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.related-cycle-copy {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.related-cycle-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.related-cycle-item h4 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.related-cycle-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.related-cycle-facts span {
+  display: inline-flex;
+  align-items: center;
+}
+
 .details-cell {
   max-width: 420px;
   white-space: pre-wrap;
@@ -1790,6 +1845,10 @@ select:focus {
   }
 
   .audit-kv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .related-cycle-item {
     grid-template-columns: 1fr;
   }
 

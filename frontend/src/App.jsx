@@ -1059,6 +1059,45 @@ function App() {
     return shipments.filter((shipment) => rowMatchesShipment(auditRow, shipment));
   }, [auditRow, shipments]);
 
+  const relatedCycleRows = useMemo(() => {
+    if (!auditRow) {
+      return [];
+    }
+
+    const currentContainers = new Set(
+      (auditRow.container_numbers?.length ? auditRow.container_numbers : [auditRow.primary_container_number])
+        .map((value) => cleanText(value).toUpperCase())
+        .filter(Boolean)
+    );
+    if (!currentContainers.size) {
+      return [];
+    }
+
+    const currentBl = cleanText(auditRow.bl_number).toUpperCase().replace(/\s+/g, "");
+    const currentGroupKey = cleanText(auditRow.group_key);
+
+    const candidateShipments = shipments.filter((shipment) => {
+      const shipmentContainer = cleanText(shipment.container_number).toUpperCase();
+      if (!currentContainers.has(shipmentContainer)) {
+        return false;
+      }
+      const shipmentBl = cleanText(shipment.bl_number).toUpperCase().replace(/\s+/g, "");
+      if (currentBl) {
+        return shipmentBl && shipmentBl !== currentBl;
+      }
+      return !rowMatchesShipment(auditRow, shipment);
+    });
+
+    return buildGroupedRowsFromShipments(candidateShipments)
+      .filter((row) => cleanText(row.group_key) !== currentGroupKey)
+      .sort((left, right) =>
+        compareDateStrings(
+          right.movement_since_date || right.latest_time,
+          left.movement_since_date || left.latest_time
+        )
+      );
+  }, [auditRow, shipments]);
+
   useEffect(() => {
     if (!auditRow) {
       return;
@@ -2396,12 +2435,12 @@ function App() {
                   <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
                 </div>
                 <div>
-                  <span>Movement</span>
-                  <strong>{actionRow.movement_category || "Hi Seas"}</strong>
+                  <span>Movement Since</span>
+                  <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
                 </div>
                 <div>
-                  <span>Containers</span>
-                  <strong>{actionRow.container_count || actionRow.container_numbers?.length || 1}</strong>
+                  <span>Latest Location</span>
+                  <strong>{actionRow.latest_location || "Not available"}</strong>
                 </div>
                 {["completed", "archived"].includes(cleanText(actionRow.shipment_status).toLowerCase()) ? (
                   <div>
@@ -2414,14 +2453,14 @@ function App() {
 
             <section className="action-modal-section">
               <div className="action-modal-section-head">
-                <span>Inspect & Refresh</span>
+                <span>Inspect</span>
               </div>
               <div className="action-modal-buttons">
                 <ActionButton type="button" tone="secondary" onClick={async () => {
                   await handleRefreshGroup(actionRow);
                   setActionRow(null);
                 }}>
-                  Refresh Tracking
+                  Refresh Shipment
                 </ActionButton>
                 <ActionButton
                   type="button"
@@ -2431,7 +2470,7 @@ function App() {
                     setActionRow(null);
                   }}
                 >
-                  View Detail
+                  Open Detail
                 </ActionButton>
                 <ActionButton
                   type="button"
@@ -2448,7 +2487,7 @@ function App() {
 
             <section className="action-modal-section">
               <div className="action-modal-section-head">
-                <span>Shipment State</span>
+                <span>Update Status</span>
               </div>
               <div className="action-modal-buttons">
                 <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
@@ -2939,6 +2978,42 @@ function App() {
                 </tbody>
               </table>
             </div>
+
+            {relatedCycleRows.length ? (
+              <section className="related-cycles-panel">
+                <div className="preview-header">
+                  <div>
+                    <h3>Related Container Cycles</h3>
+                    <p>The same physical container appearing under a different BL cycle.</p>
+                  </div>
+                </div>
+                <div className="related-cycle-list">
+                  {relatedCycleRows.map((row) => (
+                    <article key={row.group_key} className="related-cycle-item">
+                      <div className="related-cycle-copy">
+                        <div className="related-cycle-meta">
+                          <span className={badgeClass("movement", row.movement_category || "Hi Seas")}>
+                            {row.movement_category || "Hi Seas"}
+                          </span>
+                          <span className="meta-pill">
+                            {formatShipmentStatusLabel(row.shipment_status || "active")}
+                          </span>
+                        </div>
+                        <h4>{row.customer_name || "Shipment group"}</h4>
+                        <div className="related-cycle-facts">
+                          <span>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}</span>
+                          <span>{(row.container_numbers || []).join(", ") || row.primary_container_number || "-"}</span>
+                          <span>{row.movement_since_date || row.latest_time || "-"}</span>
+                        </div>
+                      </div>
+                      <ActionButton type="button" tone="ghost" onClick={() => setAuditRow(row)}>
+                        Open
+                      </ActionButton>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             <div className="audit-journal">
               <div className="preview-header">
