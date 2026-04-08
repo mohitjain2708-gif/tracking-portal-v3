@@ -285,6 +285,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  validateShipmentImport: (payload) =>
+    request("/api/shipments/import-validate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   refreshAllTracking: () =>
     request("/api/shipments/refresh-all", {
       method: "POST",

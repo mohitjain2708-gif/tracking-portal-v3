@@ -718,6 +718,9 @@ function App() {
   const [shipmentImportPreview, setShipmentImportPreview] = useState(null);
   const [shipmentImportMapping, setShipmentImportMapping] = useState(INITIAL_MAPPING);
   const [shipmentImporting, setShipmentImporting] = useState(false);
+  const [shipmentImportReviewRows, setShipmentImportReviewRows] = useState([]);
+  const [shipmentImportReviewSummary, setShipmentImportReviewSummary] = useState(null);
+  const [shipmentImportReviewOpen, setShipmentImportReviewOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
@@ -1187,6 +1190,9 @@ function App() {
 
     setFeedback(null);
     setShipmentImportPreview(null);
+    setShipmentImportReviewRows([]);
+    setShipmentImportReviewSummary(null);
+    setShipmentImportReviewOpen(false);
 
     try {
       const preview = await api.previewShipmentImport(shipmentImportFile);
@@ -1197,6 +1203,43 @@ function App() {
       setFeedback({ tone: "error", text: error.message || "Shipment preview failed" });
     }
   }, [shipmentImportFile]);
+
+  const validateShipmentImportRows = useCallback(
+    async (rowOverrides = shipmentImportReviewRows) => {
+      if (!shipmentImportPreview) {
+        throw new Error("Detect the columns before validating the import.");
+      }
+
+      return api.validateShipmentImport({
+        temp_file_token: shipmentImportPreview.temp_file_token,
+        mapping_json: shipmentImportMapping,
+        row_overrides: rowOverrides,
+      });
+    },
+    [shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows]
+  );
+
+  const handleImportReviewFieldChange = useCallback((sourceRowNumber, field, value) => {
+    setShipmentImportReviewRows((current) =>
+      current.map((row) =>
+        row.source_row_number === sourceRowNumber
+          ? {
+              ...row,
+              [field]: field === "container_number" ? value.toUpperCase() : value,
+            }
+          : row
+      )
+    );
+  }, []);
+
+  const resetShipmentImportState = useCallback(() => {
+    setShipmentImportFile(null);
+    setShipmentImportPreview(null);
+    setShipmentImportMapping(INITIAL_MAPPING);
+    setShipmentImportReviewRows([]);
+    setShipmentImportReviewSummary(null);
+    setShipmentImportReviewOpen(false);
+  }, []);
 
   const handleShipmentImportConfirm = useCallback(async () => {
     if (!shipmentImportPreview) {
@@ -1213,14 +1256,25 @@ function App() {
     setFeedback(null);
 
     try {
+      const review = await validateShipmentImportRows();
+      if ((review.invalid_count || 0) > 0) {
+        setShipmentImportReviewRows(review.invalid_rows || []);
+        setShipmentImportReviewSummary(review);
+        setShipmentImportReviewOpen(true);
+        setFeedback({
+          tone: "warning",
+          text: `Action required: ${review.invalid_count} shipment row(s) need correction before import.`,
+        });
+        return;
+      }
+
       const data = await api.confirmShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
         mapping_json: shipmentImportMapping,
+        row_overrides: shipmentImportReviewRows,
       });
 
-      setShipmentImportFile(null);
-      setShipmentImportPreview(null);
-      setShipmentImportMapping(INITIAL_MAPPING);
+      resetShipmentImportState();
       setFeedback({
         tone: "success",
         text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
@@ -1231,7 +1285,48 @@ function App() {
     } finally {
       setShipmentImporting(false);
     }
-  }, [loadDashboard, shipmentImportMapping, shipmentImportPreview]);
+  }, [loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, validateShipmentImportRows]);
+
+  const handleImportReviewRecheck = useCallback(async () => {
+    setShipmentImporting(true);
+    setFeedback(null);
+    try {
+      const review = await validateShipmentImportRows(shipmentImportReviewRows);
+      setShipmentImportReviewSummary(review);
+      if ((review.invalid_count || 0) > 0) {
+        setShipmentImportReviewRows(review.invalid_rows || []);
+        setFeedback({
+          tone: "warning",
+          text: `${review.invalid_count} shipment row(s) still need correction.`,
+        });
+        return;
+      }
+
+      const data = await api.confirmShipmentImport({
+        temp_file_token: shipmentImportPreview.temp_file_token,
+        mapping_json: shipmentImportMapping,
+        row_overrides: shipmentImportReviewRows,
+      });
+
+      resetShipmentImportState();
+      setFeedback({
+        tone: "success",
+        text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
+      });
+      await loadDashboard({ silent: true });
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Import review failed" });
+    } finally {
+      setShipmentImporting(false);
+    }
+  }, [
+    loadDashboard,
+    resetShipmentImportState,
+    shipmentImportMapping,
+    shipmentImportPreview,
+    shipmentImportReviewRows,
+    validateShipmentImportRows,
+  ]);
 
   const handleRefreshAllTracking = useCallback(async () => {
     setFeedback(null);
@@ -1794,6 +1889,22 @@ function App() {
               >
                 {shipmentImporting ? "Importing..." : "Commit Import"}
               </ActionButton>
+
+              {shipmentImportReviewSummary?.invalid_count ? (
+                <div className="confirm-warning">
+                  <strong>Action Required:</strong> {shipmentImportReviewSummary.invalid_count} shipment row(s)
+                  need correction before import.
+                  <div className="edit-actions-row">
+                    <ActionButton
+                      type="button"
+                      tone="secondary"
+                      onClick={() => setShipmentImportReviewOpen(true)}
+                    >
+                      Review Invalid Rows
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </article>
@@ -2531,6 +2642,93 @@ function App() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {shipmentImportReviewOpen && (
+        <Modal
+          title="Action Required - Review Invalid Rows"
+          onClose={() => setShipmentImportReviewOpen(false)}
+          size="wide"
+          actions={
+            <ActionButton
+              type="button"
+              tone="primary"
+              disabled={shipmentImporting}
+              onClick={handleImportReviewRecheck}
+            >
+              {shipmentImporting ? "Rechecking..." : "Recheck and Import"}
+            </ActionButton>
+          }
+        >
+          <div className="audit-panel">
+            <div className="confirm-warning">
+              Some shipment rows need correction before they can be added to tracking. The list below shows only
+              the rows that still need attention.
+            </div>
+
+            <div className="audit-hero">
+              <section className="audit-hero-primary import-review-hero">
+                <span className="audit-detail-title">Review Summary</span>
+                <h4>{shipmentImportReviewSummary?.invalid_count || 0} row(s) need correction</h4>
+                <div className="audit-hero-meta">
+                  <span className="meta-pill">{shipmentImportReviewSummary?.valid_count || 0} ready to import</span>
+                  <span className="meta-pill">
+                    {shipmentImportReviewSummary?.skipped_blank_count || 0} blank rows ignored
+                  </span>
+                </div>
+              </section>
+            </div>
+
+            <div className="import-review-list">
+              {shipmentImportReviewRows.map((row) => (
+                <section key={row.source_row_number} className="import-review-card">
+                  <div className="import-review-card-head">
+                    <div>
+                      <p className="audit-detail-title">Worksheet Row {row.source_row_number}</p>
+                      <h4>{row.customer_name || "Customer not set"}</h4>
+                    </div>
+                    <span className="import-review-error">{row.error}</span>
+                  </div>
+
+                  <div className="mapping-grid import-review-grid">
+                    <label className="mapping-field">
+                      <span>Customer Name</span>
+                      <input
+                        type="text"
+                        value={row.customer_name || ""}
+                        onChange={(event) =>
+                          handleImportReviewFieldChange(row.source_row_number, "customer_name", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="mapping-field">
+                      <span>BL Number</span>
+                      <input
+                        type="text"
+                        value={row.bl_number || ""}
+                        onChange={(event) =>
+                          handleImportReviewFieldChange(row.source_row_number, "bl_number", event.target.value)
+                        }
+                      />
+                    </label>
+
+                    <label className="mapping-field">
+                      <span>Container Number</span>
+                      <input
+                        type="text"
+                        value={row.container_number || ""}
+                        onChange={(event) =>
+                          handleImportReviewFieldChange(row.source_row_number, "container_number", event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                </section>
+              ))}
             </div>
           </div>
         </Modal>

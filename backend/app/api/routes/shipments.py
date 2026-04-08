@@ -260,7 +260,7 @@ def _normalize_import_row_objects(
     normalized_rows: list[dict[str, Any]] = []
     carry_forward = {column: "" for column in carry_columns if column}
 
-    for raw_row in rows[header_index + 1 :]:
+    for offset, raw_row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         row_obj = _build_row_object(headers, list(raw_row))
         if not any(str(value).strip() for value in row_obj.values()):
             carry_forward = {column: "" for column in carry_forward}
@@ -275,9 +275,95 @@ def _normalize_import_row_objects(
             elif carry_forward.get(column):
                 row_obj[column] = carry_forward[column]
 
+        row_obj["__source_row_number"] = offset
         normalized_rows.append(row_obj)
 
     return normalized_rows
+
+
+def _apply_import_row_overrides(
+    normalized_rows: list[dict[str, Any]],
+    row_overrides: list[dict[str, Any]] | None,
+    customer_col: str,
+    container_col: str,
+    bl_col: str,
+) -> list[dict[str, Any]]:
+    if not row_overrides:
+        return normalized_rows
+
+    overrides_by_row: dict[int, dict[str, Any]] = {}
+    for override in row_overrides:
+        try:
+            row_number = int(override.get("source_row_number") or 0)
+        except Exception:
+            row_number = 0
+        if row_number <= 0:
+            continue
+        overrides_by_row[row_number] = override
+
+    if not overrides_by_row:
+        return normalized_rows
+
+    updated_rows: list[dict[str, Any]] = []
+    for row_obj in normalized_rows:
+        row_number = int(row_obj.get("__source_row_number") or 0)
+        override = overrides_by_row.get(row_number)
+        if not override:
+            updated_rows.append(row_obj)
+            continue
+        next_row = dict(row_obj)
+        if customer_col:
+            next_row[customer_col] = _clean_text(override.get("customer_name", next_row.get(customer_col, "")))
+        if container_col:
+            next_row[container_col] = _clean_container(override.get("container_number", next_row.get(container_col, "")))
+        if bl_col:
+            next_row[bl_col] = _clean_text(override.get("bl_number", next_row.get(bl_col, "")))
+        updated_rows.append(next_row)
+    return updated_rows
+
+
+def _summarize_import_rows(
+    normalized_rows: list[dict[str, Any]],
+    customer_col: str,
+    container_col: str,
+    bl_col: str,
+) -> dict[str, Any]:
+    invalid_rows: list[dict[str, Any]] = []
+    skipped_blank_count = 0
+    valid_count = 0
+
+    for row_obj in normalized_rows:
+        source_row_number = int(row_obj.get("__source_row_number") or 0)
+        customer_name = _clean_text(row_obj.get(customer_col))
+        container_number = _clean_container(row_obj.get(container_col))
+        bl_number = _clean_text(row_obj.get(bl_col))
+
+        if not container_number:
+            skipped_blank_count += 1
+            continue
+
+        error_text = _container_format_error(container_number)
+        if error_text:
+            invalid_rows.append(
+                {
+                    "source_row_number": source_row_number,
+                    "customer_name": customer_name,
+                    "container_number": container_number,
+                    "bl_number": bl_number,
+                    "error": error_text,
+                }
+            )
+            continue
+
+        valid_count += 1
+
+    return {
+        "valid_count": valid_count,
+        "invalid_rows": invalid_rows,
+        "invalid_count": len(invalid_rows),
+        "skipped_blank_count": skipped_blank_count,
+        "total_reviewable_rows": valid_count + len(invalid_rows),
+    }
 
 
 def _read_sheet(file_path: Path) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]]]:
@@ -2243,6 +2329,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     customer_col = _clean_text(mapping_json.get("customer_name"))
     container_col = _clean_text(mapping_json.get("container_number"))
     bl_col = _clean_text(mapping_json.get("bl_number"))
+    row_overrides = payload.get("row_overrides") or []
     if not container_col:
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
     _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
@@ -2253,6 +2340,25 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         header_index,
         [customer_col, bl_col],
     )
+    normalized_rows = _apply_import_row_overrides(
+        normalized_rows,
+        row_overrides,
+        customer_col,
+        container_col,
+        bl_col,
+    )
+    review = _summarize_import_rows(normalized_rows, customer_col, container_col, bl_col)
+    if review["invalid_count"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Action required before import",
+                "invalid_rows": review["invalid_rows"],
+                "invalid_count": review["invalid_count"],
+                "valid_count": review["valid_count"],
+                "skipped_blank_count": review["skipped_blank_count"],
+            },
+        )
     existing_keys = {
         (
             shipment.container_number,
@@ -2318,6 +2424,49 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         "skipped_blank_count": skipped_blank_count,
         "skipped_invalid_count": skipped_invalid_count,
         "total_rows": imported_count + duplicate_count + skipped_blank_count + skipped_invalid_count,
+    }
+
+
+@router.post("/import-validate")
+async def import_validate(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    token = _clean_text(payload.get("temp_file_token"))
+    mapping_json = payload.get("mapping_json") or {}
+    row_overrides = payload.get("row_overrides") or []
+    if not token:
+        raise HTTPException(status_code=400, detail="temp_file_token is required")
+    file_path = TEMP_IMPORT_DIR / token
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Temporary import file not found")
+
+    customer_col = _clean_text(mapping_json.get("customer_name"))
+    container_col = _clean_text(mapping_json.get("container_number"))
+    bl_col = _clean_text(mapping_json.get("bl_number"))
+    if not container_col:
+        raise HTTPException(status_code=400, detail="Container Number mapping is required")
+
+    _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
+    header_index = header_row - 1
+    normalized_rows = _normalize_import_row_objects(
+        headers,
+        rows,
+        header_index,
+        [customer_col, bl_col],
+    )
+    normalized_rows = _apply_import_row_overrides(
+        normalized_rows,
+        row_overrides,
+        customer_col,
+        container_col,
+        bl_col,
+    )
+    review = _summarize_import_rows(normalized_rows, customer_col, container_col, bl_col)
+    return {
+        "valid_count": review["valid_count"],
+        "invalid_count": review["invalid_count"],
+        "skipped_blank_count": review["skipped_blank_count"],
+        "invalid_rows": review["invalid_rows"],
+        "ready_to_import": review["invalid_count"] == 0,
     }
 
 

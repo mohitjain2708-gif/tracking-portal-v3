@@ -1460,6 +1460,49 @@ select:focus {
   letter-spacing: 0.06em;
 }
 
+.import-review-hero h4 {
+  margin: 0;
+}
+
+.import-review-list {
+  display: grid;
+  gap: 14px;
+}
+
+.import-review-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.import-review-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.import-review-card-head h4 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.import-review-error {
+  max-width: 340px;
+  color: var(--warning);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.import-review-grid {
+  grid-template-columns: 1.2fr 0.9fr 0.9fr;
+}
+
 .field-help {
   margin: -2px 0 0;
   color: var(--muted);
