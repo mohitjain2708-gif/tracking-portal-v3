@@ -102,6 +102,131 @@ function rowMatchesSearch(row, query) {
   return searchableText.includes(looseQuery);
 }
 
+function formatShipmentStatusLabel(value) {
+  const status = cleanText(value).toLowerCase();
+  if (status === "active") {
+    return "Live";
+  }
+  if (!status) {
+    return "-";
+  }
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function formatRefreshStatusLabel(value) {
+  const status = cleanText(value).toLowerCase();
+  if (!status || status === "unknown") {
+    return "Awaiting first check";
+  }
+  if (status === "success") {
+    return "Updated";
+  }
+  if (status === "success-cached") {
+    return "Updated from cache";
+  }
+  if (status === "error") {
+    return "Needs attention";
+  }
+  if (status === "not_refreshed") {
+    return "Awaiting first check";
+  }
+  return status
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatTrackingSourceLabel(value) {
+  const normalized = cleanText(value)
+    .split(",")
+    .map((item) => cleanText(item).toLowerCase())
+    .filter(Boolean);
+  if (normalized.length === 0) {
+    return "No feed noted yet";
+  }
+
+  const labels = normalized.map((item) => {
+    if (item === "ldb") {
+      return "LDB";
+    }
+    if (item === "concor") {
+      return "CONCOR";
+    }
+    if (item === "pristine") {
+      return "Pristine";
+    }
+    return item.charAt(0).toUpperCase() + item.slice(1);
+  });
+
+  return labels.join(" • ");
+}
+
+function formatAuditActionLabel(value) {
+  const action = cleanText(value).toLowerCase();
+  const custom = {
+    shipment_group_refreshed: "Shipment group refreshed",
+    shipment_all_refreshed: "All active shipments refreshed",
+    shipment_imported: "Shipment import completed",
+    shipment_status_updated: "Shipment status updated",
+    shipment_group_deleted: "Shipment group removed",
+    shipment_document_uploaded: "Document submitted",
+    shipment_orphans_reconciled: "Legacy duplicates cleaned",
+    shipment_added: "Shipment added",
+  };
+  if (custom[action]) {
+    return custom[action];
+  }
+  if (!action) {
+    return "-";
+  }
+  return action
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatAuditDetails(details) {
+  if (!details || typeof details !== "object") {
+    return "No additional detail";
+  }
+
+  if (Array.isArray(details.container_numbers) && details.container_numbers.length) {
+    if (typeof details.refreshed_count === "number") {
+      return `${details.refreshed_count} containers refreshed: ${details.container_numbers.join(", ")}`;
+    }
+    return `Containers: ${details.container_numbers.join(", ")}`;
+  }
+
+  if (typeof details.deleted_count === "number") {
+    return `${details.deleted_count} duplicate shipment rows cleaned up.`;
+  }
+
+  if (typeof details.imported_count === "number") {
+    return `${details.imported_count} imported, ${details.duplicate_count || 0} duplicates skipped, ${details.skipped_blank_count || 0} blank rows ignored.`;
+  }
+
+  if (details.document_type || details.original_name) {
+    const label = details.document_type
+      ? details.document_type.replace(/_/g, " ")
+      : "document";
+    const prettyLabel = label
+      .split(" ")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+    return `${prettyLabel}${details.original_name ? ` uploaded as ${details.original_name}` : " uploaded"}.`;
+  }
+
+  if (details.refreshed_count) {
+    return `${details.refreshed_count} shipments refreshed.`;
+  }
+
+  return Object.entries(details)
+    .map(([key, val]) => `${key.replace(/_/g, " ")}: ${Array.isArray(val) ? val.join(", ") : String(val)}`)
+    .join(" • ");
+}
+
 function guessColumns(columns) {
   const availableColumns = Array.isArray(columns) ? columns : [];
 
@@ -2103,16 +2228,16 @@ function App() {
 
               <div className="audit-hero-metrics">
                 <article className="audit-card">
-                  <span>Last Refresh</span>
-                  <strong>{auditRow.last_refresh_at || "Not refreshed"}</strong>
+                  <span>Last Checked</span>
+                  <strong>{auditRow.last_refresh_at || "Awaiting first check"}</strong>
                 </article>
                 <article className="audit-card">
-                  <span>Tracking Source</span>
-                  <strong>{auditRow.tracking_source || "Not available"}</strong>
+                  <span>Data Feeds</span>
+                  <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
                 </article>
                 <article className="audit-card">
-                  <span>Refresh Status</span>
-                  <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
+                  <span>Check Result</span>
+                  <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
                 </article>
               </div>
             </div>
@@ -2178,7 +2303,7 @@ function App() {
 
             {auditRow.last_refresh_error ? (
               <div className="confirm-warning">
-                Last refresh note: <strong>{auditRow.last_refresh_error}</strong>
+                Latest check note: <strong>{auditRow.last_refresh_error}</strong>
               </div>
             ) : null}
 
@@ -2191,7 +2316,7 @@ function App() {
                     <th>Movement</th>
                     <th>Latest Location</th>
                     <th>Latest Date</th>
-                    <th>Refresh Status</th>
+                    <th>Check Result</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2203,11 +2328,11 @@ function App() {
                     auditShipments.map((shipment) => (
                       <tr key={shipment.id}>
                         <td>{shipment.container_number || "-"}</td>
-                        <td>{shipment.shipment_status || "-"}</td>
+                        <td>{formatShipmentStatusLabel(shipment.shipment_status)}</td>
                         <td>{normalizeMovementCategory(shipment.movement_category) || "-"}</td>
                         <td>{shipment.latest_location || "-"}</td>
                         <td>{shipment.latest_time || "-"}</td>
-                        <td>{shipment.last_refresh_status || "-"}</td>
+                        <td>{formatRefreshStatusLabel(shipment.last_refresh_status)}</td>
                       </tr>
                     ))
                   )}
@@ -2219,7 +2344,7 @@ function App() {
               <div className="preview-header">
                 <div>
                   <h3>Action Journal</h3>
-                  <p>Backend audit trail for this BL or shipment group.</p>
+                  <p>A readable activity trail for this shipment group.</p>
                 </div>
                 <ActionButton
                   type="button"
@@ -2261,9 +2386,9 @@ function App() {
                       auditEntries.map((entry) => (
                         <tr key={entry.id}>
                           <td>{entry.created_at || "-"}</td>
-                          <td>{entry.action || "-"}</td>
-                          <td>{entry.shipment_status || "-"}</td>
-                          <td className="details-cell">{JSON.stringify(entry.details || {})}</td>
+                          <td>{formatAuditActionLabel(entry.action)}</td>
+                          <td>{formatShipmentStatusLabel(entry.shipment_status)}</td>
+                          <td className="details-cell">{formatAuditDetails(entry.details)}</td>
                         </tr>
                       ))
                     )}

@@ -1353,8 +1353,8 @@ select:focus {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--muted);
-  font-family: Consolas, "SFMono-Regular", monospace;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .confirm-warning {
