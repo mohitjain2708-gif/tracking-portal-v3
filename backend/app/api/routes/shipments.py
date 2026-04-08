@@ -373,6 +373,30 @@ def _movement_category(location: str, train_no: str, departure: str, delay_days:
     return "Hi Seas"
 
 
+def _effective_shipment_movement(shipment: Shipment) -> str:
+    stored_movement = _normalize_existing_movement(shipment.movement_category or "")
+    tracking_source = _clean_text(shipment.tracking_source).lower()
+    rail_status = _normalize_existing_movement(shipment.rail_status or "")
+    latest_location = _clean_text(shipment.latest_location)
+
+    if (
+        stored_movement == "Arrived Birgunj"
+        or rail_status == "Arrived Birgunj"
+        or "pristine" in tracking_source
+        or _is_arrived(latest_location)
+    ):
+        return "Arrived Birgunj"
+
+    return _normalize_existing_movement(
+        _movement_category(
+            shipment.latest_location,
+            shipment.train_no,
+            shipment.departure,
+            shipment.delay_days,
+        )
+    )
+
+
 def _extract_json_object_by_key(json_str: str, key_name: str) -> dict[str, Any] | None:
     try:
         key_pattern = f'"{key_name}"'
@@ -1147,12 +1171,7 @@ def _reconcile_customer_directory(db: Session) -> bool:
     return touched
 
 def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
-    movement_category = _movement_category(
-        shipment.latest_location,
-        shipment.train_no,
-        shipment.departure,
-        shipment.delay_days,
-    )
+    movement_category = _effective_shipment_movement(shipment)
     return {
         "id": shipment.id,
         "customer_name": _format_customer_name(shipment.customer_name),
@@ -1164,7 +1183,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "train_no": shipment.train_no,
         "departure": shipment.departure,
         "rail_status": shipment.rail_status,
-        "movement_category": _normalize_existing_movement(movement_category),
+        "movement_category": movement_category,
         "delay_days": shipment.delay_days,
         "wagon_no": shipment.wagon_no,
         "train_origin": shipment.train_origin,
@@ -1782,12 +1801,7 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
     railed_out_this_week_customers: dict[str, int] = {}
 
     for container_number, shipment in containers.items():
-        movement_category = _movement_category(
-            shipment.latest_location,
-            shipment.train_no,
-            shipment.departure,
-            shipment.delay_days,
-        )
+        movement_category = _effective_shipment_movement(shipment)
         arrived = movement_category == "Arrived Birgunj"
         if arrived:
             total_at_icd_birgunj += 1
