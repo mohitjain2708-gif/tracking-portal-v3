@@ -2083,23 +2083,38 @@ function App() {
           onClose={() => setAuditRow(null)}
         >
           <div className="audit-panel">
-            <div className="audit-summary-grid">
-              <article className="audit-card">
-                <span>Customer</span>
-                <strong>{auditRow.customer_name || "-"}</strong>
-              </article>
-              <article className="audit-card">
-                <span>Movement</span>
-                <strong>{auditRow.movement_category || "Hi Seas"}</strong>
-              </article>
-              <article className="audit-card">
-                <span>Last Refresh</span>
-                <strong>{auditRow.last_refresh_at || "Not refreshed"}</strong>
-              </article>
-              <article className="audit-card">
-                <span>Tracking Source</span>
-                <strong>{auditRow.tracking_source || "Not available"}</strong>
-              </article>
+            <div className="audit-hero">
+              <section className="audit-hero-primary">
+                <span className="audit-detail-title">Customer</span>
+                <h4>{auditRow.customer_name || "-"}</h4>
+                <div className="audit-hero-meta">
+                  <span className={badgeClass("movement", auditRow.movement_category || "Hi Seas")}>
+                    {auditRow.movement_category || "Hi Seas"}
+                  </span>
+                  <span className="meta-pill">
+                    {auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)} container
+                    {(auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)) === 1 ? "" : "s"}
+                  </span>
+                  <span className="meta-pill">
+                    {auditRow.bl_number ? `BL ${auditRow.bl_number}` : "BL not linked"}
+                  </span>
+                </div>
+              </section>
+
+              <div className="audit-hero-metrics">
+                <article className="audit-card">
+                  <span>Last Refresh</span>
+                  <strong>{auditRow.last_refresh_at || "Not refreshed"}</strong>
+                </article>
+                <article className="audit-card">
+                  <span>Tracking Source</span>
+                  <strong>{auditRow.tracking_source || "Not available"}</strong>
+                </article>
+                <article className="audit-card">
+                  <span>Refresh Status</span>
+                  <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
+                </article>
+              </div>
             </div>
 
             <div className="audit-detail-grid">
@@ -2142,10 +2157,6 @@ function App() {
                   <div>
                     <span>Latest Date</span>
                     <strong>{auditRow.latest_time || "-"}</strong>
-                  </div>
-                  <div>
-                    <span>Refresh Status</span>
-                    <strong>{auditRow.last_refresh_status || "Unknown"}</strong>
                   </div>
                 </div>
               </section>

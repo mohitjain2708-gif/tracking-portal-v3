@@ -1083,16 +1083,21 @@ select:focus {
   display: grid;
   place-items: center;
   padding: 24px;
+  overflow: auto;
   z-index: 50;
 }
 
 .modal-card {
-  width: min(560px, 100%);
+  width: min(900px, 100%);
+  max-height: calc(100vh - 48px);
   background: rgba(255, 255, 255, 0.9);
   border-radius: 16px;
   border: 1px solid var(--border);
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
   backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header,
@@ -1107,6 +1112,7 @@ select:focus {
   justify-content: space-between;
   gap: 12px;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 
 .modal-header h3 {
@@ -1124,6 +1130,8 @@ select:focus {
 .modal-body {
   display: grid;
   gap: 16px;
+  overflow: auto;
+  min-height: 0;
 }
 
 .action-summary {
@@ -1206,9 +1214,39 @@ select:focus {
   letter-spacing: 0.08em;
 }
 
-.audit-summary-grid {
+.audit-hero {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  gap: 10px;
+}
+
+.audit-hero-primary {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.audit-hero-primary h4 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.audit-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.audit-hero-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1219,6 +1257,7 @@ select:focus {
   padding: 12px;
   display: grid;
   gap: 6px;
+  align-content: start;
 }
 
 .audit-card span {
@@ -1285,6 +1324,7 @@ select:focus {
   font-size: 14px;
   line-height: 1.45;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .audit-container-chips {
@@ -1428,12 +1468,13 @@ select:focus {
     width: 100%;
   }
 
-  .audit-summary-grid {
+  .audit-hero,
+  .audit-detail-grid {
     grid-template-columns: 1fr;
   }
 
-  .audit-detail-grid {
-    grid-template-columns: 1fr;
+  .audit-hero-primary h4 {
+    font-size: 24px;
   }
 
   .audit-kv-grid {
