@@ -27,6 +27,8 @@ from app.core.security import hash_password
 from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
+from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource
+from app.models.upload_session import UploadSession
 from app.models.user import User
 from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
 
@@ -114,6 +116,10 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "last_refresh_status": "VARCHAR(64) NOT NULL DEFAULT ''",
     "last_refresh_error": "TEXT NOT NULL DEFAULT ''",
     "clearance_doc_number": "VARCHAR(120) NOT NULL DEFAULT ''",
+    "source_type": "VARCHAR(64) NOT NULL DEFAULT 'manual'",
+    "source_label": "VARCHAR(255) NOT NULL DEFAULT 'Manual Entry'",
+    "source_batch_id": "INTEGER NOT NULL DEFAULT 0",
+    "raw_source_row_id": "INTEGER NOT NULL DEFAULT 0",
 }
 
 PORT_PATTERNS = [
@@ -1325,6 +1331,8 @@ def _reconcile_customer_directory(db: Session) -> bool:
 
 def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     movement_category = _effective_shipment_movement(shipment)
+    source_type = _clean_text(getattr(shipment, "source_type", "")) or "manual"
+    source_label = _clean_text(getattr(shipment, "source_label", "")) or ("Manual Entry" if source_type == "manual" else "")
     return {
         "id": shipment.id,
         "customer_name": _format_customer_name(shipment.customer_name),
@@ -1348,6 +1356,10 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "last_refresh_status": shipment.last_refresh_status,
         "last_refresh_error": shipment.last_refresh_error,
         "clearance_doc_number": shipment.clearance_doc_number,
+        "source_type": source_type,
+        "source_label": source_label,
+        "source_batch_id": int(getattr(shipment, "source_batch_id", 0) or 0),
+        "raw_source_row_id": int(getattr(shipment, "raw_source_row_id", 0) or 0),
     }
 
 
@@ -1359,6 +1371,119 @@ def _ensure_shipment_columns() -> None:
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE shipments ADD COLUMN {column_name} {definition}"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_shipments_status ON shipments (shipment_status)"))
+
+
+def _json_dumps(value: Any) -> str:
+    try:
+        return json.dumps(value or {}, ensure_ascii=False)
+    except Exception:
+        return "{}"
+
+
+def _get_or_create_source(
+    db: Session,
+    current_user: User,
+    source_type: str,
+    source_label: str,
+    source_reference: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> ShipmentSource:
+    source = db.execute(
+        select(ShipmentSource).where(
+            ShipmentSource.user_id == current_user.id,
+            ShipmentSource.source_type == source_type,
+            ShipmentSource.source_label == source_label,
+            ShipmentSource.source_reference == source_reference,
+        )
+    ).scalar_one_or_none()
+    if source:
+        if metadata:
+            source.metadata_json = _json_dumps(metadata)
+        source.status = "active"
+        source.updated_at = datetime.utcnow()
+        return source
+
+    source = ShipmentSource(
+        user_id=current_user.id,
+        source_type=source_type,
+        source_label=source_label,
+        source_reference=source_reference,
+        status="active",
+        metadata_json=_json_dumps(metadata),
+    )
+    db.add(source)
+    db.flush()
+    return source
+
+
+def _create_import_batch(
+    db: Session,
+    current_user: User,
+    source: ShipmentSource,
+    *,
+    batch_label: str,
+    source_sheet: str,
+    header_row: int,
+    mapping_json: dict[str, Any],
+    imported_count: int,
+    duplicate_count: int,
+    invalid_count: int,
+    skipped_blank_count: int,
+) -> ShipmentBatch:
+    batch = ShipmentBatch(
+        user_id=current_user.id,
+        source_id=source.id,
+        batch_label=batch_label,
+        source_sheet=source_sheet,
+        header_row=header_row,
+        mapping_json=_json_dumps(mapping_json),
+        status="imported",
+        imported_count=imported_count,
+        duplicate_count=duplicate_count,
+        invalid_count=invalid_count,
+        skipped_blank_count=skipped_blank_count,
+    )
+    db.add(batch)
+    db.flush()
+    return batch
+
+
+def _record_raw_import_rows(
+    db: Session,
+    current_user: User,
+    source: ShipmentSource,
+    batch: ShipmentBatch,
+    normalized_rows: list[dict[str, Any]],
+    customer_col: str,
+    container_col: str,
+    bl_col: str,
+) -> dict[int, RawSourceRow]:
+    rows_by_source_number: dict[int, RawSourceRow] = {}
+    for row_obj in normalized_rows:
+        source_row_number = int(row_obj.get("__source_row_number") or 0)
+        container_number = _clean_container(row_obj.get(container_col))
+        row_error = _container_format_error(container_number) if container_number else ""
+        row_status = "blank" if not container_number else ("invalid" if row_error else "valid")
+        mapped_row = {
+            "customer_name": _clean_text(row_obj.get(customer_col)),
+            "container_number": container_number,
+            "bl_number": _normalize_bl_number(row_obj.get(bl_col)),
+        }
+        raw_row = {key: value for key, value in row_obj.items() if not str(key).startswith("__")}
+        raw_source_row = RawSourceRow(
+            user_id=current_user.id,
+            source_id=source.id,
+            batch_id=batch.id,
+            source_row_number=source_row_number,
+            row_status=row_status,
+            row_error=row_error,
+            raw_row_json=_json_dumps(raw_row),
+            mapped_row_json=_json_dumps(mapped_row),
+        )
+        db.add(raw_source_row)
+        db.flush()
+        rows_by_source_number[source_row_number] = raw_source_row
+    return rows_by_source_number
 
 
 def _resolve_default_user_id(db: Session) -> int:
@@ -2021,6 +2146,63 @@ def list_shipments(db: Session = Depends(get_db), current_user: User = Depends(g
     return [_shipment_to_dict(shipment) for shipment in _get_shipments(db, current_user)]
 
 
+@router.get("/sources")
+def list_sources(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    sources = list(
+        db.execute(
+            select(ShipmentSource)
+            .where(ShipmentSource.user_id == current_user.id)
+            .order_by(ShipmentSource.updated_at.desc(), ShipmentSource.id.desc())
+        ).scalars()
+    )
+    return [
+        {
+            "id": source.id,
+            "source_type": source.source_type,
+            "source_label": source.source_label,
+            "source_reference": source.source_reference,
+            "status": source.status,
+            "last_sync_at": source.last_sync_at.isoformat() if source.last_sync_at else "",
+        }
+        for source in sources
+    ]
+
+
+@router.get("/source-batches")
+def list_source_batches(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    safe_limit = max(1, min(limit, 100))
+    batches = list(
+        db.execute(
+            select(ShipmentBatch)
+            .where(ShipmentBatch.user_id == current_user.id)
+            .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+            .limit(safe_limit)
+        ).scalars()
+    )
+    return [
+        {
+            "id": batch.id,
+            "source_id": batch.source_id,
+            "batch_label": batch.batch_label,
+            "source_sheet": batch.source_sheet,
+            "header_row": batch.header_row,
+            "status": batch.status,
+            "imported_count": batch.imported_count,
+            "duplicate_count": batch.duplicate_count,
+            "invalid_count": batch.invalid_count,
+            "skipped_blank_count": batch.skipped_blank_count,
+            "created_at": batch.created_at.isoformat(),
+        }
+        for batch in batches
+    ]
+
+
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
@@ -2100,6 +2282,8 @@ def add_shipment(payload: ShipmentCreateRequest, db: Session = Depends(get_db), 
             bl_number=normalized_bl,
             shipment_status="active",
             movement_category="Hi Seas",
+            source_type="manual",
+            source_label="Manual Entry",
         )
         db.add(shipment)
         created_shipments.append(shipment)
@@ -2192,6 +2376,8 @@ def update_group_details(
                 bl_number=normalized_bl,
                 shipment_status=active_status,
                 movement_category="Hi Seas",
+                source_type="manual",
+                source_label="Manual Entry",
             )
             db.add(shipment)
         else:
@@ -2409,7 +2595,27 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     file_path = TEMP_IMPORT_DIR / token
     file_path.write_bytes(file_bytes)
     sheet_name, header_row, headers, preview_rows, _rows = _read_sheet(file_path)
-    return {"temp_file_token": token, "sheet_name": sheet_name, "header_row": header_row, "available_columns": headers, "preview_rows": preview_rows}
+    session = UploadSession(
+        user_id=current_user.id,
+        original_filename=filename,
+        stored_path=str(file_path),
+        detected_sheet=sheet_name,
+        detected_header_row=header_row,
+        available_columns_json=headers,
+        preview_rows_json=preview_rows,
+        status="preview_ready",
+    )
+    db.add(session)
+    db.commit()
+    return {
+        "temp_file_token": token,
+        "upload_session_id": session.id,
+        "original_filename": filename,
+        "sheet_name": sheet_name,
+        "header_row": header_row,
+        "available_columns": headers,
+        "preview_rows": preview_rows,
+    }
 
 
 @router.post("/import-confirm")
@@ -2422,13 +2628,19 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     file_path = TEMP_IMPORT_DIR / token
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Temporary import file not found")
+    upload_session = db.execute(
+        select(UploadSession).where(
+            UploadSession.user_id == current_user.id,
+            UploadSession.stored_path == str(file_path),
+        )
+    ).scalar_one_or_none()
     customer_col = _clean_text(mapping_json.get("customer_name"))
     container_col = _clean_text(mapping_json.get("container_number"))
     bl_col = _clean_text(mapping_json.get("bl_number"))
     row_overrides = payload.get("row_overrides") or []
     if not container_col:
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
-    _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
+    sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
     header_index = header_row - 1
     normalized_rows = _normalize_import_row_objects(
         headers,
@@ -2470,19 +2682,62 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     skipped_blank_count = 0
     skipped_invalid_count = 0
     user_id = current_user.id
+    source = _get_or_create_source(
+        db,
+        current_user,
+        "excel_upload",
+        "Excel Upload",
+        source_reference=upload_session.original_filename if upload_session else Path(file_path).name,
+        metadata={
+            "original_filename": upload_session.original_filename if upload_session else Path(file_path).name,
+            "sheet_name": sheet_name,
+        },
+    )
+    batch = _create_import_batch(
+        db,
+        current_user,
+        source,
+        batch_label=upload_session.original_filename if upload_session else Path(file_path).name,
+        source_sheet=sheet_name,
+        header_row=header_row,
+        mapping_json=mapping_json,
+        imported_count=0,
+        duplicate_count=0,
+        invalid_count=review["invalid_count"],
+        skipped_blank_count=review["skipped_blank_count"],
+    )
+    raw_rows_by_source_number = _record_raw_import_rows(
+        db,
+        current_user,
+        source,
+        batch,
+        normalized_rows,
+        customer_col,
+        container_col,
+        bl_col,
+    )
     for row_obj in normalized_rows:
         container_number = _clean_container(row_obj.get(container_col))
+        source_row_number = int(row_obj.get("__source_row_number") or 0)
+        raw_row = raw_rows_by_source_number.get(source_row_number)
         if not container_number:
             skipped_blank_count += 1
+            if raw_row:
+                raw_row.row_status = "blank"
             continue
         if _container_format_error(container_number):
             skipped_invalid_count += 1
+            if raw_row:
+                raw_row.row_status = "invalid"
+                raw_row.row_error = _container_format_error(container_number)
             continue
         canonical_customer = _sync_customer_directory(db, row_obj.get(customer_col))
         bl_number = _normalize_bl_number(row_obj.get(bl_col))
         shipment_key = (container_number, bl_number, canonical_customer)
         if shipment_key in existing_keys:
             duplicate_count += 1
+            if raw_row:
+                raw_row.row_status = "duplicate"
             continue
         shipment = Shipment(
             user_id=user_id,
@@ -2491,10 +2746,24 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             bl_number=bl_number,
             shipment_status="active",
             movement_category="Hi Seas",
+            source_type=source.source_type,
+            source_label=source.source_label,
+            source_batch_id=batch.id,
+            raw_source_row_id=raw_row.id if raw_row else 0,
         )
         db.add(shipment)
+        if raw_row:
+            raw_row.row_status = "imported"
+            raw_row.row_error = ""
         existing_keys.add(shipment_key)
         imported_count += 1
+    batch.imported_count = imported_count
+    batch.duplicate_count = duplicate_count
+    batch.invalid_count = skipped_invalid_count
+    batch.skipped_blank_count = skipped_blank_count
+    source.last_sync_at = datetime.utcnow()
+    if upload_session:
+        upload_session.status = "imported"
     db.commit()
     _log_audit_event(
         db,
@@ -2507,6 +2776,9 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "skipped_blank_count": skipped_blank_count,
             "skipped_invalid_count": skipped_invalid_count,
             "mapping": mapping_json,
+            "source_batch_id": batch.id,
+            "source_type": source.source_type,
+            "source_label": source.source_label,
         },
     )
     db.commit()
@@ -2519,6 +2791,9 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         "duplicate_count": duplicate_count,
         "skipped_blank_count": skipped_blank_count,
         "skipped_invalid_count": skipped_invalid_count,
+        "source_batch_id": batch.id,
+        "source_label": source.source_label,
+        "source_reference": source.source_reference,
         "total_rows": imported_count + duplicate_count + skipped_blank_count + skipped_invalid_count,
     }
 

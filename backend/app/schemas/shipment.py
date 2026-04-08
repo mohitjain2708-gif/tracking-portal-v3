@@ -42,5 +42,9 @@ class ShipmentResponse(BaseModel):
     last_refresh_status: str = ""
     last_refresh_error: str = ""
     clearance_doc_number: str = ""
+    source_type: str = ""
+    source_label: str = ""
+    source_batch_id: int = 0
+    raw_source_row_id: int = 0
 
     model_config = ConfigDict(from_attributes=True)

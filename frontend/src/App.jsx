@@ -414,6 +414,9 @@ function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         train_no: cleanText(lead.train_no),
         departure: cleanText(lead.departure),
         tracking_source: cleanText(lead.tracking_source),
+        source_type: cleanText(lead.source_type),
+        source_label: cleanText(lead.source_label),
+        source_batch_id: Number(lead.source_batch_id || 0),
         last_refresh_at: cleanText(lead.last_refresh_at),
         last_refresh_status: cleanText(lead.last_refresh_status),
         last_refresh_error: cleanText(lead.last_refresh_error),
@@ -1309,7 +1312,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
+        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1343,7 +1346,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
+        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1454,7 +1457,7 @@ function App() {
         });
         setFeedback({
           tone: "success",
-          text: `Tracking refreshed for ${data.refreshed_count ?? 0} container(s).`,
+          text: `Tracking refreshed for ${data.refreshed_count ?? 0} shipment(s).`,
         });
         await loadDashboard({ silent: true });
       } catch (error) {
@@ -2531,6 +2534,9 @@ function App() {
                   <span className="meta-pill">
                     {auditRow.bl_number ? `BL ${auditRow.bl_number}` : "BL not linked"}
                   </span>
+                  <span className="meta-pill">
+                    {auditRow.source_label || "Manual Entry"}
+                  </span>
                 </div>
               </section>
 
@@ -2543,6 +2549,14 @@ function App() {
                 <div className="audit-summary-row">
                   <span>Feeds</span>
                   <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
+                </div>
+                <div className="audit-summary-row">
+                  <span>Intake</span>
+                  <strong>
+                    {auditRow.source_batch_id
+                      ? `${auditRow.source_label || "Imported"} · Batch #${auditRow.source_batch_id}`
+                      : auditRow.source_label || "Manual Entry"}
+                  </strong>
                 </div>
                 <div className="audit-summary-row">
                   <span>Outcome</span>
