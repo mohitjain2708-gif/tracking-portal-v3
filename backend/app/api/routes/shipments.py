@@ -691,9 +691,9 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
         current_cycle_id = last_event.get("cntrCycleId") if isinstance(last_event, dict) else None
         port_arrival_date = ""
         if isinstance(track_log, list) and track_log:
-            latest_port_in = ""
-            latest_port_out = ""
-            latest_origin_icd_in = ""
+            port_in_dates: list[str] = []
+            port_out_dates: list[str] = []
+            origin_icd_in_dates: list[str] = []
             for entry in track_log:
                 if not isinstance(entry, dict):
                     continue
@@ -704,20 +704,27 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
                 formatted_entry_date = _format_ldb_date(_json_value(entry, "timestampTimezone"))
                 if not formatted_entry_date:
                     continue
+                entry_cycle_id = entry.get("cntrCycleId")
+                in_current_cycle = (
+                    current_cycle_id in (None, "", 0)
+                    or entry_cycle_id in {current_cycle_id, current_cycle_id - 1}
+                )
+                if not in_current_cycle:
+                    continue
                 if "PORT IN" in entry_event and _is_port(entry_location):
-                    latest_port_in = latest_port_in or formatted_entry_date
+                    port_in_dates.append(formatted_entry_date)
                 elif "PORT OUT" in entry_event and _is_port(entry_location):
-                    latest_port_out = latest_port_out or formatted_entry_date
+                    port_out_dates.append(formatted_entry_date)
                 elif (
                     "ICD IN" in entry_event
                     and _is_port(entry_location)
-                    and (
-                        current_cycle_id in (None, "", 0)
-                        or entry.get("cntrCycleId") in {current_cycle_id, current_cycle_id - 1}
-                    )
                 ):
-                    latest_origin_icd_in = latest_origin_icd_in or formatted_entry_date
-            port_arrival_date = latest_port_in or latest_port_out or latest_origin_icd_in
+                    origin_icd_in_dates.append(formatted_entry_date)
+            port_arrival_date = (
+                _earliest_non_empty_date(port_in_dates)
+                or _earliest_non_empty_date(port_out_dates)
+                or _earliest_non_empty_date(origin_icd_in_dates)
+            )
         return {
             "latest_location": location,
             "latest_time": latest_date,
