@@ -2371,66 +2371,120 @@ function App() {
       </section>
 
       {actionRow && (
-        <Modal title={`Actions for ${actionRow.bl_number || actionRow.primary_container_number}`} onClose={() => setActionRow(null)}>
-          <div className="action-summary">
-            <div className="summary-list">
-              <span>Status</span>
-              <strong>{actionRow.shipment_status || "active"}</strong>
-              <span>Movement</span>
-              <strong>{actionRow.movement_category || "Hi Seas"}</strong>
-              <span>Containers</span>
-              <strong>{actionRow.container_count || actionRow.container_numbers?.length || 1}</strong>
-              <span>Clearance Doc</span>
-              <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
-            </div>
-          </div>
-          <div className="modal-actions">
-            <ActionButton type="button" tone="secondary" onClick={async () => {
-              await handleRefreshGroup(actionRow);
-              setActionRow(null);
-            }}>
-              Refresh Tracking
-            </ActionButton>
-            <ActionButton
-              type="button"
-              tone="ghost"
-              onClick={() => {
-                openEditShipment(actionRow);
-                setActionRow(null);
-              }}
-            >
-              Edit Details
-            </ActionButton>
-            <ActionButton type="button" tone="ghost" onClick={() => {
-              setAuditRow(actionRow);
-              setActionRow(null);
-            }}>
-              View Audit
-            </ActionButton>
-                            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
-                              Activate
-                            </ActionButton>
-                            <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
-                              Complete
-                            </ActionButton>
-                            <ActionButton
-                              type="button"
-                              tone="ghost"
-                              onClick={() => {
-                                if (!cleanText(actionRow?.clearance_doc_number)) {
-                                  setFeedback({
-                                    tone: "warning",
-                                    text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
-                                  });
-                                }
-                                setConfirmAction({ type: "archived", row: actionRow });
-                              }}
-                            >
-                              Archive
-                            </ActionButton>
-                            <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
-                              Delete
-                            </ActionButton>
+        <Modal title={`Shipment Controls${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`} onClose={() => setActionRow(null)}>
+          <div className="action-modal-shell">
+            <section className="action-modal-hero">
+              <div className="action-modal-copy">
+                <p className="action-modal-eyebrow">Shipment</p>
+                <h4>{actionRow.customer_name || "Shipment group"}</h4>
+                <div className="action-modal-chips">
+                  <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
+                    {actionRow.movement_category || "Hi Seas"}
+                  </span>
+                  <span className="meta-pill">
+                    {actionRow.container_count || actionRow.container_numbers?.length || 1} container
+                    {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}
+                  </span>
+                  <span className="meta-pill">
+                    {actionRow.bl_number ? `BL ${actionRow.bl_number}` : "BL not linked"}
+                  </span>
+                </div>
+              </div>
+              <div className="action-modal-facts">
+                <div>
+                  <span>Status</span>
+                  <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
+                </div>
+                <div>
+                  <span>Movement</span>
+                  <strong>{actionRow.movement_category || "Hi Seas"}</strong>
+                </div>
+                <div>
+                  <span>Containers</span>
+                  <strong>{actionRow.container_count || actionRow.container_numbers?.length || 1}</strong>
+                </div>
+                {["completed", "archived"].includes(cleanText(actionRow.shipment_status).toLowerCase()) ? (
+                  <div>
+                    <span>Clearance Doc</span>
+                    <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="action-modal-section">
+              <div className="action-modal-section-head">
+                <span>Inspect & Refresh</span>
+              </div>
+              <div className="action-modal-buttons">
+                <ActionButton type="button" tone="secondary" onClick={async () => {
+                  await handleRefreshGroup(actionRow);
+                  setActionRow(null);
+                }}>
+                  Refresh Tracking
+                </ActionButton>
+                <ActionButton
+                  type="button"
+                  tone="ghost"
+                  onClick={() => {
+                    setAuditRow(actionRow);
+                    setActionRow(null);
+                  }}
+                >
+                  View Detail
+                </ActionButton>
+                <ActionButton
+                  type="button"
+                  tone="ghost"
+                  onClick={() => {
+                    openEditShipment(actionRow);
+                    setActionRow(null);
+                  }}
+                >
+                  Edit Details
+                </ActionButton>
+              </div>
+            </section>
+
+            <section className="action-modal-section">
+              <div className="action-modal-section-head">
+                <span>Shipment State</span>
+              </div>
+              <div className="action-modal-buttons">
+                <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
+                  Activate
+                </ActionButton>
+                <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
+                  Complete
+                </ActionButton>
+                <ActionButton
+                  type="button"
+                  tone="ghost"
+                  onClick={() => {
+                    if (!cleanText(actionRow?.clearance_doc_number)) {
+                      setFeedback({
+                        tone: "warning",
+                        text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
+                      });
+                    }
+                    setConfirmAction({ type: "archived", row: actionRow });
+                  }}
+                >
+                  Archive
+                </ActionButton>
+              </div>
+            </section>
+
+            <section className="action-modal-section action-modal-section-danger">
+              <div className="action-modal-section-head">
+                <span>Danger Zone</span>
+              </div>
+              <div className="action-modal-buttons">
+                <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
+                  Delete Shipment
+                </ActionButton>
+              </div>
+            </section>
           </div>
         </Modal>
       )}

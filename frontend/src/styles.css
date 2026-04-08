@@ -1144,8 +1144,104 @@ select:focus {
   min-height: 0;
 }
 
-.action-summary {
-  padding-bottom: 4px;
+.action-modal-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.action-modal-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(260px, 0.95fr);
+  gap: 18px;
+  padding: 4px 0 2px;
+}
+
+.action-modal-copy {
+  display: grid;
+  gap: 12px;
+}
+
+.action-modal-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.action-modal-copy h4 {
+  margin: 0;
+  font-size: clamp(26px, 3.1vw, 44px);
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+}
+
+.action-modal-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.action-modal-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  padding: 18px 20px;
+  border: 1px solid rgba(19, 58, 99, 0.1);
+  border-radius: 24px;
+  background: rgba(248, 251, 255, 0.9);
+}
+
+.action-modal-facts div {
+  display: grid;
+  gap: 4px;
+}
+
+.action-modal-facts span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.action-modal-facts strong {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.action-modal-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.action-modal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.action-modal-section-head span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.action-modal-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-modal-section-danger {
+  padding-top: 16px;
+}
+
+.action-modal-section-danger .action-modal-section-head span {
+  color: var(--danger);
 }
 
 .modal-actions {
@@ -1165,6 +1261,26 @@ select:focus {
   display: grid;
   justify-items: start;
   gap: 4px;
+}
+
+@media (max-width: 980px) {
+  .action-modal-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .action-modal-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .action-modal-copy h4 {
+    font-size: 32px;
+  }
+
+  .action-modal-facts {
+    grid-template-columns: 1fr;
+  }
 }
 
 .document-mini-link {
