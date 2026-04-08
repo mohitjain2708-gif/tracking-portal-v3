@@ -1699,10 +1699,19 @@ def _reconcile_orphan_shipments_for_user(db: Session, current_user: User) -> Non
 
 def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     suppressed_orphan_keys: set[tuple[str, str]] = set()
-    archived_containers = {
+    archived_group_keys = {
+        (_clean_container(shipment.container_number), _normalize_bl_number(shipment.bl_number))
+        for shipment in shipments
+        if shipment.shipment_status == "archived"
+        and _clean_container(shipment.container_number)
+        and _normalize_bl_number(shipment.bl_number)
+    }
+    archived_blank_containers = {
         _clean_container(shipment.container_number)
         for shipment in shipments
-        if shipment.shipment_status == "archived" and _clean_container(shipment.container_number)
+        if shipment.shipment_status == "archived"
+        and _clean_container(shipment.container_number)
+        and not _normalize_bl_number(shipment.bl_number)
     }
     for shipment in shipments:
         if shipment.shipment_status == "archived":
@@ -1714,7 +1723,11 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     for shipment in shipments:
         if shipment.shipment_status == "archived":
             continue
-        if _clean_container(shipment.container_number) in archived_containers:
+        container_number = _clean_container(shipment.container_number)
+        normalized_bl = _normalize_bl_number(shipment.bl_number)
+        if normalized_bl and (container_number, normalized_bl) in archived_group_keys:
+            continue
+        if not normalized_bl and container_number in archived_blank_containers:
             continue
         if not _normalize_bl_number(shipment.bl_number) and _shipment_identity_key(shipment) in suppressed_orphan_keys:
             continue
@@ -2103,6 +2116,7 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
                 status_code=400,
                 detail="Complete the BL with a clearance document number before archiving.",
             )
+        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
         archive_containers = sorted(
             {
                 _clean_container(shipment.container_number)
@@ -2120,7 +2134,9 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
         )
         shipments_by_id = {shipment.id: shipment for shipment in shipments}
         for related in related_active_shipments:
-            shipments_by_id.setdefault(related.id, related)
+            related_bl = _normalize_bl_number(related.bl_number)
+            if related_bl == target_bl or not related_bl:
+                shipments_by_id.setdefault(related.id, related)
         shipments = list(shipments_by_id.values())
     for shipment in shipments:
         shipment.shipment_status = next_status
