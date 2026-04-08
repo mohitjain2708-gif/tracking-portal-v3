@@ -950,18 +950,6 @@ function App() {
     [dashboardRows]
   );
 
-  const shipmentCounts = useMemo(() => {
-    return shipments.reduce(
-      (accumulator, shipment) => {
-        const status = shipment.shipment_status || "active";
-        accumulator.total += 1;
-        accumulator[status] = (accumulator[status] || 0) + 1;
-        return accumulator;
-      },
-      { total: 0, active: 0, completed: 0, archived: 0 }
-    );
-  }, [shipments]);
-
   const completedHistoryRows = useMemo(
     () => buildGroupedRowsFromShipments(shipments, "completed"),
     [shipments]
@@ -970,6 +958,16 @@ function App() {
   const archivedHistoryRows = useMemo(
     () => buildGroupedRowsFromShipments(shipments, "archived"),
     [shipments]
+  );
+
+  const shipmentCounts = useMemo(
+    () => ({
+      active: normalizedRows.length,
+      completed: completedHistoryRows.length,
+      archived: archivedHistoryRows.length,
+      total: normalizedRows.length + completedHistoryRows.length + archivedHistoryRows.length,
+    }),
+    [archivedHistoryRows.length, completedHistoryRows.length, normalizedRows.length]
   );
 
   const auditShipments = useMemo(() => {
@@ -1512,7 +1510,7 @@ function App() {
       </section>
 
       <section className="stats-grid">
-        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment records" />
+        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment groups" />
         <StatCard label="Active" value={shipmentCounts.active} helperText="Currently on the live board" />
         <StatCard
           label="Completed"
