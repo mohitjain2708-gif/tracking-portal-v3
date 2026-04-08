@@ -87,3 +87,25 @@ class SourceMappingProfile(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+
+class SourceConnection(Base):
+    __tablename__ = "source_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    source_id: Mapped[int] = mapped_column(ForeignKey("shipment_sources.id"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="google_sheets")
+    connection_label: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    source_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    worksheet_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    mapping_profile_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="connected")
+    config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )

@@ -289,6 +289,14 @@ export const api = {
 
   listShipmentSourceMappings: () => request("/api/shipments/source-mappings"),
 
+  listShipmentSourceConnections: () => request("/api/shipments/source-connections"),
+
+  createGoogleSheetsConnection: (payload) =>
+    request("/api/shipments/source-connections/google-sheets", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   listShipmentSourceBatches: (limit = 20) =>
     request(`/api/shipments/source-batches?limit=${encodeURIComponent(limit)}`),
 

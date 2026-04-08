@@ -27,7 +27,7 @@ from app.core.security import hash_password
 from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
-from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource, SourceMappingProfile
+from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource, SourceMappingProfile, SourceConnection
 from app.models.upload_session import UploadSession
 from app.models.user import User
 from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
@@ -1561,6 +1561,29 @@ def _upsert_mapping_profile(
     return profile
 
 
+def _parse_google_sheet_reference(source_url: str) -> dict[str, str]:
+    normalized_url = _clean_text(source_url)
+    if not normalized_url:
+        raise HTTPException(status_code=400, detail="Google Sheets URL is required")
+
+    patterns = [
+        r"/spreadsheets/d/([a-zA-Z0-9-_]+)",
+        r"[?&]id=([a-zA-Z0-9-_]+)",
+    ]
+    sheet_id = ""
+    for pattern in patterns:
+        match = re.search(pattern, normalized_url)
+        if match:
+            sheet_id = match.group(1)
+            break
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="Could not detect a Google Sheet ID from the provided URL")
+
+    gid_match = re.search(r"[?&#]gid=(\d+)", normalized_url)
+    gid = gid_match.group(1) if gid_match else ""
+    return {"sheet_id": sheet_id, "gid": gid}
+
+
 def _resolve_default_user_id(db: Session) -> int:
     user = db.execute(select(User).where(User.email == DEFAULT_LOCAL_USER_EMAIL)).scalar_one_or_none()
     if user:
@@ -2265,6 +2288,112 @@ def list_source_mappings(db: Session = Depends(get_db), current_user: User = Dep
         }
         for profile in profiles
     ]
+
+
+@router.get("/source-connections")
+def list_source_connections(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    connections = list(
+        db.execute(
+            select(SourceConnection)
+            .where(SourceConnection.user_id == current_user.id)
+            .order_by(SourceConnection.updated_at.desc(), SourceConnection.id.desc())
+        ).scalars()
+    )
+    return [
+        {
+            "id": connection.id,
+            "source_id": connection.source_id,
+            "provider": connection.provider,
+            "connection_label": connection.connection_label,
+            "source_url": connection.source_url,
+            "worksheet_name": connection.worksheet_name,
+            "mapping_profile_id": connection.mapping_profile_id,
+            "status": connection.status,
+            "config": json.loads(connection.config_json or "{}"),
+            "updated_at": connection.updated_at.isoformat(),
+        }
+        for connection in connections
+    ]
+
+
+@router.post("/source-connections/google-sheets")
+def create_google_sheets_connection(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    source_url = _clean_text(payload.get("source_url"))
+    worksheet_name = _clean_text(payload.get("worksheet_name"))
+    connection_label = _clean_text(payload.get("connection_label")) or "Google Sheet"
+    mapping_profile_id = int(payload.get("mapping_profile_id") or 0)
+    parsed = _parse_google_sheet_reference(source_url)
+
+    source = _get_or_create_source(
+        db,
+        current_user,
+        "google_sheets",
+        connection_label,
+        source_reference=parsed["sheet_id"],
+        metadata={
+            "sheet_id": parsed["sheet_id"],
+            "gid": parsed["gid"],
+            "worksheet_name": worksheet_name,
+        },
+    )
+
+    existing = db.execute(
+        select(SourceConnection).where(
+            SourceConnection.user_id == current_user.id,
+            SourceConnection.provider == "google_sheets",
+            SourceConnection.source_url == source_url,
+            SourceConnection.worksheet_name == worksheet_name,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.connection_label = connection_label
+        existing.mapping_profile_id = mapping_profile_id
+        existing.status = "connected"
+        existing.config_json = _json_dumps(parsed)
+        existing.updated_at = datetime.utcnow()
+        connection = existing
+    else:
+        connection = SourceConnection(
+            user_id=current_user.id,
+            source_id=source.id,
+            provider="google_sheets",
+            connection_label=connection_label,
+            source_url=source_url,
+            worksheet_name=worksheet_name,
+            mapping_profile_id=mapping_profile_id,
+            status="connected",
+            config_json=_json_dumps(parsed),
+        )
+        db.add(connection)
+        db.flush()
+
+    _log_audit_event(
+        db,
+        current_user.id,
+        "source_connection_saved",
+        shipment_status="active",
+        details={
+            "provider": "google_sheets",
+            "connection_label": connection_label,
+            "worksheet_name": worksheet_name,
+            "sheet_id": parsed["sheet_id"],
+            "mapping_profile_id": mapping_profile_id,
+        },
+    )
+    db.commit()
+    return {
+        "id": connection.id,
+        "provider": connection.provider,
+        "connection_label": connection.connection_label,
+        "source_url": connection.source_url,
+        "worksheet_name": connection.worksheet_name,
+        "mapping_profile_id": connection.mapping_profile_id,
+        "status": connection.status,
+        "config": parsed,
+    }
 
 
 @router.get("/source-batches")

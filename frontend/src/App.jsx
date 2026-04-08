@@ -13,6 +13,13 @@ const INITIAL_MAPPING = {
   bl_number: "",
 };
 
+const INITIAL_GOOGLE_SHEET_FORM = {
+  connection_label: "",
+  source_url: "",
+  worksheet_name: "",
+  mapping_profile_id: "",
+};
+
 const IMPORT_FILE_SIZE_LIMIT_MB = 10;
 
 const MOVEMENT_FILTERS = [
@@ -739,6 +746,8 @@ function App() {
   const [sourceBatches, setSourceBatches] = useState([]);
   const [sourceBatchDetail, setSourceBatchDetail] = useState(null);
   const [sourceMappings, setSourceMappings] = useState([]);
+  const [sourceConnections, setSourceConnections] = useState([]);
+  const [googleSheetForm, setGoogleSheetForm] = useState(INITIAL_GOOGLE_SHEET_FORM);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
@@ -842,17 +851,19 @@ function App() {
     }
 
     try {
-      const [shipmentsData, dashboardData, sourceBatchData, sourceMappingData] = await Promise.all([
+      const [shipmentsData, dashboardData, sourceBatchData, sourceMappingData, sourceConnectionData] = await Promise.all([
         api.listShipments(),
         api.getShipmentDashboard(),
         api.listShipmentSourceBatches(8),
         api.listShipmentSourceMappings(),
+        api.listShipmentSourceConnections(),
       ]);
 
       setShipments(Array.isArray(shipmentsData) ? shipmentsData : []);
       setDashboardRows(Array.isArray(dashboardData?.rows) ? dashboardData.rows : []);
       setSourceBatches(Array.isArray(sourceBatchData) ? sourceBatchData : []);
       setSourceMappings(Array.isArray(sourceMappingData) ? sourceMappingData : []);
+      setSourceConnections(Array.isArray(sourceConnectionData) ? sourceConnectionData : []);
       setDashboardIdentifiers(dashboardData?.identifiers || {
         total_at_icd_birgunj: 0,
         today_arrivals: 0,
@@ -1463,6 +1474,33 @@ function App() {
     }
   }, []);
 
+  const handleGoogleSheetFieldChange = useCallback((field, value) => {
+    setGoogleSheetForm((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const handleSaveGoogleSheetConnection = useCallback(async () => {
+    if (!cleanText(googleSheetForm.source_url)) {
+      setFeedback({ tone: "error", text: "Add the Google Sheets URL before saving the connection." });
+      return;
+    }
+    try {
+      const data = await api.createGoogleSheetsConnection({
+        connection_label: cleanText(googleSheetForm.connection_label) || "Google Sheet",
+        source_url: cleanText(googleSheetForm.source_url),
+        worksheet_name: cleanText(googleSheetForm.worksheet_name),
+        mapping_profile_id: Number(googleSheetForm.mapping_profile_id || 0),
+      });
+      setGoogleSheetForm(INITIAL_GOOGLE_SHEET_FORM);
+      setFeedback({
+        tone: "success",
+        text: `Google Sheets connection saved for ${data.connection_label}. Sync setup can now build on this source.`,
+      });
+      await loadDashboard({ silent: true });
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Failed to save Google Sheets connection" });
+    }
+  }, [googleSheetForm, loadDashboard]);
+
   const handleRefreshGroup = useCallback(
     async (row) => {
       setFeedback(null);
@@ -2013,6 +2051,93 @@ function App() {
               ) : null}
             </div>
           )}
+        </article>
+
+        <article className="surface panel-card">
+          <div className="panel-heading compact-heading">
+            <div>
+              <p className="eyebrow">Cloud Sources</p>
+              <h2>Google Sheets</h2>
+            </div>
+          </div>
+
+          <div className="stack-form">
+            <p className="field-help">
+              Start defining Google Sheets sources now. The saved connection and mapping profile will power read-only sync in the next Phase 2 slice.
+            </p>
+
+            <label className="field-label" htmlFor="google_sheet_label">
+              Connection Label
+            </label>
+            <input
+              id="google_sheet_label"
+              value={googleSheetForm.connection_label}
+              onChange={(event) => handleGoogleSheetFieldChange("connection_label", event.target.value)}
+              placeholder="Nepal Incoming Master"
+            />
+
+            <label className="field-label" htmlFor="google_sheet_url">
+              Google Sheets URL
+            </label>
+            <input
+              id="google_sheet_url"
+              value={googleSheetForm.source_url}
+              onChange={(event) => handleGoogleSheetFieldChange("source_url", event.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/..."
+            />
+
+            <label className="field-label" htmlFor="google_sheet_tab">
+              Worksheet / Tab
+            </label>
+            <input
+              id="google_sheet_tab"
+              value={googleSheetForm.worksheet_name}
+              onChange={(event) => handleGoogleSheetFieldChange("worksheet_name", event.target.value)}
+              placeholder="OONC"
+            />
+
+            <label className="field-label" htmlFor="google_sheet_mapping_profile">
+              Preferred Mapping Profile
+            </label>
+            <select
+              id="google_sheet_mapping_profile"
+              value={googleSheetForm.mapping_profile_id}
+              onChange={(event) => handleGoogleSheetFieldChange("mapping_profile_id", event.target.value)}
+            >
+              <option value="">No saved profile</option>
+              {sourceMappings.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.profile_label || profile.source_sheet || `Profile #${profile.id}`}
+                </option>
+              ))}
+            </select>
+
+            <div className="button-row compact-row">
+              <ActionButton type="button" tone="secondary" onClick={handleSaveGoogleSheetConnection}>
+                Save Connection
+              </ActionButton>
+            </div>
+
+            {sourceConnections.length ? (
+              <div className="source-batch-strip">
+                <div className="source-batch-strip-copy">
+                  <strong>Saved Google Sheets connections</strong>
+                  <span>These source definitions are ready for the upcoming read-only sync flow.</span>
+                </div>
+                <div className="source-batch-list">
+                  {sourceConnections
+                    .filter((connection) => connection.provider === "google_sheets")
+                    .slice(0, 4)
+                    .map((connection) => (
+                      <span key={connection.id} className="source-batch-chip source-batch-chip-static">
+                        <span>{connection.connection_label || "Google Sheet"}</span>
+                        <strong>{connection.worksheet_name || "Default tab"}</strong>
+                      </span>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         </article>
       </section>
 
