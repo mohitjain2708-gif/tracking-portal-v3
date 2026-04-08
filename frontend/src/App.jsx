@@ -164,7 +164,7 @@ function formatRefreshStatusLabel(value) {
 
 function formatTrackingSourceLabel(value) {
   const normalized = cleanText(value)
-    .split(",")
+    .split(/[,+]/)
     .map((item) => cleanText(item).toLowerCase())
     .filter(Boolean);
   if (normalized.length === 0) {

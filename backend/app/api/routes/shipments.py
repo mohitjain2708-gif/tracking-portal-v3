@@ -2128,12 +2128,28 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
             reverse=True,
         )
         lead = sorted_entries[0]
+        refresh_entries = sorted(
+            sorted_entries,
+            key=lambda item: (
+                _date_sort_value(item.get("last_refresh_at", "")),
+                bool(_clean_text(item.get("last_refresh_status", ""))),
+                item.get("id", 0),
+            ),
+            reverse=True,
+        )
+        refresh_lead = refresh_entries[0]
         bl_number = _first_non_empty([item.get("bl_number", "") for item in sorted_entries])
         container_numbers = sorted({item.get("container_number", "") for item in sorted_entries if item.get("container_number")})
         shipment_status = max(
             (item.get("shipment_status") or "archived" for item in sorted_entries),
             key=lambda status: SHIPMENT_STATUS_PRIORITY.get(status, 0),
         )
+        tracking_sources: list[str] = []
+        for item in sorted_entries:
+            for source in re.split(r"[,+]", _clean_text(item.get("tracking_source", "")).lower()):
+                source = source.strip()
+                if source and source not in tracking_sources:
+                    tracking_sources.append(source)
         documents = _documents_for_bl(bl_number)
         rows.append(
             {
@@ -2152,6 +2168,13 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "port_arrival_date": _earliest_non_empty_date([item.get("port_arrival_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
+                "tracking_source": ",".join(tracking_sources),
+                "source_type": _first_non_empty([item.get("source_type", "") for item in sorted_entries]),
+                "source_label": _first_non_empty([item.get("source_label", "") for item in sorted_entries]),
+                "source_batch_id": refresh_lead.get("source_batch_id") or lead.get("source_batch_id") or 0,
+                "last_refresh_at": _first_non_empty([item.get("last_refresh_at", "") for item in refresh_entries]),
+                "last_refresh_status": _first_non_empty([item.get("last_refresh_status", "") for item in refresh_entries]),
+                "last_refresh_error": _first_non_empty([item.get("last_refresh_error", "") for item in refresh_entries]),
                 "clearance_doc_number": _first_non_empty([item.get("clearance_doc_number", "") for item in sorted_entries]),
                 "documents": documents,
                 "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),
