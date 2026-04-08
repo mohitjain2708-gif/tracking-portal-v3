@@ -241,6 +241,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  updateShipmentGroupDetails: (payload) =>
+    request("/api/shipments/actions/group/edit", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   updateShipmentStatus: (id, payload) =>
     request(`/api/shipments/${id}/status`, {
       method: "PATCH",

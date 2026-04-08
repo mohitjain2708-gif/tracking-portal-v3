@@ -1,10 +1,19 @@
-﻿from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 
 class ShipmentCreateRequest(BaseModel):
     customer_name: str = ""
-    container_number: str
+    container_number: str = ""
+    container_numbers: list[str] = []
     bl_number: str = ""
+
+
+class ShipmentGroupUpdateRequest(BaseModel):
+    current_bl_number: str = ""
+    current_container_numbers: list[str] = []
+    customer_name: str = ""
+    bl_number: str = ""
+    container_numbers: list[str] = []
 
 
 class ShipmentStatusUpdateRequest(BaseModel):

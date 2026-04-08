@@ -28,7 +28,7 @@ from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
 from app.models.user import User
-from app.schemas.shipment import ShipmentCreateRequest, ShipmentStatusUpdateRequest
+from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
 
 router = APIRouter()
 
@@ -164,6 +164,43 @@ def _clean_bl(value: Any) -> str:
 
 def _normalize_bl_number(value: Any) -> str:
     return re.sub(r"\s+", "", _clean_bl(value))
+
+
+def _container_format_error(container_number: str) -> str | None:
+    normalized = _clean_container(container_number)
+    if not normalized:
+        return "Container number is required."
+    if not re.fullmatch(r"[A-Z]{4}\d{7}", normalized):
+        return f"{normalized} must use 4 letters followed by 7 digits."
+    return None
+
+
+def _parse_container_numbers(values: list[Any] | None = None, fallback: Any = "") -> tuple[list[str], list[str]]:
+    raw_values: list[Any] = list(values or [])
+    if not raw_values and fallback not in (None, ""):
+        raw_values = [fallback]
+
+    tokens: list[str] = []
+    for value in raw_values:
+        text_value = _clean_text(value)
+        if not text_value:
+            continue
+        parts = re.split(r"[\s,;]+", text_value)
+        tokens.extend(part for part in parts if _clean_text(part))
+
+    normalized: list[str] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        container_number = _clean_container(token)
+        if not container_number or container_number in seen:
+            continue
+        seen.add(container_number)
+        if _container_format_error(container_number):
+            invalid.append(container_number)
+        else:
+            normalized.append(container_number)
+    return normalized, invalid
 
 
 def _row_to_strings(row: list[Any]) -> list[str]:
@@ -885,6 +922,22 @@ def _save_document(bl_number: str, document_type: str, upload: UploadFile) -> di
     bucket[normalized_type] = metadata
     _save_documents_index(index)
     return _serialize_document_metadata(normalized_bl, normalized_type, metadata)
+
+
+def _move_documents_between_bls(previous_bl: str, next_bl: str) -> None:
+    previous_normalized = _normalize_bl_number(previous_bl)
+    next_normalized = _normalize_bl_number(next_bl)
+    if not previous_normalized or not next_normalized or previous_normalized == next_normalized:
+        return
+    index = _load_documents_index()
+    existing = index.get(previous_normalized)
+    if not isinstance(existing, dict) or not existing:
+        return
+    destination = index.setdefault(next_normalized, {})
+    for document_type, metadata in existing.items():
+        destination[document_type] = metadata
+    index.pop(previous_normalized, None)
+    _save_documents_index(index)
 
 
 def _load_location_distance_cache() -> dict[str, dict[str, Any]]:
@@ -1815,43 +1868,178 @@ def location_distances(payload: dict, db: Session = Depends(get_db), current_use
 @router.post("/add")
 def add_shipment(payload: ShipmentCreateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    container_number = _clean_container(payload.container_number)
-    if not container_number:
-        raise HTTPException(status_code=400, detail="Container required")
+    container_numbers, invalid_containers = _parse_container_numbers(
+        payload.container_numbers,
+        payload.container_number,
+    )
+    if invalid_containers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid container format: {', '.join(invalid_containers)}. Use 4 letters followed by 7 digits.",
+        )
+    if not container_numbers:
+        raise HTTPException(status_code=400, detail="At least one container number is required")
     canonical_customer = _sync_customer_directory(db, payload.customer_name)
     normalized_bl = _normalize_bl_number(payload.bl_number)
-    existing = db.execute(
-        select(Shipment).where(
-            Shipment.user_id == current_user.id,
-            Shipment.container_number == container_number,
-            Shipment.shipment_status != "archived",
-            Shipment.bl_number == normalized_bl,
-            Shipment.customer_name == canonical_customer,
-        )
-    ).scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="Duplicate shipment")
-    shipment = Shipment(
-        user_id=current_user.id,
-        customer_name=canonical_customer,
-        container_number=container_number,
-        bl_number=normalized_bl,
-        shipment_status="active",
-        movement_category="Hi Seas",
+    existing_records = list(
+        db.execute(
+            select(Shipment).where(
+                Shipment.user_id == current_user.id,
+                Shipment.shipment_status != "archived",
+                Shipment.bl_number == normalized_bl,
+                Shipment.customer_name == canonical_customer,
+                Shipment.container_number.in_(container_numbers),
+            )
+        ).scalars()
     )
-    db.add(shipment)
+    existing_containers = {_clean_container(shipment.container_number) for shipment in existing_records}
+    duplicate_containers = [container_number for container_number in container_numbers if container_number in existing_containers]
+    if duplicate_containers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate shipment for: {', '.join(duplicate_containers)}",
+        )
+
+    created_shipments: list[Shipment] = []
+    for container_number in container_numbers:
+        shipment = Shipment(
+            user_id=current_user.id,
+            customer_name=canonical_customer,
+            container_number=container_number,
+            bl_number=normalized_bl,
+            shipment_status="active",
+            movement_category="Hi Seas",
+        )
+        db.add(shipment)
+        created_shipments.append(shipment)
     _log_audit_event(
         db,
         current_user.id,
         "shipment_added",
-        bl_number=shipment.bl_number,
-        container_number=shipment.container_number,
-        shipment_status=shipment.shipment_status,
-        details={"customer_name": shipment.customer_name},
+        bl_number=normalized_bl,
+        container_number=container_numbers[0],
+        shipment_status="active",
+        details={"customer_name": canonical_customer, "container_numbers": container_numbers, "created_count": len(container_numbers)},
     )
     db.commit()
-    db.refresh(shipment)
-    return _shipment_to_dict(shipment)
+    for shipment in created_shipments:
+        db.refresh(shipment)
+    return {
+        "created_count": len(created_shipments),
+        "items": [_shipment_to_dict(shipment) for shipment in created_shipments],
+    }
+
+
+@router.patch("/actions/group/edit")
+def update_group_details(
+    payload: ShipmentGroupUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    container_numbers, invalid_containers = _parse_container_numbers(payload.container_numbers)
+    if invalid_containers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid container format: {', '.join(invalid_containers)}. Use 4 letters followed by 7 digits.",
+        )
+    if not container_numbers:
+        raise HTTPException(status_code=400, detail="At least one valid container number is required")
+
+    target_shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.current_bl_number,
+        container_numbers=payload.current_container_numbers,
+        include_archived=True,
+    )
+    if not target_shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+
+    canonical_customer = _sync_customer_directory(db, payload.customer_name)
+    normalized_bl = _normalize_bl_number(payload.bl_number)
+    previous_bl = _first_non_empty([shipment.bl_number for shipment in target_shipments])
+    active_status = max(
+        (shipment.shipment_status or "active" for shipment in target_shipments),
+        key=lambda status: SHIPMENT_STATUS_PRIORITY.get(status, 0),
+    )
+
+    existing_elsewhere = list(
+        db.execute(
+            _user_shipment_select(current_user).where(
+                Shipment.container_number.in_(container_numbers),
+                ~Shipment.id.in_([shipment.id for shipment in target_shipments]),
+            )
+        ).scalars()
+    )
+    if existing_elsewhere:
+        taken = sorted({_clean_container(shipment.container_number) for shipment in existing_elsewhere if _clean_container(shipment.container_number)})
+        raise HTTPException(
+            status_code=400,
+            detail=f"These containers already exist in another shipment: {', '.join(taken)}",
+        )
+
+    existing_by_container = {
+        _clean_container(shipment.container_number): shipment
+        for shipment in target_shipments
+        if _clean_container(shipment.container_number)
+    }
+    next_containers = set(container_numbers)
+
+    for shipment in target_shipments:
+        if _clean_container(shipment.container_number) not in next_containers:
+            db.delete(shipment)
+
+    updated_shipments: list[Shipment] = []
+    for container_number in container_numbers:
+        shipment = existing_by_container.get(container_number)
+        if shipment is None:
+            shipment = Shipment(
+                user_id=current_user.id,
+                customer_name=canonical_customer,
+                container_number=container_number,
+                bl_number=normalized_bl,
+                shipment_status=active_status,
+                movement_category="Hi Seas",
+            )
+            db.add(shipment)
+        else:
+            shipment.customer_name = canonical_customer
+            shipment.bl_number = normalized_bl
+        updated_shipments.append(shipment)
+
+    if previous_bl and normalized_bl and previous_bl != normalized_bl:
+        _move_documents_between_bls(previous_bl, normalized_bl)
+
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_edited",
+        bl_number=normalized_bl or previous_bl,
+        container_number=container_numbers[0],
+        shipment_status=active_status,
+        details={
+            "customer_name": canonical_customer,
+            "container_numbers": container_numbers,
+            "previous_bl_number": previous_bl,
+            "next_bl_number": normalized_bl,
+        },
+    )
+    db.commit()
+
+    refreshed_shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=normalized_bl or previous_bl,
+        container_numbers=container_numbers,
+        include_archived=True,
+    )
+    rows = _group_dashboard_rows(refreshed_shipments)
+    return {
+        "updated_count": len(container_numbers),
+        "items": [_shipment_to_dict(shipment) for shipment in refreshed_shipments],
+        "row": rows[0] if rows else None,
+    }
 
 
 @router.patch("/{shipment_id}/status")
@@ -2012,11 +2200,15 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     imported_count = 0
     duplicate_count = 0
     skipped_blank_count = 0
+    skipped_invalid_count = 0
     user_id = current_user.id
     for row_obj in normalized_rows:
         container_number = _clean_container(row_obj.get(container_col))
         if not container_number:
             skipped_blank_count += 1
+            continue
+        if _container_format_error(container_number):
+            skipped_invalid_count += 1
             continue
         canonical_customer = _sync_customer_directory(db, row_obj.get(customer_col))
         bl_number = _normalize_bl_number(row_obj.get(bl_col))
@@ -2045,6 +2237,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "imported_count": imported_count,
             "duplicate_count": duplicate_count,
             "skipped_blank_count": skipped_blank_count,
+            "skipped_invalid_count": skipped_invalid_count,
             "mapping": mapping_json,
         },
     )
@@ -2053,7 +2246,13 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         file_path.unlink()
     except Exception:
         pass
-    return {"imported_count": imported_count, "duplicate_count": duplicate_count, "skipped_blank_count": skipped_blank_count, "total_rows": imported_count + duplicate_count + skipped_blank_count}
+    return {
+        "imported_count": imported_count,
+        "duplicate_count": duplicate_count,
+        "skipped_blank_count": skipped_blank_count,
+        "skipped_invalid_count": skipped_invalid_count,
+        "total_rows": imported_count + duplicate_count + skipped_blank_count + skipped_invalid_count,
+    }
 
 
 @router.post("/refresh-one")

@@ -3,7 +3,7 @@ import { api, isDemoSessionEnabled } from "./api";
 
 const INITIAL_FORM = {
   customer_name: "",
-  container_number: "",
+  container_input: "",
   bl_number: "",
 };
 
@@ -43,6 +43,22 @@ const MOVEMENT_PRIORITY = {
 
 function cleanText(value) {
   return String(value || "").trim();
+}
+
+function parseContainerInput(value) {
+  return Array.from(
+    new Set(
+      cleanText(value)
+        .toUpperCase()
+        .split(/[\s,;]+/)
+        .map((item) => cleanText(item))
+        .filter(Boolean)
+    )
+  );
+}
+
+function isValidContainerNumber(value) {
+  return /^[A-Z]{4}\d{7}$/.test(cleanText(value).toUpperCase());
 }
 
 function normalizeLooseText(value) {
@@ -116,19 +132,19 @@ function formatShipmentStatusLabel(value) {
 function formatRefreshStatusLabel(value) {
   const status = cleanText(value).toLowerCase();
   if (!status || status === "unknown") {
-    return "Awaiting first check";
+    return "Awaiting live check";
   }
   if (status === "success") {
-    return "Updated";
+    return "Checked successfully";
   }
   if (status === "success-cached") {
-    return "Updated from cache";
+    return "Loaded from cache";
   }
   if (status === "error") {
     return "Needs attention";
   }
   if (status === "not_refreshed") {
-    return "Awaiting first check";
+    return "Awaiting live check";
   }
   return status
     .split(/[\s_-]+/)
@@ -143,7 +159,7 @@ function formatTrackingSourceLabel(value) {
     .map((item) => cleanText(item).toLowerCase())
     .filter(Boolean);
   if (normalized.length === 0) {
-    return "No feed noted yet";
+    return "No source recorded yet";
   }
 
   const labels = normalized.map((item) => {
@@ -159,7 +175,13 @@ function formatTrackingSourceLabel(value) {
     return item.charAt(0).toUpperCase() + item.slice(1);
   });
 
-  return labels.join(" • ");
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
 function formatAuditActionLabel(value) {
@@ -173,6 +195,7 @@ function formatAuditActionLabel(value) {
     shipment_document_uploaded: "Document submitted",
     shipment_orphans_reconciled: "Legacy duplicates cleaned",
     shipment_added: "Shipment added",
+    shipment_group_edited: "Shipment details corrected",
   };
   if (custom[action]) {
     return custom[action];
@@ -192,6 +215,22 @@ function formatAuditDetails(details) {
     return "No additional detail";
   }
 
+  if (details.previous_bl_number !== undefined || details.next_bl_number !== undefined) {
+    const changes = [];
+    if (details.previous_bl_number !== details.next_bl_number) {
+      changes.push(
+        `BL updated from ${details.previous_bl_number || "not linked"} to ${details.next_bl_number || "not linked"}`
+      );
+    }
+    if (details.customer_name) {
+      changes.push(`customer aligned to ${details.customer_name}`);
+    }
+    if (Array.isArray(details.container_numbers) && details.container_numbers.length) {
+      changes.push(`${details.container_numbers.length} containers now linked`);
+    }
+    return `${changes.join(". ")}.`;
+  }
+
   if (Array.isArray(details.container_numbers) && details.container_numbers.length) {
     if (typeof details.refreshed_count === "number") {
       return `${details.refreshed_count} containers refreshed: ${details.container_numbers.join(", ")}`;
@@ -204,7 +243,7 @@ function formatAuditDetails(details) {
   }
 
   if (typeof details.imported_count === "number") {
-    return `${details.imported_count} imported, ${details.duplicate_count || 0} duplicates skipped, ${details.skipped_blank_count || 0} blank rows ignored.`;
+    return `${details.imported_count} imported, ${details.duplicate_count || 0} duplicates skipped, ${details.skipped_blank_count || 0} blank rows ignored, and ${details.skipped_invalid_count || 0} invalid containers skipped.`;
   }
 
   if (details.document_type || details.original_name) {
@@ -224,7 +263,7 @@ function formatAuditDetails(details) {
 
   return Object.entries(details)
     .map(([key, val]) => `${key.replace(/_/g, " ")}: ${Array.isArray(val) ? val.join(", ") : String(val)}`)
-    .join(" • ");
+    .join(" · ");
 }
 
 function guessColumns(columns) {
@@ -558,15 +597,18 @@ function SortableHeader({ label, columnKey, sortConfig, onSort }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, actions = null, size = "default" }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+      <div className={`modal-card modal-card-${size}`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <h3>{title}</h3>
-          <button type="button" className="modal-close" onClick={onClose}>
-            Close
-          </button>
+          <div className="modal-header-actions">
+            {actions}
+            <button type="button" className="modal-close" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
         <div className="modal-body">{children}</div>
       </div>
@@ -698,6 +740,9 @@ function App() {
   const [recordsMovementFilter, setRecordsMovementFilter] = useState("All");
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
+  const [editRow, setEditRow] = useState(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editForm, setEditForm] = useState(INITIAL_FORM);
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
     packing_list: null,
@@ -1031,7 +1076,7 @@ function App() {
   const handleFieldChange = useCallback((field, value) => {
     setManualForm((current) => ({
       ...current,
-      [field]: field === "container_number" || field === "bl_number" ? value.toUpperCase() : value,
+      [field]: field === "bl_number" ? value.toUpperCase() : value,
     }));
   }, []);
 
@@ -1040,21 +1085,98 @@ function App() {
       event.preventDefault();
       setFeedback(null);
 
+      const containerNumbers = parseContainerInput(manualForm.container_input);
+      const invalidContainers = containerNumbers.filter((container) => !isValidContainerNumber(container));
+      if (containerNumbers.length === 0) {
+        setFeedback({ tone: "error", text: "Add at least one container number before saving." });
+        return;
+      }
+      if (invalidContainers.length > 0) {
+        setFeedback({
+          tone: "error",
+          text: `Invalid container format: ${invalidContainers.join(", ")}. Use 4 letters followed by 7 digits.`,
+        });
+        return;
+      }
+
       try {
-        await api.addShipment({
+        const data = await api.addShipment({
           customer_name: manualForm.customer_name.trim(),
-          container_number: manualForm.container_number.trim().toUpperCase(),
           bl_number: manualForm.bl_number.trim().toUpperCase(),
+          container_numbers: containerNumbers,
         });
 
         setManualForm(INITIAL_FORM);
-        setFeedback({ tone: "success", text: "Shipment added successfully." });
+        setFeedback({
+          tone: "success",
+          text: `${data.created_count ?? containerNumbers.length} shipment row(s) added successfully.`,
+        });
         await loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Failed to add shipment" });
       }
     },
     [loadDashboard, manualForm]
+  );
+
+  const openEditShipment = useCallback((row) => {
+    setEditRow(row);
+    setEditForm({
+      customer_name: row.customer_name || "",
+      container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
+      bl_number: row.bl_number || "",
+    });
+  }, []);
+
+  const handleEditFieldChange = useCallback((field, value) => {
+    setEditForm((current) => ({
+      ...current,
+      [field]: field === "bl_number" ? value.toUpperCase() : value,
+    }));
+  }, []);
+
+  const handleEditShipment = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!editRow) {
+        return;
+      }
+      const containerNumbers = parseContainerInput(editForm.container_input);
+      const invalidContainers = containerNumbers.filter((container) => !isValidContainerNumber(container));
+      if (containerNumbers.length === 0) {
+        setFeedback({ tone: "error", text: "At least one valid container number is required." });
+        return;
+      }
+      if (invalidContainers.length > 0) {
+        setFeedback({
+          tone: "error",
+          text: `Invalid container format: ${invalidContainers.join(", ")}. Use 4 letters followed by 7 digits.`,
+        });
+        return;
+      }
+
+      setEditSubmitting(true);
+      setFeedback(null);
+      try {
+        await api.updateShipmentGroupDetails({
+          current_bl_number: editRow.bl_number,
+          current_container_numbers: editRow.container_numbers || [editRow.primary_container_number].filter(Boolean),
+          customer_name: editForm.customer_name.trim(),
+          bl_number: editForm.bl_number.trim().toUpperCase(),
+          container_numbers: containerNumbers,
+        });
+        setEditRow(null);
+        setAuditRow(null);
+        setEditForm(INITIAL_FORM);
+        setFeedback({ tone: "success", text: "Shipment details updated successfully." });
+        await loadDashboard({ silent: true });
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Failed to update shipment details" });
+      } finally {
+        setEditSubmitting(false);
+      }
+    },
+    [editForm, editRow, loadDashboard]
   );
 
   const handleShipmentImportPreview = useCallback(async () => {
@@ -1101,7 +1223,7 @@ function App() {
       setShipmentImportMapping(INITIAL_MAPPING);
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates and ${data.skipped_blank_count ?? 0} blank rows.`,
+        text: `Import complete. Added ${data.imported_count ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1570,15 +1692,19 @@ function App() {
               ))}
             </datalist>
 
-            <label className="field-label" htmlFor="container_number">
-              Container Number
+            <label className="field-label" htmlFor="container_input">
+              Container Numbers
             </label>
-            <input
-              id="container_number"
-              value={manualForm.container_number}
-              onChange={(event) => handleFieldChange("container_number", event.target.value)}
-              placeholder="TCNU1491563"
+            <textarea
+              id="container_input"
+              rows="4"
+              value={manualForm.container_input}
+              onChange={(event) => handleFieldChange("container_input", event.target.value)}
+              placeholder={"TCNU1491563\nMRKU6677543\nTTNU1079348"}
             />
+            <p className="field-help">
+              Add one container per line. The portal validates 4 letters followed by 7 digits.
+            </p>
 
             <label className="field-label" htmlFor="bl_number">
               BL Number
@@ -1905,6 +2031,16 @@ function App() {
             }}>
               Refresh Tracking
             </ActionButton>
+            <ActionButton
+              type="button"
+              tone="ghost"
+              onClick={() => {
+                openEditShipment(actionRow);
+                setActionRow(null);
+              }}
+            >
+              Edit Details
+            </ActionButton>
             <ActionButton type="button" tone="ghost" onClick={() => {
               setAuditRow(actionRow);
               setActionRow(null);
@@ -2204,6 +2340,19 @@ function App() {
         <Modal
           title={`Shipment Audit${auditRow.bl_number ? ` - ${auditRow.bl_number}` : ` - ${auditRow.primary_container_number}`}`}
           onClose={() => setAuditRow(null)}
+          size="wide"
+          actions={
+            <ActionButton
+              type="button"
+              tone="secondary"
+              onClick={() => {
+                openEditShipment(auditRow);
+                setAuditRow(null);
+              }}
+            >
+              Edit Details
+            </ActionButton>
+          }
         >
           <div className="audit-panel">
             <div className="audit-hero">
@@ -2224,20 +2373,21 @@ function App() {
                 </div>
               </section>
 
-              <div className="audit-hero-metrics">
-                <article className="audit-card">
-                  <span>Last Checked</span>
-                  <strong>{auditRow.last_refresh_at || "Awaiting first check"}</strong>
-                </article>
-                <article className="audit-card">
-                  <span>Data Feeds</span>
+              <section className="audit-summary-card">
+                <p className="audit-detail-title">Live Check</p>
+                <div className="audit-summary-row">
+                  <span>Checked</span>
+                  <strong>{auditRow.last_refresh_at || "No live check yet"}</strong>
+                </div>
+                <div className="audit-summary-row">
+                  <span>Feeds</span>
                   <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
-                </article>
-                <article className="audit-card">
-                  <span>Check Result</span>
+                </div>
+                <div className="audit-summary-row">
+                  <span>Outcome</span>
                   <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
-                </article>
-              </div>
+                </div>
+              </section>
             </div>
 
             <div className="audit-detail-grid">
@@ -2365,36 +2515,74 @@ function App() {
                   Export Audit
                 </ActionButton>
               </div>
-              <div className="history-table-wrap">
-                <table className="history-table">
-                  <thead>
-                    <tr>
-                      <th>When</th>
-                      <th>Action</th>
-                      <th>Status</th>
-                      <th>Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditEntries.length === 0 ? (
-                      <tr>
-                        <td colSpan="4" className="empty-cell">No audit trail available yet.</td>
-                      </tr>
-                    ) : (
-                      auditEntries.map((entry) => (
-                        <tr key={entry.id}>
-                          <td>{entry.created_at || "-"}</td>
-                          <td>{formatAuditActionLabel(entry.action)}</td>
-                          <td>{formatShipmentStatusLabel(entry.shipment_status)}</td>
-                          <td className="details-cell">{formatAuditDetails(entry.details)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {auditEntries.length === 0 ? (
+                <div className="history-table-wrap empty-state-panel">No audit trail available yet.</div>
+              ) : (
+                <div className="audit-timeline">
+                  {auditEntries.map((entry) => (
+                    <article key={entry.id} className="audit-timeline-item">
+                      <div className="audit-timeline-meta">
+                        <span>{entry.created_at || "-"}</span>
+                        <span>{formatShipmentStatusLabel(entry.shipment_status)}</span>
+                      </div>
+                      <h4>{formatAuditActionLabel(entry.action)}</h4>
+                      <p>{formatAuditDetails(entry.details)}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+        </Modal>
+      )}
+
+      {editRow && (
+        <Modal title="Edit Shipment Details" onClose={() => setEditRow(null)}>
+          <form className="stack-form" onSubmit={handleEditShipment}>
+            <label className="field-label" htmlFor="edit_customer_name">
+              Customer Name
+            </label>
+            <input
+              id="edit_customer_name"
+              list="customer-suggestions"
+              value={editForm.customer_name}
+              onChange={(event) => handleEditFieldChange("customer_name", event.target.value)}
+              placeholder="Revachi International PVT. LTD."
+            />
+
+            <label className="field-label" htmlFor="edit_container_input">
+              Container Numbers
+            </label>
+            <textarea
+              id="edit_container_input"
+              rows="5"
+              value={editForm.container_input}
+              onChange={(event) => handleEditFieldChange("container_input", event.target.value)}
+              placeholder={"TCNU1491563\nMRKU6677543\nTTNU1079348"}
+            />
+            <p className="field-help">
+              Keep one container per line. Every value must use 4 letters followed by 7 digits.
+            </p>
+
+            <label className="field-label" htmlFor="edit_bl_number">
+              BL Number
+            </label>
+            <input
+              id="edit_bl_number"
+              value={editForm.bl_number}
+              onChange={(event) => handleEditFieldChange("bl_number", event.target.value)}
+              placeholder="265636541"
+            />
+
+            <div className="button-row compact-row edit-actions-row">
+              <ActionButton type="button" tone="ghost" onClick={() => setEditRow(null)}>
+                Cancel
+              </ActionButton>
+              <ActionButton type="submit" tone="primary" disabled={editSubmitting}>
+                {editSubmitting ? "Saving..." : "Save Details"}
+              </ActionButton>
+            </div>
+          </form>
         </Modal>
       )}
     </main>
