@@ -2785,10 +2785,12 @@ function App() {
                     <span>BL Number</span>
                     <strong>{auditRow.bl_number || "Not linked"}</strong>
                   </div>
-                  <div>
-                    <span>Clearance Doc</span>
-                    <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
-                  </div>
+                  {["completed", "archived"].includes(cleanText(auditRow.shipment_status).toLowerCase()) ? (
+                    <div>
+                      <span>Clearance Doc</span>
+                      <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="audit-kv-block">
                   <span>Containers</span>
