@@ -185,19 +185,74 @@ def _pick_header_row(rows: list[list[Any]]) -> tuple[int, list[str]]:
     return best_idx + 1, headers
 
 
+def _merged_cell_value_map(sheet) -> dict[tuple[int, int], Any]:
+    merged_values: dict[tuple[int, int], Any] = {}
+    for merged_range in sheet.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        top_left_value = sheet.cell(row=min_row, column=min_col).value
+        for row_index in range(min_row, max_row + 1):
+            for col_index in range(min_col, max_col + 1):
+                merged_values[(row_index, col_index)] = top_left_value
+    return merged_values
+
+
+def _sheet_rows_with_merged_fill(sheet) -> list[list[Any]]:
+    merged_values = _merged_cell_value_map(sheet)
+    rows: list[list[Any]] = []
+    for row in sheet.iter_rows():
+        values: list[Any] = []
+        for cell in row:
+            values.append(merged_values.get((cell.row, cell.column), cell.value))
+        rows.append(values)
+    return rows
+
+
+def _build_row_object(headers: list[str], values: list[Any]) -> dict[str, Any]:
+    row_obj: dict[str, Any] = {}
+    for index, header in enumerate(headers):
+        row_obj[header] = _clean_text(values[index] if index < len(values) else "")
+    return row_obj
+
+
+def _normalize_import_row_objects(
+    headers: list[str],
+    rows: list[list[Any]],
+    header_index: int,
+    carry_columns: list[str],
+) -> list[dict[str, Any]]:
+    normalized_rows: list[dict[str, Any]] = []
+    carry_forward = {column: "" for column in carry_columns if column}
+
+    for raw_row in rows[header_index + 1 :]:
+        row_obj = _build_row_object(headers, list(raw_row))
+        if not any(str(value).strip() for value in row_obj.values()):
+            carry_forward = {column: "" for column in carry_forward}
+            continue
+
+        for column in carry_columns:
+            if not column or column not in row_obj:
+                continue
+            current_value = _clean_text(row_obj.get(column))
+            if current_value:
+                carry_forward[column] = current_value
+            elif carry_forward.get(column):
+                row_obj[column] = carry_forward[column]
+
+        normalized_rows.append(row_obj)
+
+    return normalized_rows
+
+
 def _read_sheet(file_path: Path) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]]]:
     workbook = load_workbook(file_path, data_only=True)
     sheet = _select_relevant_sheet(workbook)
-    rows = list(sheet.iter_rows(values_only=True))
+    rows = _sheet_rows_with_merged_fill(sheet)
     if not rows:
         raise HTTPException(status_code=400, detail="Excel file is empty")
     header_row, headers = _pick_header_row(rows)
     preview_rows: list[dict[str, Any]] = []
     for row in rows[header_row : header_row + 5]:
-        values = list(row)
-        record: dict[str, Any] = {}
-        for index, header in enumerate(headers):
-            record[header] = _clean_text(values[index] if index < len(values) else "")
+        record = _build_row_object(headers, list(row))
         if any(str(value).strip() for value in record.values()):
             preview_rows.append(record)
     return sheet.title, header_row, headers, preview_rows, rows
@@ -1884,6 +1939,12 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
     _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
     header_index = header_row - 1
+    normalized_rows = _normalize_import_row_objects(
+        headers,
+        rows,
+        header_index,
+        [customer_col, bl_col],
+    )
     existing_keys = {
         (
             shipment.container_number,
@@ -1898,13 +1959,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     duplicate_count = 0
     skipped_blank_count = 0
     user_id = current_user.id
-    for raw_row in rows[header_index + 1 :]:
-        values = list(raw_row)
-        row_obj: dict[str, Any] = {}
-        for index, header in enumerate(headers):
-            row_obj[header] = _clean_text(values[index] if index < len(values) else "")
-        if not any(str(value).strip() for value in row_obj.values()):
-            continue
+    for row_obj in normalized_rows:
         container_number = _clean_container(row_obj.get(container_col))
         if not container_number:
             skipped_blank_count += 1
