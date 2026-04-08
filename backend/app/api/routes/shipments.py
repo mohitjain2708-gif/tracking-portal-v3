@@ -103,6 +103,7 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
     "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "birgunj_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "pristine_booking_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
     "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
     "rail_status": "VARCHAR(64) NOT NULL DEFAULT ''",
@@ -510,6 +511,14 @@ def _effective_shipment_location(shipment: Shipment) -> str:
     if _has_reached_birgunj(shipment) and _is_arrived(latest_location):
         return "ICD BIRGANJ, Samastipur"
     return latest_location
+
+
+def _shipment_needs_action(shipment: Shipment) -> bool:
+    tracking_source = _clean_text(getattr(shipment, "tracking_source", "")).lower()
+    booking_date = _clean_text(getattr(shipment, "pristine_booking_date", ""))
+    if "pristine" not in tracking_source or not booking_date:
+        return False
+    return _has_reached_birgunj(shipment)
 
 
 def _movement_since_date(
@@ -936,6 +945,7 @@ def _fetch_pristine_arrival(container_number: str) -> dict[str, Any] | None:
             return None
         return {
             "arrival_date": _format_to_dd_mm_yyyy(arrival_date),
+            "booking_date": _format_to_dd_mm_yyyy(_extract_pristine_tracking_field(html_text, "Booking Date")),
             "empty_date": _format_to_dd_mm_yyyy(_extract_pristine_tracking_field(html_text, "Empty Date")),
             "rake_departure_date": _format_to_dd_mm_yyyy(
                 _extract_pristine_tracking_field(html_text, "Rake Departure Date")
@@ -1444,6 +1454,7 @@ def _reconcile_customer_directory(db: Session) -> bool:
 def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     movement_category = _effective_shipment_movement(shipment)
     effective_location = _effective_shipment_location(shipment)
+    action_required = _shipment_needs_action(shipment)
     source_type = _clean_text(getattr(shipment, "source_type", "")) or "manual"
     source_label = _clean_text(getattr(shipment, "source_label", "")) or ("Manual Entry" if source_type == "manual" else "")
     movement_since_date = _movement_since_date(
@@ -1464,6 +1475,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "movement_since_date": movement_since_date,
         "port_arrival_date": shipment.port_arrival_date,
         "birgunj_arrival_date": getattr(shipment, "birgunj_arrival_date", ""),
+        "pristine_booking_date": getattr(shipment, "pristine_booking_date", ""),
         "train_no": shipment.train_no,
         "departure": shipment.departure,
         "rail_status": shipment.rail_status,
@@ -1478,6 +1490,8 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "last_refresh_status": shipment.last_refresh_status,
         "last_refresh_error": shipment.last_refresh_error,
         "clearance_doc_number": shipment.clearance_doc_number,
+        "action_required": action_required,
+        "action_required_reason": "Pristine booking date detected for an arrived Birgunj shipment" if action_required else "",
         "source_type": source_type,
         "source_label": source_label,
         "source_batch_id": int(getattr(shipment, "source_batch_id", 0) or 0),
@@ -1919,6 +1933,7 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         "latest_time": latest_time,
         "port_arrival_date": ldb_data.get("port_arrival_date", ""),
         "birgunj_arrival_date": pristine_data.get("arrival_date") or ldb_data.get("birgunj_arrival_date", ""),
+        "pristine_booking_date": pristine_data.get("booking_date", ""),
         "train_no": train_no,
         "departure": departure,
         "rail_status": rail_status,
@@ -1958,6 +1973,7 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     shipment.latest_time = data.get("latest_time", "") or ""
     shipment.port_arrival_date = data.get("port_arrival_date", "") or ""
     shipment.birgunj_arrival_date = data.get("birgunj_arrival_date", "") or ""
+    shipment.pristine_booking_date = data.get("pristine_booking_date", "") or ""
     shipment.train_no = data.get("train_no", "") or ""
     shipment.departure = data.get("departure", "") or ""
     shipment.rail_status = data.get("rail_status", "") or ""
@@ -2291,6 +2307,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "movement_since_date": _earliest_non_empty_date([item.get("movement_since_date", "") for item in sorted_entries]),
                 "port_arrival_date": _earliest_non_empty_date([item.get("port_arrival_date", "") for item in sorted_entries]),
                 "birgunj_arrival_date": _earliest_non_empty_date([item.get("birgunj_arrival_date", "") for item in sorted_entries]),
+                "pristine_booking_date": _earliest_non_empty_date([item.get("pristine_booking_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
                 "tracking_source": ",".join(tracking_sources),
@@ -2301,6 +2318,8 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "last_refresh_status": _first_non_empty([item.get("last_refresh_status", "") for item in refresh_entries]),
                 "last_refresh_error": _first_non_empty([item.get("last_refresh_error", "") for item in refresh_entries]),
                 "clearance_doc_number": _first_non_empty([item.get("clearance_doc_number", "") for item in sorted_entries]),
+                "action_required": any(bool(item.get("action_required")) for item in sorted_entries),
+                "action_required_reason": _first_non_empty([item.get("action_required_reason", "") for item in sorted_entries]),
                 "documents": documents,
                 "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),
             }

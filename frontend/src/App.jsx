@@ -2372,9 +2372,16 @@ function App() {
                         </span>
                       </td>
                       <td>
-                        <span className={badgeClass("movement", row.movement_category)}>
-                          {row.movement_category || "Hi Seas"}
-                        </span>
+                        <div className="movement-cell-stack">
+                          <span className={badgeClass("movement", row.movement_category)}>
+                            {row.movement_category || "Hi Seas"}
+                          </span>
+                          {row.action_required ? (
+                            <span className="soft-attention-pill" title={row.action_required_reason || "Action required"}>
+                              Action needed
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td>{row.latest_location || "Not available"}</td>
                       <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
@@ -2429,6 +2436,11 @@ function App() {
                   <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
                     {actionRow.movement_category || "Hi Seas"}
                   </span>
+                  {actionRow.action_required ? (
+                    <span className="soft-attention-pill" title={actionRow.action_required_reason || "Action required"}>
+                      Action needed
+                    </span>
+                  ) : null}
                   <span className="meta-pill">
                     {actionRow.container_count || actionRow.container_numbers?.length || 1} container
                     {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}
@@ -2865,6 +2877,11 @@ function App() {
                   <span className={badgeClass("movement", auditRow.movement_category || "Hi Seas")}>
                     {auditRow.movement_category || "Hi Seas"}
                   </span>
+                  {auditRow.action_required ? (
+                    <span className="soft-attention-pill" title={auditRow.action_required_reason || "Action required"}>
+                      Action needed
+                    </span>
+                  ) : null}
                   <span className="meta-pill">
                     {auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)} container
                     {(auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)) === 1 ? "" : "s"}
