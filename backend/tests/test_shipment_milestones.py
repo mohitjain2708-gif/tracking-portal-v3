@@ -6,6 +6,7 @@ from app.api.routes.shipments import (
     _derive_ldb_milestones,
     _effective_shipment_location,
     _movement_since_date,
+    _normalize_bl_number,
     _shipment_needs_action,
 )
 from app.models.shipment import Shipment
@@ -20,6 +21,11 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 
 class ShipmentMilestoneTests(unittest.TestCase):
+    def test_bl_normalization_removes_integral_decimal_suffix(self) -> None:
+        self.assertEqual(_normalize_bl_number("265295208.0"), "265295208")
+        self.assertEqual(_normalize_bl_number(265295208.0), "265295208")
+        self.assertEqual(_normalize_bl_number("ONEYSZPG19965507"), "ONEYSZPG19965507")
+
     def test_pristine_confirmed_birgunj_locks_effective_location(self) -> None:
         shipment = Shipment(
             customer_name="A & A International",

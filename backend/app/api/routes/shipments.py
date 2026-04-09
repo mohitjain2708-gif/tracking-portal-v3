@@ -164,16 +164,33 @@ def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _sheet_cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value).strip()
+    return str(value).strip()
+
+
 def _clean_container(value: Any) -> str:
     return str(value or "").strip().upper()
 
 
 def _clean_bl(value: Any) -> str:
-    return _clean_text(value).upper()
+    return _sheet_cell_text(value).upper()
 
 
 def _normalize_bl_number(value: Any) -> str:
-    return re.sub(r"\s+", "", _clean_bl(value))
+    normalized = re.sub(r"\s+", "", _clean_bl(value))
+    if "." in normalized:
+        whole, fraction = normalized.rsplit(".", 1)
+        if whole and fraction and set(fraction) == {"0"} and re.fullmatch(r"[A-Z0-9/-]+", whole):
+            return whole
+    return normalized
 
 
 def _container_format_error(container_number: str) -> str | None:
@@ -257,7 +274,7 @@ def _sheet_rows_with_merged_fill(sheet) -> list[list[Any]]:
 def _build_row_object(headers: list[str], values: list[Any]) -> dict[str, Any]:
     row_obj: dict[str, Any] = {}
     for index, header in enumerate(headers):
-        row_obj[header] = _clean_text(values[index] if index < len(values) else "")
+        row_obj[header] = _sheet_cell_text(values[index] if index < len(values) else "")
     return row_obj
 
 
@@ -1974,6 +1991,7 @@ def _adopt_demo_shipments_for_user(db: Session, current_user: User) -> None:
 def _ensure_user_scope_ready(db: Session, current_user: User) -> None:
     _ensure_storage_ready(db)
     _adopt_demo_shipments_for_user(db, current_user)
+    _reconcile_bl_number_normalization_for_user(db, current_user)
     _reconcile_orphan_shipments_for_user(db, current_user)
 
 
@@ -2344,6 +2362,122 @@ def _reconcile_orphan_shipments_for_user(db: Session, current_user: User) -> Non
             "shipment_orphans_reconciled",
             shipment_status="active",
             details={"deleted_count": deleted_count},
+        )
+        db.commit()
+
+
+def _shipment_record_identity(shipment: Shipment) -> tuple[str, str, str, str]:
+    return (
+        _clean_container(shipment.container_number),
+        _normalize_bl_number(shipment.bl_number),
+        _format_customer_name(shipment.customer_name),
+        _clean_text(shipment.shipment_status).lower(),
+    )
+
+
+def _shipment_quality_score(shipment: Shipment) -> int:
+    fields = [
+        shipment.latest_location,
+        shipment.latest_time,
+        shipment.port_arrival_date,
+        shipment.birgunj_arrival_date,
+        shipment.pristine_booking_date,
+        shipment.train_no,
+        shipment.departure,
+        shipment.rail_status,
+        shipment.movement_category,
+        shipment.wagon_no,
+        shipment.train_origin,
+        shipment.train_destination,
+        shipment.shipping_line,
+        shipment.tracking_source,
+        shipment.last_refresh_at,
+        shipment.last_refresh_status,
+        shipment.last_refresh_error,
+        shipment.clearance_doc_number,
+        shipment.source_type,
+        shipment.source_label,
+    ]
+    score = sum(1 for value in fields if _clean_text(value))
+    if shipment.source_batch_id:
+        score += 1
+    if shipment.raw_source_row_id:
+        score += 1
+    return score
+
+
+def _merge_shipment_record(preferred: Shipment, duplicate: Shipment) -> None:
+    merge_fields = [
+        "latest_location",
+        "latest_time",
+        "port_arrival_date",
+        "birgunj_arrival_date",
+        "pristine_booking_date",
+        "train_no",
+        "departure",
+        "rail_status",
+        "movement_category",
+        "wagon_no",
+        "train_origin",
+        "train_destination",
+        "shipping_line",
+        "tracking_source",
+        "last_refresh_at",
+        "last_refresh_status",
+        "last_refresh_error",
+        "clearance_doc_number",
+        "source_type",
+        "source_label",
+    ]
+    for field_name in merge_fields:
+        if not _clean_text(getattr(preferred, field_name, "")) and _clean_text(getattr(duplicate, field_name, "")):
+            setattr(preferred, field_name, getattr(duplicate, field_name))
+    if not preferred.source_batch_id and duplicate.source_batch_id:
+        preferred.source_batch_id = duplicate.source_batch_id
+    if not preferred.raw_source_row_id and duplicate.raw_source_row_id:
+        preferred.raw_source_row_id = duplicate.raw_source_row_id
+
+
+def _reconcile_bl_number_normalization_for_user(db: Session, current_user: User) -> None:
+    shipments = list(db.execute(_user_shipment_select(current_user)).scalars())
+    if not shipments:
+        return
+
+    updated_count = 0
+    for shipment in shipments:
+        normalized_bl = _normalize_bl_number(shipment.bl_number)
+        if normalized_bl != _clean_text(shipment.bl_number):
+            shipment.bl_number = normalized_bl
+            updated_count += 1
+
+    shipments = sorted(shipments, key=lambda shipment: (_shipment_record_identity(shipment), -_shipment_quality_score(shipment), shipment.id))
+    deleted_count = 0
+    kept_by_identity: dict[tuple[str, str, str, str], Shipment] = {}
+
+    for shipment in shipments:
+        identity = _shipment_record_identity(shipment)
+        keeper = kept_by_identity.get(identity)
+        if not identity[0]:
+            continue
+        if keeper is None:
+            kept_by_identity[identity] = shipment
+            continue
+        preferred = keeper
+        duplicate = shipment
+        if _shipment_quality_score(duplicate) > _shipment_quality_score(preferred):
+            preferred, duplicate = duplicate, preferred
+            kept_by_identity[identity] = preferred
+        _merge_shipment_record(preferred, duplicate)
+        db.delete(duplicate)
+        deleted_count += 1
+
+    if updated_count or deleted_count:
+        _log_audit_event(
+            db,
+            current_user.id,
+            "shipment_orphans_reconciled",
+            shipment_status="active",
+            details={"normalized_bl_count": updated_count, "deleted_count": deleted_count},
         )
         db.commit()
 
