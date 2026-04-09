@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from html import unescape
+from io import BytesIO
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -375,9 +376,65 @@ def _summarize_import_rows(
     }
 
 
-def _read_sheet(file_path: Path) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]]]:
+def _detect_import_duplicates(
+    db: Session,
+    current_user: User,
+    normalized_rows: list[dict[str, Any]],
+    customer_col: str,
+    container_col: str,
+    bl_col: str,
+) -> dict[str, Any]:
+    existing_keys = {
+        (
+            shipment.container_number,
+            _normalize_bl_number(shipment.bl_number),
+            _format_customer_name(shipment.customer_name),
+        )
+        for shipment in db.execute(
+            _user_shipment_select(current_user).where(Shipment.shipment_status != "archived")
+        ).scalars()
+    }
+    seen_in_import: set[tuple[str, str, str]] = set()
+    duplicate_rows: list[dict[str, Any]] = []
+    for row_obj in normalized_rows:
+        source_row_number = int(row_obj.get("__source_row_number") or 0)
+        customer_name = _format_customer_name(_clean_text(row_obj.get(customer_col)))
+        container_number = _clean_container(row_obj.get(container_col))
+        bl_number = _normalize_bl_number(row_obj.get(bl_col))
+        if not container_number or _container_format_error(container_number):
+            continue
+        shipment_key = (container_number, bl_number, customer_name)
+        if shipment_key in seen_in_import:
+            duplicate_rows.append(
+                {
+                    "source_row_number": source_row_number,
+                    "customer_name": customer_name,
+                    "container_number": container_number,
+                    "bl_number": bl_number,
+                    "error": "Duplicate shipment row repeated in this source",
+                }
+            )
+            continue
+        seen_in_import.add(shipment_key)
+        if shipment_key in existing_keys:
+            duplicate_rows.append(
+                {
+                    "source_row_number": source_row_number,
+                    "customer_name": customer_name,
+                    "container_number": container_number,
+                    "bl_number": bl_number,
+                    "error": "This shipment already exists in the portal",
+                }
+            )
+    return {
+        "duplicate_rows": duplicate_rows,
+        "duplicate_count": len(duplicate_rows),
+    }
+
+
+def _read_sheet(file_path: Path, preferred_sheet: str | None = None) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]], list[str]]:
     workbook = load_workbook(file_path, data_only=True)
-    sheet = _select_relevant_sheet(workbook)
+    sheet = _select_sheet_by_name(workbook, preferred_sheet)
     rows = _sheet_rows_with_merged_fill(sheet)
     if not rows:
         raise HTTPException(status_code=400, detail="Excel file is empty")
@@ -387,7 +444,7 @@ def _read_sheet(file_path: Path) -> tuple[str, int, list[str], list[dict[str, An
         record = _build_row_object(headers, list(row))
         if any(str(value).strip() for value in record.values()):
             preview_rows.append(record)
-    return sheet.title, header_row, headers, preview_rows, rows
+    return sheet.title, header_row, headers, preview_rows, rows, list(workbook.sheetnames)
 
 
 def _score_sheet_relevance(sheet_name: str, rows: list[list[Any]]) -> tuple[int, int, int, int]:
@@ -425,6 +482,16 @@ def _select_relevant_sheet(workbook) -> Any:
     if best_sheet is None:
         raise HTTPException(status_code=400, detail="Excel file is empty")
     return best_sheet
+
+
+def _select_sheet_by_name(workbook, sheet_name: str | None = None):
+    requested_sheet = _clean_text(sheet_name)
+    if requested_sheet:
+        for candidate in workbook.sheetnames:
+            if _clean_text(candidate).casefold() == requested_sheet.casefold():
+                return workbook[candidate]
+        raise HTTPException(status_code=400, detail=f"Worksheet '{requested_sheet}' was not found in the workbook")
+    return _select_relevant_sheet(workbook)
 
 
 def _is_arrived(location: str) -> bool:
@@ -1626,6 +1693,7 @@ def _load_recent_mapping_for_sheet(
     db: Session,
     current_user: User,
     sheet_name: str,
+    source_type: str = "excel_upload",
 ) -> dict[str, Any]:
     normalized_sheet = _clean_text(sheet_name)
     if normalized_sheet:
@@ -1633,7 +1701,7 @@ def _load_recent_mapping_for_sheet(
             select(SourceMappingProfile)
             .where(
                 SourceMappingProfile.user_id == current_user.id,
-                SourceMappingProfile.source_type == "excel_upload",
+                SourceMappingProfile.source_type == source_type,
                 SourceMappingProfile.source_sheet == normalized_sheet,
             )
             .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
@@ -1649,7 +1717,7 @@ def _load_recent_mapping_for_sheet(
         select(SourceMappingProfile)
         .where(
             SourceMappingProfile.user_id == current_user.id,
-            SourceMappingProfile.source_type == "excel_upload",
+            SourceMappingProfile.source_type == source_type,
         )
         .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
         .limit(1)
@@ -1718,6 +1786,40 @@ def _parse_google_sheet_reference(source_url: str) -> dict[str, str]:
     gid_match = re.search(r"[?&#]gid=(\d+)", normalized_url)
     gid = gid_match.group(1) if gid_match else ""
     return {"sheet_id": sheet_id, "gid": gid}
+
+
+def _download_google_sheet_workbook(source_url: str) -> tuple[bytes, dict[str, str]]:
+    parsed = _parse_google_sheet_reference(source_url)
+    export_url = f"https://docs.google.com/spreadsheets/d/{parsed['sheet_id']}/export?format=xlsx"
+    try:
+        response = requests.get(
+            export_url,
+            timeout=(4, 20),
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to fetch Google Sheet: {exc}") from exc
+
+    if response.status_code != 200 or not response.content:
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to fetch Google Sheet. Make sure the sheet is accessible and the URL is correct.",
+        )
+    content_type = _clean_text(response.headers.get("content-type", "")).lower()
+    if "spreadsheetml" not in content_type and not response.content.startswith(b"PK"):
+        raise HTTPException(
+            status_code=400,
+            detail="Google Sheet could not be downloaded as an Excel workbook. Make sure the sheet is accessible.",
+        )
+    return response.content, parsed
+
+
+def _sheet_title_from_workbook(workbook, parsed_reference: dict[str, str]) -> str:
+    title = _clean_text(getattr(getattr(workbook, "properties", None), "title", ""))
+    if title:
+        return title
+    return f"Google Sheet {parsed_reference.get('sheet_id', '')[:8]}".strip()
 
 
 def _resolve_default_user_id(db: Session) -> int:
@@ -2564,6 +2666,76 @@ def create_google_sheets_connection(payload: dict, db: Session = Depends(get_db)
     }
 
 
+@router.post("/source-connections/google-sheets/preview")
+def preview_google_sheets_source(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    source_url = _clean_text(payload.get("source_url"))
+    worksheet_name = _clean_text(payload.get("worksheet_name"))
+    workbook_bytes, parsed = _download_google_sheet_workbook(source_url)
+    workbook = load_workbook(filename=BytesIO(workbook_bytes), data_only=True)
+    sheet_title = _sheet_title_from_workbook(workbook, parsed)
+    available_sheets = list(workbook.sheetnames)
+    if not available_sheets:
+        raise HTTPException(status_code=400, detail="Google Sheet does not contain any readable worksheets")
+
+    token = f"{uuid4().hex}.xlsx"
+    file_path = TEMP_IMPORT_DIR / token
+    file_path.write_bytes(workbook_bytes)
+
+    selected_sheet = worksheet_name or available_sheets[0]
+    sheet_name, header_row, headers, preview_rows, _rows, _available_sheets = _read_sheet(file_path, selected_sheet)
+    remembered_mapping = _load_recent_mapping_for_sheet(db, current_user, sheet_name, "google_sheets")
+    remembered_profile = db.execute(
+        select(SourceMappingProfile)
+        .where(
+            SourceMappingProfile.user_id == current_user.id,
+            SourceMappingProfile.source_type == "google_sheets",
+            SourceMappingProfile.source_sheet == _clean_text(sheet_name),
+        )
+        .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    session = UploadSession(
+        user_id=current_user.id,
+        original_filename=f"{sheet_title}.xlsx",
+        stored_path=str(file_path),
+        detected_sheet=sheet_name,
+        detected_header_row=header_row,
+        available_columns_json=headers,
+        preview_rows_json=preview_rows,
+        status="preview_ready",
+    )
+    db.add(session)
+    db.commit()
+
+    return {
+        "temp_file_token": token,
+        "upload_session_id": session.id,
+        "sheet_title": sheet_title,
+        "sheet_id": parsed["sheet_id"],
+        "source_url": source_url,
+        "available_sheets": available_sheets,
+        "sheet_name": sheet_name,
+        "header_row": header_row,
+        "available_columns": headers,
+        "preview_rows": preview_rows,
+        "remembered_mapping": remembered_mapping,
+        "remembered_profile": {
+            "id": remembered_profile.id,
+            "profile_label": remembered_profile.profile_label,
+            "source_sheet": remembered_profile.source_sheet,
+        } if remembered_profile else None,
+        "source_context": {
+            "source_type": "google_sheets",
+            "source_url": source_url,
+            "sheet_id": parsed["sheet_id"],
+            "sheet_title": sheet_title,
+            "worksheet_name": sheet_name,
+        },
+    }
+
+
 @router.get("/source-batches")
 def list_source_batches(
     limit: int = 20,
@@ -3051,7 +3223,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
     token = f"{uuid4().hex}{suffix}"
     file_path = TEMP_IMPORT_DIR / token
     file_path.write_bytes(file_bytes)
-    sheet_name, header_row, headers, preview_rows, _rows = _read_sheet(file_path)
+    sheet_name, header_row, headers, preview_rows, _rows, available_sheets = _read_sheet(file_path)
     session = UploadSession(
         user_id=current_user.id,
         original_filename=filename,
@@ -3082,6 +3254,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
         "sheet_name": sheet_name,
         "header_row": header_row,
         "available_columns": headers,
+        "available_sheets": available_sheets,
         "preview_rows": preview_rows,
         "remembered_mapping": remembered_mapping,
         "remembered_profile": {
@@ -3097,6 +3270,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     _ensure_user_scope_ready(db, current_user)
     token = _clean_text(payload.get("temp_file_token"))
     mapping_json = payload.get("mapping_json") or {}
+    source_context = payload.get("source_context") or {}
     if not token:
         raise HTTPException(status_code=400, detail="temp_file_token is required")
     file_path = TEMP_IMPORT_DIR / token
@@ -3114,7 +3288,8 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     row_overrides = payload.get("row_overrides") or []
     if not container_col:
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
-    sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
+    selected_sheet = upload_session.detected_sheet if upload_session else None
+    sheet_name, header_row, headers, _preview_rows, rows, _available_sheets = _read_sheet(file_path, selected_sheet)
     header_index = header_row - 1
     normalized_rows = _normalize_import_row_objects(
         headers,
@@ -3156,23 +3331,38 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     skipped_blank_count = 0
     skipped_invalid_count = 0
     user_id = current_user.id
+    source_type = _clean_text(source_context.get("source_type")) or "excel_upload"
+    source_url = _clean_text(source_context.get("source_url"))
+    sheet_id = _clean_text(source_context.get("sheet_id"))
+    sheet_title = _clean_text(source_context.get("sheet_title"))
+    source_label = "Excel Upload"
+    source_reference = upload_session.original_filename if upload_session else Path(file_path).name
+    source_metadata = {
+        "original_filename": upload_session.original_filename if upload_session else Path(file_path).name,
+        "sheet_name": sheet_name,
+    }
+    if source_type == "google_sheets":
+        source_label = sheet_title or "Google Sheet"
+        source_reference = sheet_id or source_url or source_reference
+        source_metadata = {
+            "source_url": source_url,
+            "sheet_id": sheet_id,
+            "worksheet_name": sheet_name,
+        }
     source = _get_or_create_source(
         db,
         current_user,
-        "excel_upload",
-        "Excel Upload",
-        source_reference=upload_session.original_filename if upload_session else Path(file_path).name,
-        metadata={
-            "original_filename": upload_session.original_filename if upload_session else Path(file_path).name,
-            "sheet_name": sheet_name,
-        },
+        source_type,
+        source_label,
+        source_reference=source_reference,
+        metadata=source_metadata,
     )
     mapping_profile = _upsert_mapping_profile(
         db,
         current_user,
-        source_type="excel_upload",
+        source_type=source_type,
         source_sheet=sheet_name,
-        profile_label=f"Excel - {sheet_name}",
+        profile_label=(f"Google Sheets - {sheet_name}" if source_type == "google_sheets" else f"Excel - {sheet_name}"),
         mapping_json=mapping_json,
     )
     batch = _create_import_batch(
@@ -3188,6 +3378,36 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         invalid_count=review["invalid_count"],
         skipped_blank_count=review["skipped_blank_count"],
     )
+    if source_type == "google_sheets" and source_url:
+        parsed = _parse_google_sheet_reference(source_url)
+        existing_connection = db.execute(
+            select(SourceConnection).where(
+                SourceConnection.user_id == current_user.id,
+                SourceConnection.provider == "google_sheets",
+                SourceConnection.source_url == source_url,
+                SourceConnection.worksheet_name == sheet_name,
+            )
+        ).scalar_one_or_none()
+        if existing_connection:
+            existing_connection.connection_label = source_label
+            existing_connection.mapping_profile_id = mapping_profile.id
+            existing_connection.status = "connected"
+            existing_connection.config_json = _json_dumps(parsed)
+            existing_connection.updated_at = datetime.utcnow()
+        else:
+            db.add(
+                SourceConnection(
+                    user_id=current_user.id,
+                    source_id=source.id,
+                    provider="google_sheets",
+                    connection_label=source_label,
+                    source_url=source_url,
+                    worksheet_name=sheet_name,
+                    mapping_profile_id=mapping_profile.id,
+                    status="connected",
+                    config_json=_json_dumps(parsed),
+                )
+            )
     raw_rows_by_source_number = _record_raw_import_rows(
         db,
         current_user,
@@ -3300,7 +3520,14 @@ async def import_validate(payload: dict, db: Session = Depends(get_db), current_
     if not container_col:
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
 
-    _sheet_name, header_row, headers, _preview_rows, rows = _read_sheet(file_path)
+    upload_session = db.execute(
+        select(UploadSession).where(
+            UploadSession.user_id == current_user.id,
+            UploadSession.stored_path == str(file_path),
+        )
+    ).scalar_one_or_none()
+    selected_sheet = upload_session.detected_sheet if upload_session else None
+    _sheet_name, header_row, headers, _preview_rows, rows, _available_sheets = _read_sheet(file_path, selected_sheet)
     header_index = header_row - 1
     normalized_rows = _normalize_import_row_objects(
         headers,
@@ -3316,11 +3543,14 @@ async def import_validate(payload: dict, db: Session = Depends(get_db), current_
         bl_col,
     )
     review = _summarize_import_rows(normalized_rows, customer_col, container_col, bl_col)
+    duplicates = _detect_import_duplicates(db, current_user, normalized_rows, customer_col, container_col, bl_col)
     return {
         "valid_count": review["valid_count"],
         "invalid_count": review["invalid_count"],
+        "duplicate_count": duplicates["duplicate_count"],
         "skipped_blank_count": review["skipped_blank_count"],
         "invalid_rows": review["invalid_rows"],
+        "duplicate_rows": duplicates["duplicate_rows"],
         "ready_to_import": review["invalid_count"] == 0,
     }
 

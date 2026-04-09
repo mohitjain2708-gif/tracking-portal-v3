@@ -1,6 +1,8 @@
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
-const DEMO_SESSION_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SESSION !== "false";
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const IS_LOCAL_HOST = typeof window !== "undefined" && LOCAL_HOSTS.has(window.location.hostname);
+const DEMO_SESSION_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SESSION !== "false" && IS_LOCAL_HOST;
 const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
 let portalSessionPromise = null;
@@ -293,6 +295,12 @@ export const api = {
 
   createGoogleSheetsConnection: (payload) =>
     request("/api/shipments/source-connections/google-sheets", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  previewGoogleSheetSource: (payload) =>
+    request("/api/shipments/source-connections/google-sheets/preview", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

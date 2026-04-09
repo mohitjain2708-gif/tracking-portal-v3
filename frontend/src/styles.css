@@ -1724,6 +1724,24 @@ select:focus {
   line-height: 1.5;
 }
 
+.confirm-note {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(19, 58, 99, 0.12);
+  background: rgba(19, 58, 99, 0.04);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.google-sheet-inline-help {
+  margin: 0;
+}
+
+.google-sheet-preview-strip {
+  margin-bottom: 4px;
+}
+
 .document-form-grid {
   display: grid;
   gap: 12px;

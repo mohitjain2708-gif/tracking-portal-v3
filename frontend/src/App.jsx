@@ -13,11 +13,13 @@ const INITIAL_MAPPING = {
   bl_number: "",
 };
 
-const INITIAL_GOOGLE_SHEET_FORM = {
-  connection_label: "",
+const INITIAL_GOOGLE_SHEET_STATE = {
   source_url: "",
-  worksheet_name: "",
-  mapping_profile_id: "",
+  available_sheets: [],
+  selected_sheet: "",
+  sheet_title: "",
+  source_context: null,
+  temp_file_token: "",
 };
 
 const IMPORT_FILE_SIZE_LIMIT_MB = 10;
@@ -748,7 +750,9 @@ function App() {
   const [sourceBatchDetail, setSourceBatchDetail] = useState(null);
   const [sourceMappings, setSourceMappings] = useState([]);
   const [sourceConnections, setSourceConnections] = useState([]);
-  const [googleSheetForm, setGoogleSheetForm] = useState(INITIAL_GOOGLE_SHEET_FORM);
+  const [googleSheetState, setGoogleSheetState] = useState(INITIAL_GOOGLE_SHEET_STATE);
+  const [googleSheetLoading, setGoogleSheetLoading] = useState(false);
+  const [shipmentImportSourceContext, setShipmentImportSourceContext] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
   const [movementFilter, setMovementFilter] = useState("All");
@@ -1297,10 +1301,12 @@ function App() {
     setShipmentImportReviewRows([]);
     setShipmentImportReviewSummary(null);
     setShipmentImportReviewOpen(false);
+    setShipmentImportSourceContext(null);
 
     try {
       const preview = await api.previewShipmentImport(shipmentImportFile);
       setShipmentImportPreview(preview);
+      setShipmentImportSourceContext(null);
       const guessedMapping = guessColumns(preview.available_columns);
       const rememberedMapping = preview?.remembered_mapping || {};
       setShipmentImportMapping({
@@ -1355,6 +1361,7 @@ function App() {
     setShipmentImportReviewRows([]);
     setShipmentImportReviewSummary(null);
     setShipmentImportReviewOpen(false);
+    setShipmentImportSourceContext(null);
   }, []);
 
   const handleShipmentImportConfirm = useCallback(async () => {
@@ -1388,6 +1395,7 @@ function App() {
         temp_file_token: shipmentImportPreview.temp_file_token,
         mapping_json: shipmentImportMapping,
         row_overrides: shipmentImportReviewRows,
+        source_context: shipmentImportSourceContext,
       });
 
       resetShipmentImportState();
@@ -1401,7 +1409,7 @@ function App() {
     } finally {
       setShipmentImporting(false);
     }
-  }, [loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, validateShipmentImportRows]);
+    }, [loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, shipmentImportSourceContext, validateShipmentImportRows]);
 
   const handleImportReviewRecheck = useCallback(async () => {
     setShipmentImporting(true);
@@ -1422,6 +1430,7 @@ function App() {
         temp_file_token: shipmentImportPreview.temp_file_token,
         mapping_json: shipmentImportMapping,
         row_overrides: shipmentImportReviewRows,
+        source_context: shipmentImportSourceContext,
       });
 
       resetShipmentImportState();
@@ -1437,12 +1446,13 @@ function App() {
     }
   }, [
     loadDashboard,
-    resetShipmentImportState,
-    shipmentImportMapping,
-    shipmentImportPreview,
-    shipmentImportReviewRows,
-    validateShipmentImportRows,
-  ]);
+      resetShipmentImportState,
+      shipmentImportMapping,
+      shipmentImportPreview,
+      shipmentImportReviewRows,
+      shipmentImportSourceContext,
+      validateShipmentImportRows,
+    ]);
 
   const handleRefreshAllTracking = useCallback(async () => {
     setFeedback(null);
@@ -1531,32 +1541,93 @@ function App() {
     }
   }, []);
 
-  const handleGoogleSheetFieldChange = useCallback((field, value) => {
-    setGoogleSheetForm((current) => ({ ...current, [field]: value }));
+  const handleGoogleSheetUrlChange = useCallback((value) => {
+    setGoogleSheetState((current) => ({
+      ...current,
+      source_url: value,
+      available_sheets: current.source_url === value ? current.available_sheets : [],
+      selected_sheet: current.source_url === value ? current.selected_sheet : "",
+      sheet_title: current.source_url === value ? current.sheet_title : "",
+      source_context: current.source_url === value ? current.source_context : null,
+      temp_file_token: current.source_url === value ? current.temp_file_token : "",
+    }));
   }, []);
 
-  const handleSaveGoogleSheetConnection = useCallback(async () => {
-    if (!cleanText(googleSheetForm.source_url)) {
-      setFeedback({ tone: "error", text: "Add the Google Sheets URL before saving the connection." });
+  const handleGoogleSheetFetch = useCallback(async () => {
+    const sourceUrl = cleanText(googleSheetState.source_url);
+    if (!sourceUrl) {
+      setFeedback({ tone: "error", text: "Paste the Google Sheets URL first." });
       return;
     }
+    setGoogleSheetLoading(true);
+    setFeedback(null);
     try {
-      const data = await api.createGoogleSheetsConnection({
-        connection_label: cleanText(googleSheetForm.connection_label) || "Google Sheet",
-        source_url: cleanText(googleSheetForm.source_url),
-        worksheet_name: cleanText(googleSheetForm.worksheet_name),
-        mapping_profile_id: Number(googleSheetForm.mapping_profile_id || 0),
+      const preview = await api.previewGoogleSheetSource({ source_url: sourceUrl });
+      setGoogleSheetState({
+        source_url: sourceUrl,
+        available_sheets: preview.available_sheets || [],
+        selected_sheet: preview.sheet_name || "",
+        sheet_title: preview.sheet_title || "Google Sheet",
+        source_context: preview.source_context || null,
+        temp_file_token: preview.temp_file_token || "",
       });
-      setGoogleSheetForm(INITIAL_GOOGLE_SHEET_FORM);
       setFeedback({
         tone: "success",
-        text: `Google Sheets connection saved for ${data.connection_label}. Sync setup can now build on this source.`,
+        text: `Found ${preview.available_sheets?.length || 0} sheet tab(s). Choose the one you want to import.`,
       });
-      await loadDashboard({ silent: true });
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Failed to save Google Sheets connection" });
+      setFeedback({ tone: "error", text: error.message || "Unable to fetch Google Sheet" });
+    } finally {
+      setGoogleSheetLoading(false);
     }
-  }, [googleSheetForm, loadDashboard]);
+  }, [googleSheetState.source_url]);
+
+  const handleGoogleSheetSelectPreview = useCallback(async () => {
+    const sourceUrl = cleanText(googleSheetState.source_url);
+    const selectedSheet = cleanText(googleSheetState.selected_sheet);
+    if (!sourceUrl || !selectedSheet) {
+      setFeedback({ tone: "error", text: "Choose a sheet tab before continuing." });
+      return;
+    }
+    setGoogleSheetLoading(true);
+    setFeedback(null);
+    setShipmentImportPreview(null);
+    setShipmentImportReviewRows([]);
+    setShipmentImportReviewSummary(null);
+    setShipmentImportReviewOpen(false);
+    setShipmentImportFile(null);
+    try {
+      const preview = await api.previewGoogleSheetSource({
+        source_url: sourceUrl,
+        worksheet_name: selectedSheet,
+      });
+      const guessedMapping = guessColumns(preview.available_columns);
+      const rememberedMapping = preview?.remembered_mapping || {};
+      setShipmentImportPreview(preview);
+      setShipmentImportSourceContext(preview.source_context || null);
+      setShipmentImportMapping({
+        customer_name: rememberedMapping.customer_name || guessedMapping.customer_name || "",
+        container_number: rememberedMapping.container_number || guessedMapping.container_number || "",
+        bl_number: rememberedMapping.bl_number || guessedMapping.bl_number || "",
+      });
+      setGoogleSheetState((current) => ({
+        ...current,
+        available_sheets: preview.available_sheets || current.available_sheets,
+        selected_sheet: preview.sheet_name || selectedSheet,
+        sheet_title: preview.sheet_title || current.sheet_title,
+        source_context: preview.source_context || current.source_context,
+        temp_file_token: preview.temp_file_token || current.temp_file_token,
+      }));
+      setFeedback({
+        tone: "success",
+        text: `Preview ready for ${preview.sheet_name}. Map the columns and continue just like an Excel import.`,
+      });
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Unable to preview Google Sheet tab" });
+    } finally {
+      setGoogleSheetLoading(false);
+    }
+  }, [googleSheetState.selected_sheet, googleSheetState.source_url]);
 
   const handleRefreshGroup = useCallback(
     async (row) => {
@@ -2045,7 +2116,8 @@ function App() {
                 <div>
                   <h3>Column Mapping</h3>
                   <p>
-                    Sheet <strong>{shipmentImportPreview.sheet_name}</strong>, header row{" "}
+                    {shipmentImportSourceContext?.source_type === "google_sheets" ? "Sheet tab" : "Sheet"}{" "}
+                    <strong>{shipmentImportPreview.sheet_name}</strong>, header row{" "}
                     {shipmentImportPreview.header_row}
                   </p>
                 </div>
@@ -2059,6 +2131,23 @@ function App() {
                   ) : null}
                 </div>
               </div>
+
+              {shipmentImportSourceContext?.source_type === "google_sheets" ? (
+                <div className="source-batch-strip google-sheet-preview-strip">
+                  <div className="source-batch-strip-copy">
+                    <strong>{shipmentImportPreview.sheet_title || "Google Sheet"}</strong>
+                    <span>
+                      The portal will remember this tab layout automatically after the first successful sync.
+                    </span>
+                  </div>
+                  <div className="file-chip-row">
+                    <span className="file-chip">{shipmentImportPreview.available_sheets?.length || 0} tabs found</span>
+                    {shipmentImportPreview.remembered_profile?.profile_label ? (
+                      <span className="file-chip">Using {shipmentImportPreview.remembered_profile.profile_label}</span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="mapping-grid">
                 {MAPPING_FIELDS.map(([field, label]) => (
@@ -2108,6 +2197,13 @@ function App() {
                   </div>
                 </div>
               ) : null}
+
+              {shipmentImportReviewSummary?.duplicate_count ? (
+                <div className="confirm-note">
+                  <strong>Duplicate check:</strong> {shipmentImportReviewSummary.duplicate_count} shipment row(s)
+                  already exist in this source or in the portal and will be skipped automatically.
+                </div>
+              ) : null}
             </div>
           )}
         </article>
@@ -2117,72 +2213,84 @@ function App() {
             <div>
               <p className="eyebrow">Cloud Sources</p>
               <h2>Google Sheets</h2>
-              <p className="panel-copy">Save the source once so its sheet, tab, and mapping profile stay together.</p>
+              <p className="panel-copy">
+                Paste the sheet URL, choose the right tab, then map the columns exactly like the Excel flow.
+              </p>
             </div>
           </div>
 
           <div className="stack-form">
             <p className="field-help">
-              This is the source foundation. Once saved, the sheet becomes a repeatable intake path instead of a one-off file.
+              The portal will discover the available tabs, remember the mapping quietly in the background, and stop
+              duplicate shipment rows before they get added twice.
             </p>
-
-            <label className="field-label" htmlFor="google_sheet_label">
-              Connection Label
-            </label>
-            <input
-              id="google_sheet_label"
-              value={googleSheetForm.connection_label}
-              onChange={(event) => handleGoogleSheetFieldChange("connection_label", event.target.value)}
-              placeholder="Nepal Incoming Master"
-            />
 
             <label className="field-label" htmlFor="google_sheet_url">
               Google Sheets URL
             </label>
             <input
               id="google_sheet_url"
-              value={googleSheetForm.source_url}
-              onChange={(event) => handleGoogleSheetFieldChange("source_url", event.target.value)}
+              value={googleSheetState.source_url}
+              onChange={(event) => handleGoogleSheetUrlChange(event.target.value)}
               placeholder="https://docs.google.com/spreadsheets/d/..."
             />
 
-            <label className="field-label" htmlFor="google_sheet_tab">
-              Worksheet / Tab
-            </label>
-            <input
-              id="google_sheet_tab"
-              value={googleSheetForm.worksheet_name}
-              onChange={(event) => handleGoogleSheetFieldChange("worksheet_name", event.target.value)}
-              placeholder="OONC"
-            />
-
-            <label className="field-label" htmlFor="google_sheet_mapping_profile">
-              Preferred Mapping Profile
-            </label>
-            <select
-              id="google_sheet_mapping_profile"
-              value={googleSheetForm.mapping_profile_id}
-              onChange={(event) => handleGoogleSheetFieldChange("mapping_profile_id", event.target.value)}
-            >
-              <option value="">No saved profile</option>
-              {sourceMappings.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.profile_label || profile.source_sheet || `Profile #${profile.id}`}
-                </option>
-              ))}
-            </select>
-
             <div className="button-row compact-row">
-              <ActionButton type="button" tone="secondary" onClick={handleSaveGoogleSheetConnection}>
-                Save Connection
+              <ActionButton
+                type="button"
+                tone="secondary"
+                disabled={googleSheetLoading}
+                onClick={handleGoogleSheetFetch}
+              >
+                {googleSheetLoading ? "Checking..." : "Fetch Tabs"}
               </ActionButton>
+              {googleSheetState.sheet_title ? <span className="file-chip">{googleSheetState.sheet_title}</span> : null}
             </div>
 
-            {sourceConnections.length ? (
+            {googleSheetState.available_sheets?.length ? (
+              <>
+                <label className="field-label" htmlFor="google_sheet_tab">
+                  Choose Sheet Tab
+                </label>
+                <select
+                  id="google_sheet_tab"
+                  value={googleSheetState.selected_sheet}
+                  onChange={(event) =>
+                    setGoogleSheetState((current) => ({
+                      ...current,
+                      selected_sheet: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Select a tab</option>
+                  {googleSheetState.available_sheets.map((sheetName) => (
+                    <option key={sheetName} value={sheetName}>
+                      {sheetName}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="button-row compact-row">
+                  <ActionButton
+                    type="button"
+                    tone="primary"
+                    disabled={googleSheetLoading || !googleSheetState.selected_sheet}
+                    onClick={handleGoogleSheetSelectPreview}
+                  >
+                    {googleSheetLoading ? "Loading..." : "Load Sheet Preview"}
+                  </ActionButton>
+                  <span className="field-help google-sheet-inline-help">
+                    After this, the column mapping step works exactly like Excel import.
+                  </span>
+                </div>
+              </>
+            ) : null}
+
+            {sourceConnections.filter((connection) => connection.provider === "google_sheets").length ? (
               <div className="source-batch-strip">
                 <div className="source-batch-strip-copy">
-                  <strong>Saved Google Sheets connections</strong>
-                  <span>These source definitions are ready for repeatable sync and mapping reuse.</span>
+                  <strong>Recent Google Sheet sources</strong>
+                  <span>Previously used tabs stay remembered so returning users do not have to remap from scratch.</span>
                 </div>
                 <div className="source-batch-list">
                   {sourceConnections
@@ -3134,6 +3242,11 @@ function App() {
                   <span className="meta-pill">
                     {shipmentImportReviewSummary?.skipped_blank_count || 0} blank rows ignored
                   </span>
+                  {shipmentImportReviewSummary?.duplicate_count ? (
+                    <span className="meta-pill">
+                      {shipmentImportReviewSummary.duplicate_count} duplicates will be skipped
+                    </span>
+                  ) : null}
                 </div>
               </section>
             </div>
