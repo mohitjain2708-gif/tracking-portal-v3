@@ -1828,6 +1828,31 @@ def _sheet_title_from_workbook(workbook, parsed_reference: dict[str, str]) -> st
     return f"Google Sheet {parsed_reference.get('sheet_id', '')[:8]}".strip()
 
 
+def _fetch_google_sheet_title(source_url: str) -> str:
+    try:
+        response = requests.get(
+            source_url,
+            timeout=(4, 12),
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"},
+        )
+    except Exception:
+        return ""
+    if response.status_code != 200 or not response.text:
+        return ""
+    text = response.text
+    og_match = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', text, re.IGNORECASE)
+    if og_match:
+        return _clean_text(unescape(og_match.group(1)))
+    title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    if not title_match:
+        return ""
+    title = _clean_text(unescape(title_match.group(1)))
+    if title.lower().endswith("- google sheets"):
+        title = _clean_text(title[: -len("- google sheets")])
+    return title
+
+
 def _resolve_default_user_id(db: Session) -> int:
     user = db.execute(select(User).where(User.email == DEFAULT_LOCAL_USER_EMAIL)).scalar_one_or_none()
     if user:
@@ -2679,7 +2704,7 @@ def preview_google_sheets_source(payload: dict, db: Session = Depends(get_db), c
     worksheet_name = _clean_text(payload.get("worksheet_name"))
     workbook_bytes, parsed = _download_google_sheet_workbook(source_url)
     workbook = load_workbook(filename=BytesIO(workbook_bytes), data_only=True)
-    sheet_title = _sheet_title_from_workbook(workbook, parsed)
+    sheet_title = _fetch_google_sheet_title(source_url) or _sheet_title_from_workbook(workbook, parsed)
     available_sheets = list(workbook.sheetnames)
     if not available_sheets:
         raise HTTPException(status_code=400, detail="Google Sheet does not contain any readable worksheets")
