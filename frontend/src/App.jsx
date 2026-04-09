@@ -1401,7 +1401,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
+        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.${data.source_tracking_warning ? ` ${data.source_tracking_warning}` : ""}`,
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1436,7 +1436,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.`,
+        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.${data.source_tracking_warning ? ` ${data.source_tracking_warning}` : ""}`,
       });
       await loadDashboard({ silent: true });
     } catch (error) {

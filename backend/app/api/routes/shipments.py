@@ -3380,75 +3380,60 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "sheet_id": sheet_id,
             "worksheet_name": sheet_name,
         }
-    source = _get_or_create_source(
-        db,
-        current_user,
-        source_type,
-        source_label,
-        source_reference=source_reference,
-        metadata=source_metadata,
-    )
-    mapping_profile = _upsert_mapping_profile(
-        db,
-        current_user,
-        source_type=source_type,
-        source_sheet=sheet_name,
-        profile_label=(f"Google Sheets - {sheet_name}" if source_type == "google_sheets" else f"Excel - {sheet_name}"),
-        mapping_json=mapping_json,
-    )
-    batch = _create_import_batch(
-        db,
-        current_user,
-        source,
-        batch_label=upload_session.original_filename if upload_session else Path(file_path).name,
-        source_sheet=sheet_name,
-        header_row=header_row,
-        mapping_json=mapping_json,
-        imported_count=0,
-        duplicate_count=0,
-        invalid_count=review["invalid_count"],
-        skipped_blank_count=review["skipped_blank_count"],
-    )
-    if source_type == "google_sheets" and source_url:
-        parsed = _parse_google_sheet_reference(source_url)
-        existing_connection = db.execute(
-            select(SourceConnection).where(
-                SourceConnection.user_id == current_user.id,
-                SourceConnection.provider == "google_sheets",
-                SourceConnection.source_url == source_url,
-                SourceConnection.worksheet_name == sheet_name,
-            )
-        ).scalar_one_or_none()
-        if existing_connection:
-            existing_connection.connection_label = source_label
-            existing_connection.mapping_profile_id = mapping_profile.id
-            existing_connection.status = "connected"
-            existing_connection.config_json = _json_dumps(parsed)
-            existing_connection.updated_at = datetime.utcnow()
-        else:
-            db.add(
-                SourceConnection(
-                    user_id=current_user.id,
-                    source_id=source.id,
-                    provider="google_sheets",
-                    connection_label=source_label,
-                    source_url=source_url,
-                    worksheet_name=sheet_name,
-                    mapping_profile_id=mapping_profile.id,
-                    status="connected",
-                    config_json=_json_dumps(parsed),
-                )
-            )
-    raw_rows_by_source_number = _record_raw_import_rows(
-        db,
-        current_user,
-        source,
-        batch,
-        normalized_rows,
-        customer_col,
-        container_col,
-        bl_col,
-    )
+    source = None
+    mapping_profile = None
+    batch = None
+    raw_rows_by_source_number: dict[int, RawSourceRow] = {}
+    source_tracking_warning = ""
+    try:
+        source = _get_or_create_source(
+            db,
+            current_user,
+            source_type,
+            source_label,
+            source_reference=source_reference,
+            metadata=source_metadata,
+        )
+        mapping_profile = _upsert_mapping_profile(
+            db,
+            current_user,
+            source_type=source_type,
+            source_sheet=sheet_name,
+            profile_label=(f"Google Sheets - {sheet_name}" if source_type == "google_sheets" else f"Excel - {sheet_name}"),
+            mapping_json=mapping_json,
+        )
+        batch = _create_import_batch(
+            db,
+            current_user,
+            source,
+            batch_label=upload_session.original_filename if upload_session else Path(file_path).name,
+            source_sheet=sheet_name,
+            header_row=header_row,
+            mapping_json=mapping_json,
+            imported_count=0,
+            duplicate_count=0,
+            invalid_count=review["invalid_count"],
+            skipped_blank_count=review["skipped_blank_count"],
+        )
+        raw_rows_by_source_number = _record_raw_import_rows(
+            db,
+            current_user,
+            source,
+            batch,
+            normalized_rows,
+            customer_col,
+            container_col,
+            bl_col,
+        )
+    except Exception:
+        db.rollback()
+        source = None
+        mapping_profile = None
+        batch = None
+        raw_rows_by_source_number = {}
+        source_tracking_warning = (
+            "This import was added without source memory. Shipment intake still succeeded, but batch provenance could not be saved."
+        )
     for row_obj in normalized_rows:
         container_number = _clean_container(row_obj.get(container_col))
         source_row_number = int(row_obj.get("__source_row_number") or 0)
@@ -3479,9 +3464,9 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             bl_number=bl_number,
             shipment_status="active",
             movement_category="Hi Seas",
-            source_type=source.source_type,
-            source_label=source.source_label,
-            source_batch_id=batch.id,
+            source_type=source_type,
+            source_label=source_label,
+            source_batch_id=batch.id if batch else 0,
             raw_source_row_id=raw_row.id if raw_row else 0,
         )
         db.add(shipment)
@@ -3490,11 +3475,43 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             raw_row.row_error = ""
         existing_keys.add(shipment_key)
         imported_count += 1
-    batch.imported_count = imported_count
-    batch.duplicate_count = duplicate_count
-    batch.invalid_count = skipped_invalid_count
-    batch.skipped_blank_count = skipped_blank_count
-    source.last_sync_at = datetime.utcnow()
+    if batch:
+        batch.imported_count = imported_count
+        batch.duplicate_count = duplicate_count
+        batch.invalid_count = skipped_invalid_count
+        batch.skipped_blank_count = skipped_blank_count
+    if source:
+        source.last_sync_at = datetime.utcnow()
+    if source_type == "google_sheets" and source_url and source and mapping_profile:
+        parsed = _parse_google_sheet_reference(source_url)
+        existing_connection = db.execute(
+            select(SourceConnection).where(
+                SourceConnection.user_id == current_user.id,
+                SourceConnection.provider == "google_sheets",
+                SourceConnection.source_url == source_url,
+                SourceConnection.worksheet_name == sheet_name,
+            )
+        ).scalar_one_or_none()
+        if existing_connection:
+            existing_connection.connection_label = source_label
+            existing_connection.mapping_profile_id = mapping_profile.id
+            existing_connection.status = "connected"
+            existing_connection.config_json = _json_dumps(parsed)
+            existing_connection.updated_at = datetime.utcnow()
+        else:
+            db.add(
+                SourceConnection(
+                    user_id=current_user.id,
+                    source_id=source.id,
+                    provider="google_sheets",
+                    connection_label=source_label,
+                    source_url=source_url,
+                    worksheet_name=sheet_name,
+                    mapping_profile_id=mapping_profile.id,
+                    status="connected",
+                    config_json=_json_dumps(parsed),
+                )
+            )
     if upload_session:
         upload_session.status = "imported"
     db.commit()
@@ -3509,10 +3526,11 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "skipped_blank_count": skipped_blank_count,
             "skipped_invalid_count": skipped_invalid_count,
             "mapping": mapping_json,
-            "source_batch_id": batch.id,
-            "source_type": source.source_type,
-            "source_label": source.source_label,
-            "mapping_profile_id": mapping_profile.id,
+            "source_batch_id": batch.id if batch else 0,
+            "source_type": source_type,
+            "source_label": source_label,
+            "mapping_profile_id": mapping_profile.id if mapping_profile else 0,
+            "source_tracking_warning": source_tracking_warning,
         },
     )
     db.commit()
@@ -3525,10 +3543,11 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         "duplicate_count": duplicate_count,
         "skipped_blank_count": skipped_blank_count,
         "skipped_invalid_count": skipped_invalid_count,
-        "source_batch_id": batch.id,
-        "source_label": source.source_label,
-        "source_reference": source.source_reference,
-        "mapping_profile_id": mapping_profile.id,
+        "source_batch_id": batch.id if batch else 0,
+        "source_label": source_label,
+        "source_reference": source_reference,
+        "mapping_profile_id": mapping_profile.id if mapping_profile else 0,
+        "source_tracking_warning": source_tracking_warning,
         "total_rows": imported_count + duplicate_count + skipped_blank_count + skipped_invalid_count,
     }
 
