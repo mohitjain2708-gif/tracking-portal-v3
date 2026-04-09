@@ -195,6 +195,30 @@ function formatTrackingSourceLabel(value) {
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
+function formatImportCompletionText(data) {
+  const imported = Number(data?.imported_count ?? 0);
+  const duplicateCount = Number(data?.duplicate_count ?? 0);
+  const skippedBlankCount = Number(data?.skipped_blank_count ?? 0);
+  const skippedInvalidCount = Number(data?.skipped_invalid_count ?? 0);
+  const skippedTotal = duplicateCount + skippedBlankCount + skippedInvalidCount;
+  const detailParts = [];
+
+  if (duplicateCount > 0) {
+    detailParts.push(`${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`);
+  }
+  if (skippedBlankCount > 0) {
+    detailParts.push(`${skippedBlankCount} blank row${skippedBlankCount === 1 ? "" : "s"}`);
+  }
+  if (skippedInvalidCount > 0) {
+    detailParts.push(`${skippedInvalidCount} invalid container${skippedInvalidCount === 1 ? "" : "s"}`);
+  }
+
+  const summary = imported === 1 ? "1 shipment added." : `${imported} shipments added.`;
+  const detail = skippedTotal > 0 ? ` ${skippedTotal} row${skippedTotal === 1 ? "" : "s"} left out.` : "";
+  const warning = data?.source_tracking_warning ? ` ${data.source_tracking_warning}` : "";
+  return `${summary}${detail}${warning}`.trim();
+}
+
 function formatAuditActionLabel(value) {
   const action = cleanText(value).toLowerCase();
   const custom = {
@@ -1401,7 +1425,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.${data.source_tracking_warning ? ` ${data.source_tracking_warning}` : ""}`,
+        text: formatImportCompletionText(data),
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1436,7 +1460,7 @@ function App() {
       resetShipmentImportState();
       setFeedback({
         tone: "success",
-        text: `Import complete. Added ${data.imported_count ?? 0} shipments from batch #${data.source_batch_id ?? 0}, skipped ${data.duplicate_count ?? 0} duplicates, ${data.skipped_blank_count ?? 0} blank rows, and ${data.skipped_invalid_count ?? 0} invalid containers.${data.source_tracking_warning ? ` ${data.source_tracking_warning}` : ""}`,
+        text: formatImportCompletionText(data),
       });
       await loadDashboard({ silent: true });
     } catch (error) {
@@ -1991,9 +2015,9 @@ function App() {
         <article className="surface panel-card">
           <div className="panel-heading compact-heading">
             <div>
-              <p className="eyebrow">Manual Entry</p>
-              <h2>Add Shipment</h2>
-              <p className="panel-copy">Enter one shipment cycle cleanly, with one or more containers linked to the same BL.</p>
+              <p className="eyebrow">Manual</p>
+              <h2>Add shipment</h2>
+              <p className="panel-copy">Add one shipment cycle with one or more containers on the same BL.</p>
             </div>
           </div>
 
@@ -2024,9 +2048,7 @@ function App() {
               onChange={(event) => handleFieldChange("container_input", event.target.value)}
               placeholder={"TCNU1491563\nMRKU6677543\nTTNU1079348"}
             />
-            <p className="field-help">
-              Add one container per line. The portal validates 4 letters followed by 7 digits.
-            </p>
+            <p className="field-help">One container per line.</p>
 
             <label className="field-label" htmlFor="bl_number">
               BL Number
@@ -2047,52 +2069,15 @@ function App() {
         <article className="surface panel-card">
           <div className="panel-heading compact-heading">
             <div>
-              <p className="eyebrow">Import</p>
-              <h2>Import Shipments</h2>
-              <p className="panel-copy">Review the workbook, confirm the mapping, and correct any rows that need attention before they enter tracking.</p>
+              <p className="eyebrow">Workbook</p>
+              <h2>Import from Excel</h2>
+              <p className="panel-copy">Choose a workbook, confirm the columns, and add the rows you want to track.</p>
             </div>
           </div>
 
           <div className="stack-form">
-            {sourceBatches.length ? (
-              <div className="source-batch-strip">
-                <div className="source-batch-strip-copy">
-                  <strong>Recent import batches</strong>
-                  <span>Each import now keeps its source memory, row history, and batch identity.</span>
-                </div>
-                <div className="source-batch-list">
-                  {sourceBatches.slice(0, 3).map((batch) => (
-                    <button
-                      key={batch.id}
-                      type="button"
-                      className="source-batch-chip"
-                      onClick={() => openSourceBatchDetail(batch.id)}
-                    >
-                      <span>{batch.batch_label || batch.source_label || `Batch #${batch.id}`}</span>
-                      <strong>#{batch.id}</strong>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {sourceMappings.length ? (
-              <div className="source-batch-strip">
-                <div className="source-batch-strip-copy">
-                  <strong>Remembered mapping profiles</strong>
-                  <span>When a familiar sheet returns, the portal can reuse the layout instead of starting from scratch.</span>
-                </div>
-                <div className="source-batch-list">
-                  {sourceMappings.slice(0, 3).map((profile) => (
-                    <span key={profile.id} className="source-batch-chip source-batch-chip-static">
-                      <span>{profile.profile_label || profile.source_sheet || "Mapping Profile"}</span>
-                      <strong>{profile.source_sheet || "General"}</strong>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
             <label className="field-label" htmlFor="shipment_import_file">
-              Workbook File
+              Excel file
             </label>
             <input
               id="shipment_import_file"
@@ -2103,49 +2088,48 @@ function App() {
 
             <div className="button-row compact-row">
               <ActionButton type="button" tone="secondary" onClick={handleShipmentImportPreview}>
-                Review Workbook
+                Continue
               </ActionButton>
               {shipmentImportFile && <span className="file-chip">{shipmentImportFile.name}</span>}
             </div>
-            <p className="field-help">Supports `.xlsx` and `.xlsm` workbooks up to 10 MB.</p>
+            <p className="field-help">`.xlsx` and `.xlsm`, up to 10 MB.</p>
+            {(sourceBatches.length || sourceMappings.length) ? (
+              <div className="quiet-source-note">
+                {sourceBatches[0] ? (
+                  <button
+                    type="button"
+                    className="quiet-link"
+                    onClick={() => openSourceBatchDetail(sourceBatches[0].id)}
+                  >
+                    View last import
+                  </button>
+                ) : null}
+                {sourceMappings.length ? <span>Column choices are remembered quietly.</span> : null}
+              </div>
+            ) : null}
           </div>
 
           {shipmentImportPreview && shipmentImportSourceContext?.source_type !== "google_sheets" && (
             <div className="import-preview">
               <div className="preview-header">
                 <div>
-                  <h3>Column Mapping</h3>
+                  <h3>Match the columns</h3>
                   <p>
-                    {shipmentImportSourceContext?.source_type === "google_sheets" ? "Sheet tab" : "Sheet"}{" "}
-                    <strong>{shipmentImportPreview.sheet_name}</strong>, header row{" "}
-                    {shipmentImportPreview.header_row}
+                    Check the fields once, then continue.
                   </p>
                 </div>
                 <div className="file-chip-row">
-                  <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
+                  <span className="file-chip">{shipmentImportPreview.preview_rows?.length || 0} rows shown</span>
                   {shipmentImportPreview.remembered_mapping?.container_number ? (
-                    <span className="file-chip">Layout remembered</span>
-                  ) : null}
-                  {shipmentImportPreview.remembered_profile?.profile_label ? (
-                    <span className="file-chip">{shipmentImportPreview.remembered_profile.profile_label}</span>
+                    <span className="file-chip">Using last layout</span>
                   ) : null}
                 </div>
               </div>
 
               {shipmentImportSourceContext?.source_type === "google_sheets" ? (
-                <div className="source-batch-strip google-sheet-preview-strip">
-                  <div className="source-batch-strip-copy">
-                    <strong>{shipmentImportPreview.sheet_title || "Google Sheet"}</strong>
-                    <span>
-                      The portal will remember this tab layout automatically after the first successful sync.
-                    </span>
-                  </div>
-                  <div className="file-chip-row">
-                    <span className="file-chip">{shipmentImportPreview.available_sheets?.length || 0} tabs found</span>
-                    {shipmentImportPreview.remembered_profile?.profile_label ? (
-                      <span className="file-chip">Using {shipmentImportPreview.remembered_profile.profile_label}</span>
-                    ) : null}
-                  </div>
+                <div className="google-preview-note">
+                  <strong>{shipmentImportPreview.sheet_title || "Google Sheet"}</strong>
+                  <span>{shipmentImportPreview.sheet_name || "Selected tab"}</span>
                 </div>
               ) : null}
 
@@ -2179,7 +2163,7 @@ function App() {
                 disabled={shipmentImporting}
                 onClick={handleShipmentImportConfirm}
               >
-                {shipmentImporting ? "Importing..." : "Import Shipments"}
+                {shipmentImporting ? "Adding..." : "Add shipments"}
               </ActionButton>
 
               {shipmentImportReviewSummary?.invalid_count ? (
@@ -2211,26 +2195,15 @@ function App() {
         <article className="surface panel-card">
           <div className="panel-heading compact-heading">
             <div>
-              <p className="eyebrow">Cloud Sources</p>
-              <h2>Google Sheets</h2>
-              <p className="panel-copy">
-                Paste the sheet URL, choose the right tab, then map the columns exactly like the Excel flow.
-              </p>
+              <p className="eyebrow">Google</p>
+              <h2>Import from Google Sheets</h2>
+              <p className="panel-copy">Paste the sheet link, choose a tab, then continue into the same mapping flow.</p>
             </div>
           </div>
 
           <div className="stack-form">
-            <p className="field-help">
-              The portal will discover the available tabs, remember the mapping quietly in the background, and stop
-              duplicate shipment rows before they get added twice.
-            </p>
-            <p className="field-help">
-              Current development mode can read sheets that are accessible by link. Private-sheet sync should move to
-              Google sign-in with read-only access so users never have to open their data publicly.
-            </p>
-
             <label className="field-label" htmlFor="google_sheet_url">
-              Google Sheets URL
+              Google Sheet link
             </label>
             <input
               id="google_sheet_url"
@@ -2246,15 +2219,16 @@ function App() {
                 disabled={googleSheetLoading}
                 onClick={handleGoogleSheetFetch}
               >
-                {googleSheetLoading ? "Checking..." : "Fetch Tabs"}
+                {googleSheetLoading ? "Checking..." : "Continue"}
               </ActionButton>
               {googleSheetState.sheet_title ? <span className="file-chip">{googleSheetState.sheet_title}</span> : null}
             </div>
+            <p className="field-help">Shared-link access for now. Private sync will use Google sign-in.</p>
 
             {googleSheetState.available_sheets?.length ? (
               <>
                 <label className="field-label" htmlFor="google_sheet_tab">
-                  Choose Sheet Tab
+                  Sheet tab
                 </label>
                 <select
                   id="google_sheet_tab"
@@ -2281,29 +2255,23 @@ function App() {
                     disabled={googleSheetLoading || !googleSheetState.selected_sheet}
                     onClick={handleGoogleSheetSelectPreview}
                   >
-                    {googleSheetLoading ? "Loading..." : "Load Sheet Preview"}
+                    {googleSheetLoading ? "Loading..." : "Continue"}
                   </ActionButton>
-                  <span className="field-help google-sheet-inline-help">
-                    After this, the column mapping step works exactly like Excel import.
-                  </span>
                 </div>
               </>
             ) : null}
 
             {sourceConnections.filter((connection) => connection.provider === "google_sheets").length ? (
-              <div className="source-batch-strip">
-                <div className="source-batch-strip-copy">
-                  <strong>Recent Google Sheet sources</strong>
-                  <span>Previously used tabs stay remembered so returning users do not have to remap from scratch.</span>
-                </div>
+              <div className="quiet-source-note">
+                <span>Recent sheet</span>
                 <div className="source-batch-list">
                   {sourceConnections
                     .filter((connection) => connection.provider === "google_sheets")
-                    .slice(0, 4)
+                    .slice(0, 1)
                     .map((connection) => (
                       <span key={connection.id} className="source-batch-chip source-batch-chip-static">
                         <span>{connection.connection_label || "Google Sheet"}</span>
-                        <strong>{connection.worksheet_name || "Default tab"}</strong>
+                        <strong>{connection.worksheet_name || "Tab"}</strong>
                       </span>
                     ))}
                 </div>
@@ -3309,19 +3277,19 @@ function App() {
 
       {shipmentImportPreview && shipmentImportSourceContext?.source_type === "google_sheets" && (
         <Modal
-          title={`Google Sheet Import${shipmentImportPreview.sheet_name ? ` - ${shipmentImportPreview.sheet_name}` : ""}`}
+          title="Import from Google Sheets"
           onClose={resetShipmentImportState}
           size="wide"
           actions={
-            <ActionButton
-              type="button"
-              tone="primary"
-              disabled={shipmentImporting}
-              onClick={handleShipmentImportConfirm}
-            >
-              {shipmentImporting ? "Importing..." : "Import Shipments"}
-            </ActionButton>
-          }
+              <ActionButton
+                type="button"
+                tone="primary"
+                disabled={shipmentImporting}
+                onClick={handleShipmentImportConfirm}
+              >
+                {shipmentImporting ? "Adding..." : "Add shipments"}
+              </ActionButton>
+            }
         >
           <div className="audit-panel">
             <div className="audit-hero">
@@ -3330,28 +3298,24 @@ function App() {
                 <h4>{shipmentImportPreview.sheet_title || "Google Sheet"}</h4>
                 <div className="audit-hero-meta">
                   <span className="meta-pill">{shipmentImportPreview.sheet_name || "Selected tab"}</span>
-                  <span className="meta-pill">Header row {shipmentImportPreview.header_row}</span>
-                  <span className="meta-pill">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
+                  <span className="meta-pill">{shipmentImportPreview.preview_rows?.length || 0} rows shown</span>
                 </div>
               </section>
             </div>
 
-            <div className="import-preview import-preview-modal">
-              <div className="preview-header">
-                <div>
-                  <h3>Map the columns</h3>
-                  <p>Choose the customer, container, and BL fields for this tab. The portal will remember the layout for next time.</p>
+              <div className="import-preview import-preview-modal">
+                <div className="preview-header">
+                  <div>
+                  <h3>Match the fields</h3>
+                    <p>Choose the customer, container, and BL columns, then continue.</p>
+                  </div>
+                  <div className="file-chip-row">
+                    <span className="file-chip">{shipmentImportPreview.available_sheets?.length || 0} tabs</span>
+                    {shipmentImportPreview.remembered_mapping?.container_number ? (
+                      <span className="file-chip">Using last layout</span>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="file-chip-row">
-                  <span className="file-chip">{shipmentImportPreview.available_sheets?.length || 0} tabs found</span>
-                  {shipmentImportPreview.remembered_mapping?.container_number ? (
-                    <span className="file-chip">Layout remembered</span>
-                  ) : null}
-                  {shipmentImportPreview.remembered_profile?.profile_label ? (
-                    <span className="file-chip">{shipmentImportPreview.remembered_profile.profile_label}</span>
-                  ) : null}
-                </div>
-              </div>
 
               <div className="mapping-grid">
                 {MAPPING_FIELDS.map(([field, label]) => (

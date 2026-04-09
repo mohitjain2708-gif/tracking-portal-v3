@@ -222,11 +222,11 @@ select:focus {
 
 .eyebrow {
   margin: 0;
-  color: #9bc2e8;
+  color: #8b98aa;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 11px;
-  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .hero-panel h1,
@@ -247,7 +247,7 @@ select:focus {
 .preview-header p {
   margin: 0;
   color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.5;
   font-size: 13px;
 }
 
@@ -389,9 +389,10 @@ select:focus {
 
 .banner {
   margin-bottom: 12px;
-  padding: 11px 14px;
-  font-size: 13px;
+  padding: 10px 14px;
+  font-size: 12px;
   font-weight: 600;
+  border-radius: 14px;
 }
 
 .progress-banner {
@@ -484,7 +485,7 @@ select:focus {
 .panel-card,
 .metrics-panel,
 .dashboard-panel {
-  padding: 14px;
+  padding: 18px;
 }
 
 .metrics-panel {
@@ -511,8 +512,8 @@ select:focus {
 }
 
 .compact-heading .panel-copy {
-  max-width: 54ch;
-  margin-top: 6px;
+  max-width: 46ch;
+  margin-top: 4px;
 }
 
 .field-label,
@@ -600,9 +601,9 @@ select:focus {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  background: #f8fafc;
-  border: 1px solid var(--border);
-  padding: 5px 10px;
+  background: #fbfcfe;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  padding: 5px 11px;
   font-size: 12px;
 }
 
@@ -1875,8 +1876,48 @@ select:focus {
 .field-help {
   margin: -2px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.5;
+}
+
+.quiet-source-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+  padding-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quiet-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.quiet-link:hover {
+  color: var(--primary-strong);
+}
+
+.google-preview-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 2px 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.google-preview-note strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .stack-form textarea {
