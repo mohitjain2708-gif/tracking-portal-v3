@@ -1571,12 +1571,12 @@ function App() {
         source_context: preview.source_context || null,
         temp_file_token: preview.temp_file_token || "",
       });
-      setFeedback({
-        tone: "success",
-        text: `Found ${preview.available_sheets?.length || 0} sheet tab(s). Choose the one you want to import.`,
-      });
+      setFeedback(null);
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Unable to fetch Google Sheet" });
+      setFeedback({
+        tone: "error",
+        text: error.message || "Google Sheets could not be reached right now.",
+      });
     } finally {
       setGoogleSheetLoading(false);
     }
@@ -1618,12 +1618,12 @@ function App() {
         source_context: preview.source_context || current.source_context,
         temp_file_token: preview.temp_file_token || current.temp_file_token,
       }));
-      setFeedback({
-        tone: "success",
-        text: `Preview ready for ${preview.sheet_name}. Map the columns and continue just like an Excel import.`,
-      });
+      setFeedback(null);
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Unable to preview Google Sheet tab" });
+      setFeedback({
+        tone: "error",
+        text: error.message || "Google Sheet preview could not be prepared.",
+      });
     } finally {
       setGoogleSheetLoading(false);
     }
