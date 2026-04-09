@@ -1804,13 +1804,19 @@ def _download_google_sheet_workbook(source_url: str) -> tuple[bytes, dict[str, s
     if response.status_code != 200 or not response.content:
         raise HTTPException(
             status_code=400,
-            detail="Unable to fetch Google Sheet. Make sure the sheet is accessible and the URL is correct.",
+            detail=(
+                "Unable to fetch Google Sheet. The current read-only connection works only for sheets that are "
+                "accessible by link. For private sheets, the next secure step is Google sign-in with read-only access."
+            ),
         )
     content_type = _clean_text(response.headers.get("content-type", "")).lower()
     if "spreadsheetml" not in content_type and not response.content.startswith(b"PK"):
         raise HTTPException(
             status_code=400,
-            detail="Google Sheet could not be downloaded as an Excel workbook. Make sure the sheet is accessible.",
+            detail=(
+                "Google Sheet could not be downloaded as an Excel workbook. The current connection expects a "
+                "link-accessible sheet; private-sheet sync will require Google sign-in."
+            ),
         )
     return response.content, parsed
 

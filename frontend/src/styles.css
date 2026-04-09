@@ -1742,6 +1742,10 @@ select:focus {
   margin-bottom: 4px;
 }
 
+.import-preview-modal {
+  gap: 14px;
+}
+
 .document-form-grid {
   display: grid;
   gap: 12px;

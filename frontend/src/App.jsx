@@ -2110,7 +2110,7 @@ function App() {
             <p className="field-help">Supports `.xlsx` and `.xlsm` workbooks up to 10 MB.</p>
           </div>
 
-          {shipmentImportPreview && (
+          {shipmentImportPreview && shipmentImportSourceContext?.source_type !== "google_sheets" && (
             <div className="import-preview">
               <div className="preview-header">
                 <div>
@@ -2223,6 +2223,10 @@ function App() {
             <p className="field-help">
               The portal will discover the available tabs, remember the mapping quietly in the background, and stop
               duplicate shipment rows before they get added twice.
+            </p>
+            <p className="field-help">
+              Current development mode can read sheets that are accessible by link. Private-sheet sync should move to
+              Google sign-in with read-only access so users never have to open their data publicly.
             </p>
 
             <label className="field-label" htmlFor="google_sheet_url">
@@ -3298,6 +3302,103 @@ function App() {
                   </div>
                 </section>
               ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {shipmentImportPreview && shipmentImportSourceContext?.source_type === "google_sheets" && (
+        <Modal
+          title={`Google Sheet Import${shipmentImportPreview.sheet_name ? ` - ${shipmentImportPreview.sheet_name}` : ""}`}
+          onClose={resetShipmentImportState}
+          size="wide"
+          actions={
+            <ActionButton
+              type="button"
+              tone="primary"
+              disabled={shipmentImporting}
+              onClick={handleShipmentImportConfirm}
+            >
+              {shipmentImporting ? "Importing..." : "Import Shipments"}
+            </ActionButton>
+          }
+        >
+          <div className="audit-panel">
+            <div className="audit-hero">
+              <section className="audit-hero-primary import-review-hero">
+                <span className="audit-detail-title">Google Sheet</span>
+                <h4>{shipmentImportPreview.sheet_title || "Google Sheet"}</h4>
+                <div className="audit-hero-meta">
+                  <span className="meta-pill">{shipmentImportPreview.sheet_name || "Selected tab"}</span>
+                  <span className="meta-pill">Header row {shipmentImportPreview.header_row}</span>
+                  <span className="meta-pill">{shipmentImportPreview.preview_rows?.length || 0} preview rows</span>
+                </div>
+              </section>
+            </div>
+
+            <div className="import-preview import-preview-modal">
+              <div className="preview-header">
+                <div>
+                  <h3>Map the columns</h3>
+                  <p>Choose the customer, container, and BL fields for this tab. The portal will remember the layout for next time.</p>
+                </div>
+                <div className="file-chip-row">
+                  <span className="file-chip">{shipmentImportPreview.available_sheets?.length || 0} tabs found</span>
+                  {shipmentImportPreview.remembered_mapping?.container_number ? (
+                    <span className="file-chip">Layout remembered</span>
+                  ) : null}
+                  {shipmentImportPreview.remembered_profile?.profile_label ? (
+                    <span className="file-chip">{shipmentImportPreview.remembered_profile.profile_label}</span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mapping-grid">
+                {MAPPING_FIELDS.map(([field, label]) => (
+                  <label className="mapping-field" key={field}>
+                    <span>{label}</span>
+                    <select
+                      value={shipmentImportMapping[field]}
+                      onChange={(event) =>
+                        setShipmentImportMapping((current) => ({
+                          ...current,
+                          [field]: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Select column</option>
+                      {(shipmentImportPreview.available_columns || []).map((column) => (
+                        <option key={column} value={column}>
+                          {column}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ))}
+              </div>
+
+              {shipmentImportReviewSummary?.invalid_count ? (
+                <div className="confirm-warning">
+                  <strong>Action Required:</strong> {shipmentImportReviewSummary.invalid_count} shipment row(s)
+                  need correction before import.
+                  <div className="edit-actions-row">
+                    <ActionButton
+                      type="button"
+                      tone="secondary"
+                      onClick={() => setShipmentImportReviewOpen(true)}
+                    >
+                      Review Invalid Rows
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : null}
+
+              {shipmentImportReviewSummary?.duplicate_count ? (
+                <div className="confirm-note">
+                  <strong>Duplicate check:</strong> {shipmentImportReviewSummary.duplicate_count} shipment row(s)
+                  already exist in this source or in the portal and will be skipped automatically.
+                </div>
+              ) : null}
             </div>
           </div>
         </Modal>
