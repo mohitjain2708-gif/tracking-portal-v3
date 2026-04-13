@@ -2371,21 +2371,23 @@ def _apply_group_status_transition(
                 if _clean_container(shipment.container_number)
             }
         )
+        shipments_by_id: dict[int, Shipment] = {}
         archived_candidates = list(
             db.execute(
                 _user_shipment_select(current_user).where(
                     Shipment.shipment_status == "archived",
-                    Shipment.container_number.in_(restore_containers),
                 )
             ).scalars()
         )
-        shipments_by_id: dict[int, Shipment] = {}
         for candidate in archived_candidates:
+            candidate_container = _clean_container(candidate.container_number)
             candidate_bl = _normalize_bl_number(candidate.bl_number)
             if target_bl:
-                if candidate_bl == target_bl or not candidate_bl:
+                if candidate_bl == target_bl:
                     shipments_by_id[candidate.id] = candidate
-            elif not candidate_bl:
+                elif not candidate_bl and candidate_container in restore_containers:
+                    shipments_by_id[candidate.id] = candidate
+            elif not candidate_bl and candidate_container in restore_containers:
                 shipments_by_id[candidate.id] = candidate
         shipments = list(shipments_by_id.values())
         if not shipments:
