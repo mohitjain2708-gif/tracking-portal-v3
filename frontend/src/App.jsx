@@ -26,6 +26,12 @@ const INITIAL_GOOGLE_SHEET_STATE = {
   temp_file_token: "",
 };
 
+const INITIAL_PASSWORD_FORM = {
+  current_password: "",
+  new_password: "",
+  confirm_password: "",
+};
+
 const IMPORT_FILE_SIZE_LIMIT_MB = 10;
 
 const MOVEMENT_FILTERS = [
@@ -341,6 +347,24 @@ function formatAuditDetails(details) {
   return Object.entries(details)
     .map(([key, val]) => `${key.replace(/_/g, " ")}: ${Array.isArray(val) ? val.join(", ") : String(val)}`)
     .join(" · ");
+}
+
+function formatDateTimeLabel(value) {
+  const text = cleanText(value);
+  if (!text) {
+    return "-";
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
 }
 
 function guessColumns(columns) {
@@ -802,6 +826,13 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "" });
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM);
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [adminOverview, setAdminOverview] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminResetState, setAdminResetState] = useState({ userId: 0, password: "" });
+  const [adminResetSubmitting, setAdminResetSubmitting] = useState(false);
   const [shipments, setShipments] = useState([]);
   const [dashboardRows, setDashboardRows] = useState([]);
   const [dashboardIdentifiers, setDashboardIdentifiers] = useState({
@@ -924,6 +955,39 @@ function App() {
       active = false;
     };
   }, [demoSessionEnabled]);
+
+  useEffect(() => {
+    setPasswordModalOpen(Boolean(currentUser?.password_reset_required));
+  }, [currentUser]);
+
+  useEffect(() => {
+    let active = true;
+    if (!currentUser?.is_admin || !isAuthenticated) {
+      setAdminOverview(null);
+      return undefined;
+    }
+    setAdminLoading(true);
+    api
+      .getAdminOverview()
+      .then((data) => {
+        if (active) {
+          setAdminOverview(data);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAdminOverview(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAdminLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser, isAuthenticated]);
 
   const loadDashboard = useCallback(async (options = {}) => {
     const { silent = false } = options;
@@ -2160,6 +2224,7 @@ function App() {
   const handleLogout = useCallback(() => {
     api.logout();
     setCurrentUser(null);
+    setAdminOverview(null);
     setIsAuthenticated(false);
     setShipments([]);
     setDashboardRows([]);
@@ -2174,6 +2239,74 @@ function App() {
     });
     setFeedback({ tone: "success", text: "Signed out successfully." });
   }, []);
+
+  const handlePasswordFieldChange = useCallback((field, value) => {
+    setPasswordForm((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const refreshAdminOverview = useCallback(async () => {
+    if (!currentUser?.is_admin) {
+      return;
+    }
+    const data = await api.getAdminOverview();
+    setAdminOverview(data);
+  }, [currentUser]);
+
+  const handleChangePassword = useCallback(
+    async (event) => {
+      event.preventDefault();
+      setFeedback(null);
+      if (passwordForm.new_password !== passwordForm.confirm_password) {
+        setFeedback({ tone: "error", text: "New password and confirm password must match." });
+        return;
+      }
+
+      setPasswordSubmitting(true);
+      try {
+        await api.changePassword({
+          current_password: passwordForm.current_password,
+          new_password: passwordForm.new_password,
+        });
+        const user = await api.me();
+        setCurrentUser(user);
+        setPasswordForm(INITIAL_PASSWORD_FORM);
+        setPasswordModalOpen(false);
+        setFeedback({ tone: "success", text: "Password updated successfully." });
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Could not update the password." });
+      } finally {
+        setPasswordSubmitting(false);
+      }
+    },
+    [passwordForm]
+  );
+
+  const handleAdminResetPassword = useCallback(
+    async (userId) => {
+      const temporaryPassword = cleanText(adminResetState.password);
+      if (!temporaryPassword) {
+        setFeedback({ tone: "error", text: "Enter a temporary password before resetting a user account." });
+        return;
+      }
+
+      setAdminResetSubmitting(true);
+      setFeedback(null);
+      try {
+        await api.adminResetUserPassword({ user_id: userId, temporary_password: temporaryPassword });
+        setAdminResetState({ userId: 0, password: "" });
+        await refreshAdminOverview();
+        setFeedback({
+          tone: "success",
+          text: "Password reset saved. The user will be asked to choose a new private password after signing in.",
+        });
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Could not reset that password." });
+      } finally {
+        setAdminResetSubmitting(false);
+      }
+    },
+    [adminResetState.password, refreshAdminOverview]
+  );
 
   const handleOpenDocument = useCallback(async (blNumber, documentType) => {
     try {
@@ -2264,6 +2397,9 @@ function App() {
           {!demoSessionEnabled && currentUser ? (
             <div className="session-chip">
               <span>{currentUser.email}</span>
+              <button type="button" onClick={() => setPasswordModalOpen(true)}>
+                Change password
+              </button>
               <button type="button" onClick={handleLogout}>
                 Sign Out
               </button>
@@ -2288,6 +2424,97 @@ function App() {
           </label>
         </div>
       </section>
+
+      {currentUser?.is_admin ? (
+        <section className="surface owner-panel">
+          <div className="panel-heading compact-heading owner-panel-heading">
+            <div>
+              <p className="eyebrow">Owner View</p>
+              <h2>Portal oversight</h2>
+              <p className="panel-copy">A quiet view of users, shipment volume, and recent portal activity.</p>
+            </div>
+            <ActionButton type="button" tone="secondary" onClick={refreshAdminOverview} disabled={adminLoading}>
+              {adminLoading ? "Refreshing..." : "Refresh owner view"}
+            </ActionButton>
+          </div>
+
+          <div className="owner-metric-grid">
+            <DashboardMetric label="Users" value={adminOverview?.metrics?.total_users || 0} />
+            <DashboardMetric label="Live Shipments" value={adminOverview?.metrics?.live_shipments || 0} />
+            <DashboardMetric label="Completed" value={adminOverview?.metrics?.completed_shipments || 0} />
+            <DashboardMetric label="Archived" value={adminOverview?.metrics?.archived_shipments || 0} />
+          </div>
+
+          <div className="owner-grid">
+            <section className="owner-card">
+              <div className="owner-card-head">
+                <h3>People in the portal</h3>
+                <p>See who has signed up and reset access when someone needs help getting back in.</p>
+              </div>
+              <div className="owner-user-list">
+                {(adminOverview?.users || []).length === 0 ? (
+                  <div className="empty-state-panel">No users yet.</div>
+                ) : (
+                  (adminOverview?.users || []).map((user) => (
+                    <article key={user.id} className="owner-user-row">
+                      <div className="owner-user-copy">
+                        <strong>{user.email}</strong>
+                        <span>
+                          {user.shipment_count || 0} shipments, {user.source_batch_count || 0} imports
+                          {user.password_reset_required ? " • password needs to be changed" : ""}
+                        </span>
+                      </div>
+                      {!user.is_admin ? (
+                        <div className="owner-user-actions">
+                          <input
+                            type="password"
+                            placeholder="Temporary password"
+                            value={adminResetState.userId === user.id ? adminResetState.password : ""}
+                            onChange={(event) =>
+                              setAdminResetState({ userId: user.id, password: event.target.value })
+                            }
+                          />
+                          <ActionButton
+                            type="button"
+                            tone="ghost"
+                            disabled={adminResetSubmitting}
+                            onClick={() => handleAdminResetPassword(user.id)}
+                          >
+                            Reset password
+                          </ActionButton>
+                        </div>
+                      ) : (
+                        <span className="meta-pill">Owner</span>
+                      )}
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="owner-card">
+              <div className="owner-card-head">
+                <h3>Recent activity</h3>
+                <p>Recent changes across the portal, shown in plain language.</p>
+              </div>
+              <div className="owner-activity-list">
+                {(adminOverview?.recent_activity || []).length === 0 ? (
+                  <div className="empty-state-panel">No recent activity yet.</div>
+                ) : (
+                  (adminOverview?.recent_activity || []).map((entry) => (
+                    <article key={entry.id} className="owner-activity-row">
+                      <strong>{formatAuditActionLabel(entry.action)}</strong>
+                      <span>{entry.email || "Unknown user"}</span>
+                      <span>{entry.bl_number || entry.container_number || "Portal activity"}</span>
+                      <span>{formatDateTimeLabel(entry.created_at)}</span>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+        </section>
+      ) : null}
 
       <section className="stats-grid">
         <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment groups" />
@@ -4252,6 +4479,72 @@ function App() {
               </ActionButton>
               <ActionButton type="submit" tone="primary" disabled={editSubmitting}>
                 {editSubmitting ? "Saving..." : "Save Details"}
+              </ActionButton>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {passwordModalOpen && (
+        <Modal
+          title={currentUser?.password_reset_required ? "Choose a new private password" : "Change Password"}
+          onClose={() => {
+            if (!currentUser?.password_reset_required) {
+              setPasswordModalOpen(false);
+              setPasswordForm(INITIAL_PASSWORD_FORM);
+            }
+          }}
+        >
+          <form className="stack-form" onSubmit={handleChangePassword}>
+            <p className="panel-copy">
+              {currentUser?.password_reset_required
+                ? "An administrator reset your access. Please choose a new password so only you know it."
+                : "Update your password when you need a fresh, private sign-in."}
+            </p>
+            <label className="field-label" htmlFor="current_password">
+              Current Password
+            </label>
+            <input
+              id="current_password"
+              type="password"
+              value={passwordForm.current_password}
+              onChange={(event) => handlePasswordFieldChange("current_password", event.target.value)}
+              placeholder="Enter your current password"
+              required
+            />
+            <label className="field-label" htmlFor="new_password">
+              New Password
+            </label>
+            <input
+              id="new_password"
+              type="password"
+              value={passwordForm.new_password}
+              onChange={(event) => handlePasswordFieldChange("new_password", event.target.value)}
+              placeholder="Choose a new password"
+              required
+            />
+            <label className="field-label" htmlFor="confirm_new_password">
+              Confirm New Password
+            </label>
+            <input
+              id="confirm_new_password"
+              type="password"
+              value={passwordForm.confirm_password}
+              onChange={(event) => handlePasswordFieldChange("confirm_password", event.target.value)}
+              placeholder="Confirm the new password"
+              required
+            />
+            <div className="button-row compact-row edit-actions-row">
+              {!currentUser?.password_reset_required ? (
+                <ActionButton type="button" tone="ghost" onClick={() => {
+                  setPasswordModalOpen(false);
+                  setPasswordForm(INITIAL_PASSWORD_FORM);
+                }}>
+                  Cancel
+                </ActionButton>
+              ) : null}
+              <ActionButton type="submit" tone="primary" disabled={passwordSubmitting}>
+                {passwordSubmitting ? "Saving..." : "Save Password"}
               </ActionButton>
             </div>
           </form>

@@ -15,3 +15,15 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: EmailStr
+    is_admin: bool = False
+    password_reset_required: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminResetPasswordRequest(BaseModel):
+    user_id: int
+    temporary_password: str

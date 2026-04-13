@@ -197,6 +197,17 @@ export const api = {
     }),
 
   me: () => request("/api/auth/me"),
+  changePassword: (payload) =>
+    request("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getAdminOverview: () => request("/api/auth/admin/overview"),
+  adminResetUserPassword: (payload) =>
+    request("/api/auth/admin/reset-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   logout: () => setToken(""),
   hasSession: () => Boolean(getToken()),
 
