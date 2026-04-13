@@ -39,6 +39,14 @@ const DOCUMENT_FIELDS = [
 ];
 
 const STATUS_OPTIONS = ["active", "completed", "archived"];
+const SHIPMENT_STATUS_FILTERS = [
+  { value: "all", label: "All Shipment Statuses" },
+  { value: "action_needed", label: "Action Needed" },
+  ...STATUS_OPTIONS.map((status) => ({
+    value: status,
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+  })),
+];
 const MAPPING_FIELDS = [
   ["customer_name", "Customer Name"],
   ["container_number", "Container Number"],
@@ -784,6 +792,7 @@ function App() {
   const [sortConfig, setSortConfig] = useState({ key: "movement_since_date", direction: "desc" });
   const [documentUploadState, setDocumentUploadState] = useState({});
   const [locationDistanceMap, setLocationDistanceMap] = useState({});
+  const [selectedGroupKeys, setSelectedGroupKeys] = useState([]);
   const [stickyHeaderActive, setStickyHeaderActive] = useState(false);
   const [stickyHeaderStyle, setStickyHeaderStyle] = useState({ left: 0, width: 0, scrollLeft: 0 });
   const [actionRow, setActionRow] = useState(null);
@@ -797,6 +806,8 @@ function App() {
   const [recordsView, setRecordsView] = useState(null);
   const [recordsSearch, setRecordsSearch] = useState("");
   const [recordsMovementFilter, setRecordsMovementFilter] = useState("All");
+  const [bulkConfirmAction, setBulkConfirmAction] = useState(null);
+  const [bulkClearanceMap, setBulkClearanceMap] = useState({});
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [editRow, setEditRow] = useState(null);
@@ -1170,7 +1181,8 @@ function App() {
   const filteredRows = useMemo(() => {
     const visibleRows = normalizedRows.filter((row) => {
       const matchesStatus =
-        shipmentStatusFilter === "all" || row.shipment_status === shipmentStatusFilter;
+        shipmentStatusFilter === "all"
+        || (shipmentStatusFilter === "action_needed" ? Boolean(row.action_required) : row.shipment_status === shipmentStatusFilter);
       const matchesMovement =
         movementFilter === "All" || row.movement_category === movementFilter;
       const matchesSearch = rowMatchesSearch(row, search);
@@ -1187,11 +1199,56 @@ function App() {
     });
   }, [locationDistanceMap, movementFilter, normalizedRows, search, shipmentStatusFilter, sortConfig]);
 
+  useEffect(() => {
+    const currentKeys = new Set(normalizedRows.map((row) => cleanText(row.group_key || row.id)));
+    setSelectedGroupKeys((current) => current.filter((key) => currentKeys.has(key)));
+  }, [normalizedRows]);
+
+  const selectedRows = useMemo(() => {
+    const selectedSet = new Set(selectedGroupKeys);
+    return normalizedRows.filter((row) => selectedSet.has(cleanText(row.group_key || row.id)));
+  }, [normalizedRows, selectedGroupKeys]);
+
+  const allVisibleSelected = useMemo(() => {
+    if (!filteredRows.length) {
+      return false;
+    }
+    const selectedSet = new Set(selectedGroupKeys);
+    return filteredRows.every((row) => selectedSet.has(cleanText(row.group_key || row.id)));
+  }, [filteredRows, selectedGroupKeys]);
+
   const handleSort = useCallback((key) => {
     setSortConfig((current) => ({
       key,
       direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
     }));
+  }, []);
+
+  const toggleGroupSelection = useCallback((row) => {
+    const key = cleanText(row.group_key || row.id);
+    setSelectedGroupKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    );
+  }, []);
+
+  const toggleSelectAllVisible = useCallback(() => {
+    const visibleKeys = filteredRows.map((row) => cleanText(row.group_key || row.id));
+    setSelectedGroupKeys((current) => {
+      const currentSet = new Set(current);
+      const allSelected = visibleKeys.every((key) => currentSet.has(key));
+      if (allSelected) {
+        return current.filter((key) => !visibleKeys.includes(key));
+      }
+      const next = new Set(current);
+      visibleKeys.forEach((key) => next.add(key));
+      return Array.from(next);
+    });
+  }, [filteredRows]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedGroupKeys([]);
+    setBulkConfirmAction(null);
+    setBulkClearanceMap({});
   }, []);
 
   const handleFieldChange = useCallback((field, value) => {
@@ -1777,6 +1834,59 @@ function App() {
     [loadDashboard]
   );
 
+  const handleBulkStatusChange = useCallback(
+    async (shipmentStatus, clearanceDocNumbers = {}) => {
+      if (!selectedRows.length) {
+        return;
+      }
+      setFeedback(null);
+      try {
+        const data = await api.updateBulkShipmentGroupStatus({
+          shipment_status: shipmentStatus,
+          groups: selectedRows.map((row) => ({
+            group_key: row.group_key,
+            bl_number: row.bl_number,
+            container_numbers: row.container_numbers,
+          })),
+          clearance_doc_numbers: clearanceDocNumbers,
+        });
+        clearSelection();
+        setFeedback({
+          tone: "success",
+          text: `${data.group_count ?? selectedRows.length} shipment group${(data.group_count ?? selectedRows.length) === 1 ? "" : "s"} updated.`,
+        });
+        await loadDashboard({ silent: true });
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Bulk update failed" });
+      }
+    },
+    [clearSelection, loadDashboard, selectedRows]
+  );
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!selectedRows.length) {
+      return;
+    }
+    setFeedback(null);
+    try {
+      const data = await api.deleteBulkShipmentGroups({
+        groups: selectedRows.map((row) => ({
+          group_key: row.group_key,
+          bl_number: row.bl_number,
+          container_numbers: row.container_numbers,
+        })),
+      });
+      clearSelection();
+      setFeedback({
+        tone: "success",
+        text: `${data.group_count ?? selectedRows.length} shipment group${(data.group_count ?? selectedRows.length) === 1 ? "" : "s"} removed.`,
+      });
+      await loadDashboard({ silent: true });
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Bulk delete failed" });
+    }
+  }, [clearSelection, loadDashboard, selectedRows]);
+
   const handleDocumentSubmit = useCallback(async () => {
     if (!documentRow?.bl_number) {
       setFeedback({ tone: "error", text: "BL number is required for document upload." });
@@ -2356,10 +2466,9 @@ function App() {
 
           <div className="tool-row">
             <select value={shipmentStatusFilter} onChange={(event) => setShipmentStatusFilter(event.target.value)}>
-              <option value="all">All Shipment Statuses</option>
-              {STATUS_OPTIONS.map((status) => (
-                <option key={status} value={status}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
+              {SHIPMENT_STATUS_FILTERS.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
                 </option>
               ))}
             </select>
@@ -2373,6 +2482,40 @@ function App() {
           </div>
         </div>
 
+        {selectedRows.length ? (
+          <section className="bulk-toolbar">
+            <div className="bulk-toolbar-copy">
+              <strong>{selectedRows.length} selected</strong>
+              <span>Apply the next step to the chosen shipment groups.</span>
+            </div>
+            <div className="bulk-toolbar-actions">
+              <ActionButton
+                type="button"
+                tone="ghost"
+                onClick={() => {
+                  const nextMap = {};
+                  selectedRows.forEach((row) => {
+                    nextMap[row.group_key] = row.clearance_doc_number || "";
+                  });
+                  setBulkClearanceMap(nextMap);
+                  setBulkConfirmAction({ type: "completed" });
+                }}
+              >
+                Complete
+              </ActionButton>
+              <ActionButton type="button" tone="ghost" onClick={() => setBulkConfirmAction({ type: "archived" })}>
+                Archive
+              </ActionButton>
+              <ActionButton type="button" tone="danger" onClick={() => setBulkConfirmAction({ type: "delete" })}>
+                Delete
+              </ActionButton>
+              <ActionButton type="button" tone="secondary" onClick={clearSelection}>
+                Clear
+              </ActionButton>
+            </div>
+          </section>
+        ) : null}
+
         {stickyHeaderActive && (
           <div
             className="dashboard-floating-head"
@@ -2383,6 +2526,7 @@ function App() {
               className="dashboard-floating-head-grid"
               style={{ transform: `translateX(-${stickyHeaderStyle.scrollLeft}px)` }}
             >
+              <div className="th-center">Select</div>
               <div>Customer</div>
               <div>Containers</div>
               <div>BL</div>
@@ -2401,6 +2545,14 @@ function App() {
           <table className="shipment-table dense-table">
             <thead>
               <tr>
+                <th className="th-center selection-col">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAllVisible}
+                    aria-label="Select all visible shipments"
+                  />
+                </th>
                 <SortableHeader label="Customer" columnKey="customer_name" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Containers" columnKey="container_number" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="BL" columnKey="bl_number" sortConfig={sortConfig} onSort={handleSort} />
@@ -2417,24 +2569,34 @@ function App() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="11" className="empty-cell">
+                  <td colSpan="12" className="empty-cell">
                     Loading shipments...
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan="11" className="empty-cell">
+                  <td colSpan="12" className="empty-cell">
                     No shipments match the current filters.
                   </td>
                 </tr>
               ) : (
                 filteredRows.map((row) => {
+                  const rowKey = cleanText(row.group_key || row.id);
+                  const isSelected = selectedGroupKeys.includes(rowKey);
                   return (
                     <tr
                       key={row.group_key || row.id}
-                      className="interactive-row"
+                      className={`interactive-row ${isSelected ? "is-selected" : ""}`}
                       onClick={() => setAuditRow(row)}
                     >
+                      <td className="td-center selection-col" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleGroupSelection(row)}
+                          aria-label={`Select shipment ${row.bl_number || row.primary_container_number}`}
+                        />
+                      </td>
                       <td>
                         <div className="cell-title customer-name">{row.customer_name || "-"}</div>
                       </td>
@@ -2679,6 +2841,77 @@ function App() {
                 if (confirmAction.type !== "completed") {
                   setActionRow(null);
                 }
+              }}
+            >
+              Confirm
+            </ActionButton>
+          </div>
+        </Modal>
+      )}
+
+      {bulkConfirmAction && (
+        <Modal
+          title={
+            bulkConfirmAction.type === "completed"
+              ? "Complete selected shipments"
+              : bulkConfirmAction.type === "archived"
+                ? "Archive selected shipments"
+                : "Delete selected shipments"
+          }
+          onClose={() => setBulkConfirmAction(null)}
+        >
+          {bulkConfirmAction.type === "completed" ? (
+            <div className="stack-form">
+              <p className="panel-copy">Save the clearance document number for each shipment before marking it complete.</p>
+              {selectedRows.map((row) => (
+                <label key={row.group_key} className="mapping-field bulk-clearance-field">
+                  <span>{row.customer_name || row.bl_number || row.primary_container_number}</span>
+                  <input
+                    value={bulkClearanceMap[row.group_key] || ""}
+                    onChange={(event) =>
+                      setBulkClearanceMap((current) => ({
+                        ...current,
+                        [row.group_key]: event.target.value,
+                      }))
+                    }
+                    placeholder="Clearance document number"
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="confirm-copy">
+              <p>
+                Are you sure you want to{" "}
+                <strong>{bulkConfirmAction.type === "delete" ? "delete" : `mark as ${bulkConfirmAction.type}`}</strong>{" "}
+                {selectedRows.length} selected shipment group{selectedRows.length === 1 ? "" : "s"}?
+              </p>
+            </div>
+          )}
+          <div className="modal-actions">
+            <ActionButton type="button" tone="ghost" onClick={() => setBulkConfirmAction(null)}>
+              Cancel
+            </ActionButton>
+            <ActionButton
+              type="button"
+              tone={bulkConfirmAction.type === "delete" ? "danger" : "primary"}
+              onClick={async () => {
+                if (bulkConfirmAction.type === "delete") {
+                  await handleBulkDelete();
+                } else if (bulkConfirmAction.type === "completed") {
+                  const missingRows = selectedRows.filter((row) => !cleanText(bulkClearanceMap[row.group_key]));
+                  if (missingRows.length) {
+                    setFeedback({
+                      tone: "error",
+                      text: "Add a clearance document number for every selected shipment before completing.",
+                    });
+                    return;
+                  }
+                  await handleBulkStatusChange("completed", bulkClearanceMap);
+                } else {
+                  await handleBulkStatusChange("archived");
+                }
+                setBulkConfirmAction(null);
               }}
             >
               Confirm

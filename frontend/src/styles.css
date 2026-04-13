@@ -785,6 +785,40 @@ select:focus {
   margin: 12px 0 10px;
 }
 
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(19, 58, 99, 0.12);
+  border-radius: 14px;
+  background: rgba(248, 251, 254, 0.88);
+}
+
+.bulk-toolbar-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.bulk-toolbar-copy strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bulk-toolbar-copy span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.bulk-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .movement-identifiers {
   flex: 1 1 780px;
   display: grid;
@@ -905,7 +939,7 @@ select:focus {
 
 .shipment-table {
   width: 100%;
-  min-width: 1180px;
+  min-width: 1228px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -968,6 +1002,21 @@ select:focus {
 }
 
 .interactive-row {
+  cursor: pointer;
+}
+
+.interactive-row.is-selected {
+  background: rgba(19, 58, 99, 0.04);
+}
+
+.selection-col {
+  width: 44px;
+}
+
+.selection-col input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
   cursor: pointer;
 }
 
@@ -1880,6 +1929,11 @@ select:focus {
   line-height: 1.5;
 }
 
+.bulk-clearance-field {
+  display: grid;
+  gap: 6px;
+}
+
 .quiet-source-note {
   display: flex;
   align-items: center;
@@ -1996,6 +2050,11 @@ select:focus {
 
   .movement-identifiers {
     grid-template-columns: 1fr;
+  }
+
+  .bulk-toolbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .dashboard-header-metrics {

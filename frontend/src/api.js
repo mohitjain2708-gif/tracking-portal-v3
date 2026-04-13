@@ -261,6 +261,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  updateBulkShipmentGroupStatus: (payload) =>
+    request("/api/shipments/actions/bulk/status", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   deleteShipment: (id) =>
     request(`/api/shipments/${id}`, {
       method: "DELETE",
@@ -268,6 +274,12 @@ export const api = {
 
   deleteShipmentGroup: (payload) =>
     request("/api/shipments/group/delete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteBulkShipmentGroups: (payload) =>
+    request("/api/shipments/group/delete-bulk", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

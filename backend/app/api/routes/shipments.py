@@ -2314,6 +2314,142 @@ def _resolve_group_shipments(
     return matched_shipments
 
 
+def _apply_group_status_transition(
+    db: Session,
+    current_user: User,
+    *,
+    bl_number: Any = None,
+    container_numbers: list[Any] | None = None,
+    next_status: str,
+    clearance_doc_number: str = "",
+) -> tuple[list[Shipment], str]:
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=bl_number,
+        container_numbers=container_numbers or [],
+        include_archived=next_status == "active",
+    )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+
+    if next_status == "active":
+        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
+        restore_containers = sorted(
+            {
+                _clean_container(shipment.container_number)
+                for shipment in shipments
+                if _clean_container(shipment.container_number)
+            }
+        )
+        archived_candidates = list(
+            db.execute(
+                _user_shipment_select(current_user).where(
+                    Shipment.shipment_status == "archived",
+                    Shipment.container_number.in_(restore_containers),
+                )
+            ).scalars()
+        )
+        shipments_by_id: dict[int, Shipment] = {}
+        for candidate in archived_candidates:
+            candidate_bl = _normalize_bl_number(candidate.bl_number)
+            if target_bl:
+                if candidate_bl == target_bl or not candidate_bl:
+                    shipments_by_id[candidate.id] = candidate
+            elif not candidate_bl:
+                shipments_by_id[candidate.id] = candidate
+        shipments = list(shipments_by_id.values())
+        if not shipments:
+            raise HTTPException(status_code=404, detail="Archived shipment group not found")
+
+    if next_status == "archived":
+        existing_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments])
+        if not existing_doc_number:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the BL with a clearance document number before archiving.",
+            )
+        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
+        archive_containers = sorted(
+            {
+                _clean_container(shipment.container_number)
+                for shipment in shipments
+                if _clean_container(shipment.container_number)
+            }
+        )
+        related_active_shipments = list(
+            db.execute(
+                _user_shipment_select(current_user).where(
+                    Shipment.shipment_status != "archived",
+                    Shipment.container_number.in_(archive_containers),
+                )
+            ).scalars()
+        )
+        shipments_by_id = {shipment.id: shipment for shipment in shipments}
+        for related in related_active_shipments:
+            related_bl = _normalize_bl_number(related.bl_number)
+            if related_bl == target_bl or not related_bl:
+                shipments_by_id.setdefault(related.id, related)
+        shipments = list(shipments_by_id.values())
+
+    effective_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments]) or clearance_doc_number
+    if next_status == "completed" and not effective_doc_number:
+        raise HTTPException(status_code=400, detail="clearance_doc_number is required to complete a shipment")
+
+    for shipment in shipments:
+        shipment.shipment_status = next_status
+        if next_status == "completed":
+            shipment.clearance_doc_number = effective_doc_number
+
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_restored" if next_status == "active" else "shipment_group_status_updated",
+        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
+        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
+        shipment_status=next_status,
+        details={
+            "count": len(shipments),
+            "container_numbers": [shipment.container_number for shipment in shipments],
+            "clearance_doc_number": effective_doc_number,
+        },
+    )
+    return shipments, effective_doc_number
+
+
+def _delete_group_shipments_internal(
+    db: Session,
+    current_user: User,
+    *,
+    bl_number: Any = None,
+    container_numbers: list[Any] | None = None,
+) -> list[Shipment]:
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=bl_number,
+        container_numbers=container_numbers or [],
+        include_archived=True,
+    )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_group_deleted",
+        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
+        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
+        shipment_status="deleted",
+        details={
+            "count": len(shipments),
+            "container_numbers": [shipment.container_number for shipment in shipments],
+        },
+    )
+    for shipment in shipments:
+        db.delete(shipment)
+    return shipments
+
+
 def _first_non_empty(values: list[str]) -> str:
     for value in values:
         text_value = _clean_text(value)
@@ -3235,94 +3371,55 @@ def update_group_status(payload: dict, db: Session = Depends(get_db), current_us
     if next_status not in {"active", "completed", "archived"}:
         raise HTTPException(status_code=400, detail="Invalid shipment status")
     clearance_doc_number = _clean_text(payload.get("clearance_doc_number"))
-    if next_status == "completed" and not clearance_doc_number:
-        raise HTTPException(status_code=400, detail="clearance_doc_number is required to complete a shipment")
-    shipments = _resolve_group_shipments(
+    shipments, effective_doc_number = _apply_group_status_transition(
         db,
         current_user,
         bl_number=payload.get("bl_number"),
         container_numbers=payload.get("container_numbers") or [],
-        include_archived=next_status == "active",
-    )
-    if not shipments:
-        raise HTTPException(status_code=404, detail="Shipment group not found")
-    if next_status == "active":
-        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
-        restore_containers = sorted(
-            {
-                _clean_container(shipment.container_number)
-                for shipment in shipments
-                if _clean_container(shipment.container_number)
-            }
-        )
-        archived_candidates = list(
-            db.execute(
-                _user_shipment_select(current_user).where(
-                    Shipment.shipment_status == "archived",
-                    Shipment.container_number.in_(restore_containers),
-                )
-            ).scalars()
-        )
-        shipments_by_id: dict[int, Shipment] = {}
-        for candidate in archived_candidates:
-            candidate_bl = _normalize_bl_number(candidate.bl_number)
-            if target_bl:
-                if candidate_bl == target_bl or not candidate_bl:
-                    shipments_by_id[candidate.id] = candidate
-            elif not candidate_bl:
-                shipments_by_id[candidate.id] = candidate
-        shipments = list(shipments_by_id.values())
-        if not shipments:
-            raise HTTPException(status_code=404, detail="Archived shipment group not found")
-    if next_status == "archived":
-        existing_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments])
-        if not existing_doc_number:
-            raise HTTPException(
-                status_code=400,
-                detail="Complete the BL with a clearance document number before archiving.",
-            )
-        target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
-        archive_containers = sorted(
-            {
-                _clean_container(shipment.container_number)
-                for shipment in shipments
-                if _clean_container(shipment.container_number)
-            }
-        )
-        related_active_shipments = list(
-            db.execute(
-                _user_shipment_select(current_user).where(
-                    Shipment.shipment_status != "archived",
-                    Shipment.container_number.in_(archive_containers),
-                )
-            ).scalars()
-        )
-        shipments_by_id = {shipment.id: shipment for shipment in shipments}
-        for related in related_active_shipments:
-            related_bl = _normalize_bl_number(related.bl_number)
-            if related_bl == target_bl or not related_bl:
-                shipments_by_id.setdefault(related.id, related)
-        shipments = list(shipments_by_id.values())
-    for shipment in shipments:
-        shipment.shipment_status = next_status
-        if next_status == "completed":
-            shipment.clearance_doc_number = clearance_doc_number
-    effective_doc_number = _first_non_empty([shipment.clearance_doc_number for shipment in shipments]) or clearance_doc_number
-    _log_audit_event(
-        db,
-        current_user.id,
-        "shipment_group_restored" if next_status == "active" else "shipment_group_status_updated",
-        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
-        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
-        shipment_status=next_status,
-        details={
-            "count": len(shipments),
-            "container_numbers": [shipment.container_number for shipment in shipments],
-            "clearance_doc_number": effective_doc_number,
-        },
+        next_status=next_status,
+        clearance_doc_number=clearance_doc_number,
     )
     db.commit()
     return {"updated": True, "count": len(shipments), "shipment_status": next_status, "clearance_doc_number": effective_doc_number}
+
+
+@router.patch("/actions/bulk/status")
+def update_bulk_group_status(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    next_status = _clean_text(payload.get("shipment_status")).lower()
+    if next_status not in {"active", "completed", "archived"}:
+        raise HTTPException(status_code=400, detail="Invalid shipment status")
+    groups = payload.get("groups") or []
+    if not isinstance(groups, list) or not groups:
+        raise HTTPException(status_code=400, detail="At least one shipment group is required")
+    clearance_map = payload.get("clearance_doc_numbers") or {}
+    if not isinstance(clearance_map, dict):
+        clearance_map = {}
+
+    updated_group_count = 0
+    updated_row_ids: set[int] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_key = _clean_text(group.get("group_key"))
+        shipments, _effective_doc_number = _apply_group_status_transition(
+            db,
+            current_user,
+            bl_number=group.get("bl_number"),
+            container_numbers=group.get("container_numbers") or [],
+            next_status=next_status,
+            clearance_doc_number=_clean_text(clearance_map.get(group_key)),
+        )
+        updated_group_count += 1
+        updated_row_ids.update(shipment.id for shipment in shipments)
+
+    db.commit()
+    return {
+        "updated": True,
+        "shipment_status": next_status,
+        "group_count": updated_group_count,
+        "row_count": len(updated_row_ids),
+    }
 
 
 @router.delete("/{shipment_id}")
@@ -3339,37 +3436,44 @@ def delete_shipment(shipment_id: int, db: Session = Depends(get_db), current_use
 @router.delete("/group")
 def delete_shipment_group(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    shipments = _resolve_group_shipments(
+    shipments = _delete_group_shipments_internal(
         db,
         current_user,
         bl_number=payload.get("bl_number"),
         container_numbers=payload.get("container_numbers") or [],
-        include_archived=True,
     )
-    if not shipments:
-        raise HTTPException(status_code=404, detail="Shipment group not found")
-    deleted_count = len(shipments)
-    _log_audit_event(
-        db,
-        current_user.id,
-        "shipment_group_deleted",
-        bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
-        container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
-        shipment_status="deleted",
-        details={
-            "count": deleted_count,
-            "container_numbers": [shipment.container_number for shipment in shipments],
-        },
-    )
-    for shipment in shipments:
-        db.delete(shipment)
     db.commit()
-    return {"deleted": True, "count": deleted_count}
+    return {"deleted": True, "count": len(shipments)}
 
 
 @router.post("/group/delete")
 def delete_shipment_group_post(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     return delete_shipment_group(payload, db, current_user)
+
+
+@router.post("/group/delete-bulk")
+def delete_shipment_group_bulk(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    groups = payload.get("groups") or []
+    if not isinstance(groups, list) or not groups:
+        raise HTTPException(status_code=400, detail="At least one shipment group is required")
+
+    deleted_group_count = 0
+    deleted_row_count = 0
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        shipments = _delete_group_shipments_internal(
+            db,
+            current_user,
+            bl_number=group.get("bl_number"),
+            container_numbers=group.get("container_numbers") or [],
+        )
+        deleted_group_count += 1
+        deleted_row_count += len(shipments)
+
+    db.commit()
+    return {"deleted": True, "group_count": deleted_group_count, "count": deleted_row_count}
 
 @router.post("/import-preview")
 async def import_preview(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
