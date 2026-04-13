@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.models.user import User
 
-OWNER_EMAIL = "owner@trackingportal.local"
+OWNER_EMAIL = "owner@trackingportal.app"
 OWNER_PASSWORD = "PortalOwner@2026"
 
 

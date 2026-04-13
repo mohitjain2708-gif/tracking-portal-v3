@@ -759,7 +759,7 @@ function AuthScreen({
         <p className="eyebrow">Secure Access</p>
         <h1>Shipment Manager Portal</h1>
         <p className="auth-copy">
-          Sign in with your tester account to work in your own isolated shipment workspace.
+          Sign in to work in your own shipment workspace.
         </p>
         <form className="auth-form" onSubmit={onSubmit}>
           <label>
@@ -768,7 +768,7 @@ function AuthScreen({
               type="email"
               value={form.email}
               onChange={(event) => onFieldChange("email", event.target.value)}
-              placeholder="tester1@portal.local"
+              placeholder="owner@trackingportal.app"
               autoComplete="username"
               required
             />
