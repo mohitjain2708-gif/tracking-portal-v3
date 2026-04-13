@@ -3,10 +3,12 @@ from __future__ import annotations
 import unittest
 
 from app.api.routes.shipments import (
+    _containers_from_import_row,
     _derive_ldb_milestones,
     _effective_shipment_location,
     _movement_since_date,
     _normalize_bl_number,
+    _summarize_import_rows,
     _shipment_needs_action,
 )
 from app.models.shipment import Shipment
@@ -140,6 +142,38 @@ class ShipmentMilestoneTests(unittest.TestCase):
                 _movement_since_date("At Port", milestones["latest_time"], milestones["port_arrival_date"], milestones["birgunj_arrival_date"], ""),
                 "17-03-2026",
             )
+
+    def test_import_row_splits_multiple_containers_from_one_cell(self) -> None:
+        row_obj = {
+            "PARTY NAME": "Shubha Shiddhi Traders PVT. LTD.",
+            "BL NO": "FRE/CCU/0126/976",
+            "CONTAINER NO": "MSBU1891823\nMSBU1904849\nMSMU3793687\nMSNU1703477",
+        }
+
+        valid, invalid, raw_value = _containers_from_import_row(row_obj, "CONTAINER NO")
+
+        self.assertEqual(
+            valid,
+            ["MSBU1891823", "MSBU1904849", "MSMU3793687", "MSNU1703477"],
+        )
+        self.assertEqual(invalid, [])
+        self.assertIn("MSBU1891823", raw_value)
+
+    def test_import_summary_counts_multiline_container_cell_as_multiple_shipments(self) -> None:
+        normalized_rows = [
+            {
+                "__source_row_number": 2,
+                "PARTY NAME": "Shubha Shiddhi Traders PVT. LTD.",
+                "BL NO": "FRE/CCU/0126/976",
+                "CONTAINER NO": "MSBU1891823\nMSBU1904849\nMSMU3793687",
+            }
+        ]
+
+        review = _summarize_import_rows(normalized_rows, "PARTY NAME", "CONTAINER NO", "BL NO")
+
+        self.assertEqual(review["invalid_count"], 0)
+        self.assertEqual(review["valid_count"], 3)
+        self.assertEqual(review["skipped_blank_count"], 0)
 
 
 if __name__ == "__main__":

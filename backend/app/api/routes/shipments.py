@@ -230,6 +230,12 @@ def _parse_container_numbers(values: list[Any] | None = None, fallback: Any = ""
     return normalized, invalid
 
 
+def _containers_from_import_row(row_obj: dict[str, Any], container_col: str) -> tuple[list[str], list[str], str]:
+    raw_value = row_obj.get(container_col, "")
+    valid_containers, invalid_containers = _parse_container_numbers(fallback=raw_value)
+    return valid_containers, invalid_containers, _clean_text(raw_value)
+
+
 def _row_to_strings(row: list[Any]) -> list[str]:
     return [_clean_text(value) for value in row]
 
@@ -342,7 +348,7 @@ def _apply_import_row_overrides(
         if customer_col:
             next_row[customer_col] = _clean_text(override.get("customer_name", next_row.get(customer_col, "")))
         if container_col:
-            next_row[container_col] = _clean_container(override.get("container_number", next_row.get(container_col, "")))
+            next_row[container_col] = _clean_text(override.get("container_number", next_row.get(container_col, "")))
         if bl_col:
             next_row[bl_col] = _clean_text(override.get("bl_number", next_row.get(bl_col, "")))
         updated_rows.append(next_row)
@@ -362,27 +368,26 @@ def _summarize_import_rows(
     for row_obj in normalized_rows:
         source_row_number = int(row_obj.get("__source_row_number") or 0)
         customer_name = _clean_text(row_obj.get(customer_col))
-        container_number = _clean_container(row_obj.get(container_col))
         bl_number = _clean_text(row_obj.get(bl_col))
+        valid_containers, invalid_containers, raw_container_value = _containers_from_import_row(row_obj, container_col)
 
-        if not container_number:
+        if not valid_containers and not invalid_containers:
             skipped_blank_count += 1
             continue
 
-        error_text = _container_format_error(container_number)
-        if error_text:
+        if invalid_containers:
             invalid_rows.append(
                 {
                     "source_row_number": source_row_number,
                     "customer_name": customer_name,
-                    "container_number": container_number,
+                    "container_number": raw_container_value,
                     "bl_number": bl_number,
-                    "error": error_text,
+                    "error": f"{' '.join(invalid_containers)} must use 4 letters followed by 7 digits.",
                 }
             )
             continue
 
-        valid_count += 1
+        valid_count += len(valid_containers)
 
     return {
         "valid_count": valid_count,
@@ -416,33 +421,34 @@ def _detect_import_duplicates(
     for row_obj in normalized_rows:
         source_row_number = int(row_obj.get("__source_row_number") or 0)
         customer_name = _format_customer_name(_clean_text(row_obj.get(customer_col)))
-        container_number = _clean_container(row_obj.get(container_col))
         bl_number = _normalize_bl_number(row_obj.get(bl_col))
-        if not container_number or _container_format_error(container_number):
+        valid_containers, invalid_containers, raw_container_value = _containers_from_import_row(row_obj, container_col)
+        if invalid_containers or (not valid_containers and not raw_container_value):
             continue
-        shipment_key = (container_number, bl_number, customer_name)
-        if shipment_key in seen_in_import:
-            duplicate_rows.append(
-                {
-                    "source_row_number": source_row_number,
-                    "customer_name": customer_name,
-                    "container_number": container_number,
-                    "bl_number": bl_number,
-                    "error": "Duplicate shipment row repeated in this source",
-                }
-            )
-            continue
-        seen_in_import.add(shipment_key)
-        if shipment_key in existing_keys:
-            duplicate_rows.append(
-                {
-                    "source_row_number": source_row_number,
-                    "customer_name": customer_name,
-                    "container_number": container_number,
-                    "bl_number": bl_number,
-                    "error": "This shipment already exists in the portal",
-                }
-            )
+        for container_number in valid_containers:
+            shipment_key = (container_number, bl_number, customer_name)
+            if shipment_key in seen_in_import:
+                duplicate_rows.append(
+                    {
+                        "source_row_number": source_row_number,
+                        "customer_name": customer_name,
+                        "container_number": container_number,
+                        "bl_number": bl_number,
+                        "error": "Duplicate shipment row repeated in this source",
+                    }
+                )
+                continue
+            seen_in_import.add(shipment_key)
+            if shipment_key in existing_keys:
+                duplicate_rows.append(
+                    {
+                        "source_row_number": source_row_number,
+                        "customer_name": customer_name,
+                        "container_number": container_number,
+                        "bl_number": bl_number,
+                        "error": "This shipment already exists in the portal",
+                    }
+                )
     return {
         "duplicate_rows": duplicate_rows,
         "duplicate_count": len(duplicate_rows),
@@ -3673,46 +3679,52 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             "This import was added without source memory. Shipment intake still succeeded, but batch provenance could not be saved."
         )
     for row_obj in normalized_rows:
-        container_number = _clean_container(row_obj.get(container_col))
         source_row_number = int(row_obj.get("__source_row_number") or 0)
         raw_row = raw_rows_by_source_number.get(source_row_number)
-        if not container_number:
+        valid_containers, invalid_containers, raw_container_value = _containers_from_import_row(row_obj, container_col)
+        if not valid_containers and not invalid_containers:
             skipped_blank_count += 1
             if raw_row:
                 raw_row.row_status = "blank"
             continue
-        if _container_format_error(container_number):
-            skipped_invalid_count += 1
+        if invalid_containers:
+            skipped_invalid_count += len(invalid_containers)
             if raw_row:
                 raw_row.row_status = "invalid"
-                raw_row.row_error = _container_format_error(container_number)
+                raw_row.row_error = f"{' '.join(invalid_containers)} must use 4 letters followed by 7 digits."
             continue
         canonical_customer = _sync_customer_directory(db, row_obj.get(customer_col))
         bl_number = _normalize_bl_number(row_obj.get(bl_col))
-        shipment_key = (container_number, bl_number, canonical_customer)
-        if shipment_key in existing_keys:
-            duplicate_count += 1
-            if raw_row:
-                raw_row.row_status = "duplicate"
-            continue
-        shipment = Shipment(
-            user_id=user_id,
-            customer_name=canonical_customer,
-            container_number=container_number,
-            bl_number=bl_number,
-            shipment_status="active",
-            movement_category="Hi Seas",
-            source_type=source_type,
-            source_label=source_label,
-            source_batch_id=batch.id if batch else 0,
-            raw_source_row_id=raw_row.id if raw_row else 0,
-        )
-        db.add(shipment)
+        row_imported = 0
+        row_duplicates = 0
+        for container_number in valid_containers:
+            shipment_key = (container_number, bl_number, canonical_customer)
+            if shipment_key in existing_keys:
+                duplicate_count += 1
+                row_duplicates += 1
+                continue
+            shipment = Shipment(
+                user_id=user_id,
+                customer_name=canonical_customer,
+                container_number=container_number,
+                bl_number=bl_number,
+                shipment_status="active",
+                movement_category="Hi Seas",
+                source_type=source_type,
+                source_label=source_label,
+                source_batch_id=batch.id if batch else 0,
+                raw_source_row_id=raw_row.id if raw_row else 0,
+            )
+            db.add(shipment)
+            existing_keys.add(shipment_key)
+            imported_count += 1
+            row_imported += 1
         if raw_row:
-            raw_row.row_status = "imported"
-            raw_row.row_error = ""
-        existing_keys.add(shipment_key)
-        imported_count += 1
+            if row_imported:
+                raw_row.row_status = "imported"
+                raw_row.row_error = ""
+            elif row_duplicates and row_duplicates == len(valid_containers):
+                raw_row.row_status = "duplicate"
     if batch:
         batch.imported_count = imported_count
         batch.duplicate_count = duplicate_count
