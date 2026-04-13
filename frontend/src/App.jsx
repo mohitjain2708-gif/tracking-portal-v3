@@ -1982,7 +1982,7 @@ function App() {
   const handleDashboardExport = useCallback(async () => {
     setFeedback(null);
     try {
-      const blob = await api.downloadShipmentDashboardReport();
+      const { blob } = await api.downloadShipmentDashboardReport();
       const url = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
