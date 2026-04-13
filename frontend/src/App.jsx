@@ -1217,6 +1217,12 @@ function App() {
     return filteredRows.every((row) => selectedSet.has(cleanText(row.group_key || row.id)));
   }, [filteredRows, selectedGroupKeys]);
 
+  useEffect(() => {
+    if (bulkConfirmAction?.type === "completed" && selectedRows.length === 0) {
+      setBulkConfirmAction(null);
+    }
+  }, [bulkConfirmAction, selectedRows]);
+
   const handleSort = useCallback((key) => {
     setSortConfig((current) => ({
       key,
@@ -2861,23 +2867,67 @@ function App() {
           onClose={() => setBulkConfirmAction(null)}
         >
           {bulkConfirmAction.type === "completed" ? (
-            <div className="stack-form">
-              <p className="panel-copy">Save the clearance document number for each shipment before marking it complete.</p>
-              {selectedRows.map((row) => (
-                <label key={row.group_key} className="mapping-field bulk-clearance-field">
-                  <span>{row.customer_name || row.bl_number || row.primary_container_number}</span>
-                  <input
-                    value={bulkClearanceMap[row.group_key] || ""}
-                    onChange={(event) =>
-                      setBulkClearanceMap((current) => ({
-                        ...current,
-                        [row.group_key]: event.target.value,
-                      }))
-                    }
-                    placeholder="Clearance document number"
-                  />
-                </label>
-              ))}
+            <div className="stack-form bulk-complete-flow">
+              <p className="panel-copy">Confirm each shipment when its clearance document number is ready.</p>
+              <div className="bulk-complete-list">
+                {selectedRows.map((row) => (
+                  <div key={row.group_key} className="bulk-complete-row">
+                    <div className="bulk-complete-copy">
+                      <strong>{row.customer_name || row.primary_container_number || "Shipment"}</strong>
+                      <span>
+                        {row.bl_number
+                          ? `BL ${row.bl_number}`
+                          : row.primary_container_number
+                            ? `Container ${row.primary_container_number}`
+                            : "Shipment detail"}
+                      </span>
+                    </div>
+                    <div className="bulk-complete-actions">
+                      <input
+                        value={bulkClearanceMap[row.group_key] || ""}
+                        onChange={(event) =>
+                          setBulkClearanceMap((current) => ({
+                            ...current,
+                            [row.group_key]: event.target.value,
+                          }))
+                        }
+                        placeholder="Clearance document number"
+                      />
+                      <ActionButton
+                        type="button"
+                        tone="primary"
+                        onClick={async () => {
+                          const clearanceDocNumber = cleanText(bulkClearanceMap[row.group_key]);
+                          if (!clearanceDocNumber) {
+                            setFeedback({
+                              tone: "error",
+                              text: `Add a clearance document number before completing ${row.customer_name || row.bl_number || "this shipment"}.`,
+                            });
+                            return;
+                          }
+                          await handleGroupStatusChange(row, "completed", {
+                            clearance_doc_number: clearanceDocNumber,
+                          });
+                          setSelectedGroupKeys((current) =>
+                            current.filter((groupKey) => groupKey !== row.group_key),
+                          );
+                          setBulkClearanceMap((current) => {
+                            const next = { ...current };
+                            delete next[row.group_key];
+                            return next;
+                          });
+                          setFeedback({
+                            tone: "success",
+                            text: `${row.customer_name || row.bl_number || "Shipment"} marked complete.`,
+                          });
+                        }}
+                      >
+                        Confirm
+                      </ActionButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="confirm-copy">
@@ -2890,32 +2940,24 @@ function App() {
           )}
           <div className="modal-actions">
             <ActionButton type="button" tone="ghost" onClick={() => setBulkConfirmAction(null)}>
-              Cancel
+              {bulkConfirmAction.type === "completed" ? "Done" : "Cancel"}
             </ActionButton>
-            <ActionButton
-              type="button"
-              tone={bulkConfirmAction.type === "delete" ? "danger" : "primary"}
-              onClick={async () => {
-                if (bulkConfirmAction.type === "delete") {
-                  await handleBulkDelete();
-                } else if (bulkConfirmAction.type === "completed") {
-                  const missingRows = selectedRows.filter((row) => !cleanText(bulkClearanceMap[row.group_key]));
-                  if (missingRows.length) {
-                    setFeedback({
-                      tone: "error",
-                      text: "Add a clearance document number for every selected shipment before completing.",
-                    });
-                    return;
+            {bulkConfirmAction.type !== "completed" ? (
+              <ActionButton
+                type="button"
+                tone={bulkConfirmAction.type === "delete" ? "danger" : "primary"}
+                onClick={async () => {
+                  if (bulkConfirmAction.type === "delete") {
+                    await handleBulkDelete();
+                  } else {
+                    await handleBulkStatusChange("archived");
                   }
-                  await handleBulkStatusChange("completed", bulkClearanceMap);
-                } else {
-                  await handleBulkStatusChange("archived");
-                }
-                setBulkConfirmAction(null);
-              }}
-            >
-              Confirm
-            </ActionButton>
+                  setBulkConfirmAction(null);
+                }}
+              >
+                Confirm
+              </ActionButton>
+            ) : null}
           </div>
         </Modal>
       )}

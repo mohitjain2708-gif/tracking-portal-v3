@@ -1934,6 +1934,53 @@ select:focus {
   gap: 6px;
 }
 
+.bulk-complete-flow {
+  gap: 14px;
+}
+
+.bulk-complete-list {
+  display: grid;
+  gap: 12px;
+}
+
+.bulk-complete-row {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.bulk-complete-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.bulk-complete-copy strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bulk-complete-copy span {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bulk-complete-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.bulk-complete-actions input {
+  width: 100%;
+}
+
 .quiet-source-note {
   display: flex;
   align-items: center;
@@ -2055,6 +2102,10 @@ select:focus {
   .bulk-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .bulk-complete-actions {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-header-metrics {
