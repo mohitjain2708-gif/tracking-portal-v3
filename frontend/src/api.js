@@ -203,10 +203,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getAdminOverview: () => request("/api/auth/admin/overview"),
+  getAdminUserShipments: (userId) => request(`/api/auth/admin/users/${encodeURIComponent(userId)}/shipments`),
   adminResetUserPassword: (payload) =>
     request("/api/auth/admin/reset-password", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  adminDeleteUser: (userId) =>
+    request(`/api/auth/admin/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
     }),
   logout: () => setToken(""),
   hasSession: () => Boolean(getToken()),

@@ -833,6 +833,10 @@ function App() {
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminResetState, setAdminResetState] = useState({ userId: 0, password: "" });
   const [adminResetSubmitting, setAdminResetSubmitting] = useState(false);
+  const [ownerUserShipments, setOwnerUserShipments] = useState(null);
+  const [ownerUserShipmentsLoading, setOwnerUserShipmentsLoading] = useState(false);
+  const [ownerDeleteUser, setOwnerDeleteUser] = useState(null);
+  const [ownerDeletingUser, setOwnerDeletingUser] = useState(false);
   const [shipments, setShipments] = useState([]);
   const [dashboardRows, setDashboardRows] = useState([]);
   const [dashboardIdentifiers, setDashboardIdentifiers] = useState({
@@ -2308,6 +2312,43 @@ function App() {
     [adminResetState.password, refreshAdminOverview]
   );
 
+  const handleViewOwnerUserShipments = useCallback(async (user) => {
+    setOwnerUserShipmentsLoading(true);
+    setFeedback(null);
+    try {
+      const data = await api.getAdminUserShipments(user.id);
+      setOwnerUserShipments(data);
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Could not open that user view." });
+    } finally {
+      setOwnerUserShipmentsLoading(false);
+    }
+  }, []);
+
+  const handleDeleteOwnerUser = useCallback(async () => {
+    if (!ownerDeleteUser?.id) {
+      return;
+    }
+    setOwnerDeletingUser(true);
+    setFeedback(null);
+    try {
+      const result = await api.adminDeleteUser(ownerDeleteUser.id);
+      setOwnerDeleteUser(null);
+      setOwnerUserShipments((current) =>
+        current?.user?.id === ownerDeleteUser.id ? null : current
+      );
+      await refreshAdminOverview();
+      setFeedback({
+        tone: "success",
+        text: `${result.email || "The user"} was removed from the portal.`,
+      });
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Could not remove that user." });
+    } finally {
+      setOwnerDeletingUser(false);
+    }
+  }, [ownerDeleteUser, refreshAdminOverview]);
+
   const handleOpenDocument = useCallback(async (blNumber, documentType) => {
     try {
       const { blob } = await api.fetchBLDocument(blNumber, documentType);
@@ -2466,22 +2507,45 @@ function App() {
                       </div>
                       {!user.is_admin ? (
                         <div className="owner-user-actions">
-                          <input
-                            type="password"
-                            placeholder="Temporary password"
-                            value={adminResetState.userId === user.id ? adminResetState.password : ""}
-                            onChange={(event) =>
-                              setAdminResetState({ userId: user.id, password: event.target.value })
-                            }
-                          />
-                          <ActionButton
-                            type="button"
-                            tone="ghost"
-                            disabled={adminResetSubmitting}
-                            onClick={() => handleAdminResetPassword(user.id)}
-                          >
-                            Reset password
-                          </ActionButton>
+                          <div className="owner-user-quick-actions">
+                            <ActionButton
+                              type="button"
+                              tone="secondary"
+                              compact
+                              disabled={ownerUserShipmentsLoading}
+                              onClick={() => handleViewOwnerUserShipments(user)}
+                            >
+                              {ownerUserShipmentsLoading && ownerUserShipments?.user?.id === user.id
+                                ? "Opening..."
+                                : "View shipments"}
+                            </ActionButton>
+                            <ActionButton
+                              type="button"
+                              tone="danger"
+                              compact
+                              onClick={() => setOwnerDeleteUser(user)}
+                            >
+                              Remove user
+                            </ActionButton>
+                          </div>
+                          <div className="owner-password-reset">
+                            <input
+                              type="password"
+                              placeholder="Temporary password"
+                              value={adminResetState.userId === user.id ? adminResetState.password : ""}
+                              onChange={(event) =>
+                                setAdminResetState({ userId: user.id, password: event.target.value })
+                              }
+                            />
+                            <ActionButton
+                              type="button"
+                              tone="ghost"
+                              disabled={adminResetSubmitting}
+                              onClick={() => handleAdminResetPassword(user.id)}
+                            >
+                              Reset password
+                            </ActionButton>
+                          </div>
                         </div>
                       ) : (
                         <span className="meta-pill">Owner</span>
@@ -4374,6 +4438,94 @@ function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {ownerUserShipments && (
+        <Modal
+          title={ownerUserShipments.user?.email || "User shipments"}
+          onClose={() => setOwnerUserShipments(null)}
+          size="wide"
+        >
+          <div className="history-panel">
+            <div className="owner-user-shipments-summary">
+              <div className="meta-pill-row">
+                <span className="meta-pill">{ownerUserShipments.metrics?.shipment_groups || 0} shipment groups</span>
+                <span className="meta-pill">{ownerUserShipments.metrics?.shipment_rows || 0} shipment rows</span>
+                <span className="meta-pill">{ownerUserShipments.metrics?.live_shipments || 0} live</span>
+                <span className="meta-pill">{ownerUserShipments.metrics?.completed_shipments || 0} completed</span>
+                <span className="meta-pill">{ownerUserShipments.metrics?.archived_shipments || 0} archived</span>
+              </div>
+            </div>
+
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>BL</th>
+                    <th>Containers</th>
+                    <th>Movement</th>
+                    <th>Status</th>
+                    <th>Location</th>
+                    <th>Since</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(ownerUserShipments.shipments || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="empty-cell">No shipments in this workspace yet.</td>
+                    </tr>
+                  ) : (
+                    (ownerUserShipments.shipments || []).map((row) => (
+                      <tr key={row.group_key}>
+                        <td>{row.customer_name || "-"}</td>
+                        <td>{row.bl_number || "-"}</td>
+                        <td>{(row.container_numbers || []).join(", ") || "-"}</td>
+                        <td>
+                          <span className={badgeClass("movement", row.movement_category || "Unknown")}>
+                            {row.movement_category || "-"}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={badgeClass("status", row.shipment_status || "Unknown")}>
+                            {formatShipmentStatusLabel(row.shipment_status)}
+                          </span>
+                        </td>
+                        <td>{row.latest_location || "-"}</td>
+                        <td>{row.movement_since_date || row.latest_time || "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {ownerDeleteUser && (
+        <Modal
+          title="Remove user"
+          onClose={() => setOwnerDeleteUser(null)}
+          actions={
+            <ActionButton
+              type="button"
+              tone="danger"
+              disabled={ownerDeletingUser}
+              onClick={handleDeleteOwnerUser}
+            >
+              {ownerDeletingUser ? "Removing..." : "Remove user"}
+            </ActionButton>
+          }
+        >
+          <div className="confirm-copy">
+            <p>
+              This will remove <strong>{ownerDeleteUser.email}</strong> and clear that user&apos;s shipment workspace,
+              imports, history, and saved source data.
+            </p>
+            <p>This action is permanent and should be used only when you truly want to close that workspace.</p>
           </div>
         </Modal>
       )}

@@ -385,9 +385,24 @@ select:focus {
 
 .owner-user-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.owner-user-quick-actions,
+.owner-password-reset {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
   gap: 10px;
   align-items: center;
+}
+
+.owner-password-reset {
+  grid-template-columns: minmax(0, 1fr) max-content;
+}
+
+.owner-user-shipments-summary {
+  display: grid;
+  gap: 10px;
 }
 
 .toggle-card {
@@ -2350,6 +2365,11 @@ select:focus {
   }
 
   .owner-user-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .owner-user-quick-actions,
+  .owner-password-reset {
     grid-template-columns: 1fr;
   }
 

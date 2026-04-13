@@ -1,17 +1,28 @@
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.bootstrap import ensure_owner_account, ensure_user_schema
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password, verify_password
+from app.api.routes.shipments import _shipment_to_dict
 from app.deps import get_current_admin, get_current_user
 from app.models.audit_log import AuditLog
+from app.models.job import Job
 from app.models.shipment import Shipment
-from app.models.shipment_source import ShipmentBatch
+from app.models.shipment_source import (
+    RawSourceRow,
+    ShipmentBatch,
+    ShipmentSource,
+    SourceConnection,
+    SourceMappingProfile,
+)
+from app.models.template import Template
+from app.models.upload_session import UploadSession
 from app.models.user import User
 from app.schemas.auth import (
     AdminResetPasswordRequest,
@@ -23,6 +34,102 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
+
+
+def _group_owner_shipments(shipments: list[Shipment]) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    for shipment in shipments:
+        row = _shipment_to_dict(shipment)
+        normalized_bl = "".join(str(row.get("bl_number", "") or "").upper().split())
+        group_key = f"BL:{normalized_bl}" if normalized_bl else f"SHIP:{row['id']}"
+        grouped.setdefault(group_key, []).append(row)
+
+    rows: list[dict] = []
+    for group_key, entries in grouped.items():
+        lead = max(
+            entries,
+            key=lambda item: (
+                item.get("shipment_status") == "active",
+                item.get("shipment_status") == "completed",
+                item.get("latest_time", ""),
+                item.get("id", 0),
+            ),
+        )
+        container_numbers = sorted(
+            {
+                str(item.get("container_number", "") or "").strip()
+                for item in entries
+                if str(item.get("container_number", "") or "").strip()
+            }
+        )
+        rows.append(
+            {
+                "group_key": group_key,
+                "id": lead.get("id"),
+                "customer_name": lead.get("customer_name", ""),
+                "bl_number": lead.get("bl_number", ""),
+                "shipment_status": lead.get("shipment_status", "active"),
+                "movement_category": lead.get("movement_category", ""),
+                "latest_location": lead.get("latest_location", ""),
+                "latest_time": lead.get("latest_time", ""),
+                "movement_since_date": min(
+                    [item.get("movement_since_date", "") for item in entries if item.get("movement_since_date", "")] or [""]
+                ),
+                "container_numbers": container_numbers,
+                "container_count": len(container_numbers),
+                "action_required": any(bool(item.get("action_required")) for item in entries),
+                "do_date": next((item.get("do_date", "") for item in entries if item.get("do_date", "")), ""),
+                "document_status": next(
+                    (item.get("document_status", "") for item in entries if item.get("document_status", "")),
+                    "",
+                ),
+                "clearance_doc_number": next(
+                    (item.get("clearance_doc_number", "") for item in entries if item.get("clearance_doc_number", "")),
+                    "",
+                ),
+            }
+        )
+
+    return sorted(
+        rows,
+        key=lambda item: (
+            item.get("shipment_status") != "active",
+            item.get("shipment_status") != "completed",
+            item.get("latest_time", ""),
+            item.get("customer_name", ""),
+        ),
+    )
+
+
+def _remove_user_data(db: Session, user: User) -> dict[str, int]:
+    upload_sessions = list(db.execute(select(UploadSession).where(UploadSession.user_id == user.id)).scalars())
+    deleted_counts = {
+        "shipments": int(db.execute(delete(Shipment).where(Shipment.user_id == user.id)).rowcount or 0),
+        "audit_events": int(db.execute(delete(AuditLog).where(AuditLog.user_id == user.id)).rowcount or 0),
+        "jobs": int(db.execute(delete(Job).where(Job.user_id == user.id)).rowcount or 0),
+        "raw_source_rows": int(db.execute(delete(RawSourceRow).where(RawSourceRow.user_id == user.id)).rowcount or 0),
+        "shipment_batches": int(db.execute(delete(ShipmentBatch).where(ShipmentBatch.user_id == user.id)).rowcount or 0),
+        "source_connections": int(db.execute(delete(SourceConnection).where(SourceConnection.user_id == user.id)).rowcount or 0),
+        "mapping_profiles": int(db.execute(delete(SourceMappingProfile).where(SourceMappingProfile.user_id == user.id)).rowcount or 0),
+        "shipment_sources": int(db.execute(delete(ShipmentSource).where(ShipmentSource.user_id == user.id)).rowcount or 0),
+        "templates": int(db.execute(delete(Template).where(Template.user_id == user.id)).rowcount or 0),
+        "upload_sessions": int(db.execute(delete(UploadSession).where(UploadSession.user_id == user.id)).rowcount or 0),
+    }
+    db.delete(user)
+    db.commit()
+
+    for session in upload_sessions:
+        stored_path = str(getattr(session, "stored_path", "") or "").strip()
+        if not stored_path:
+            continue
+        try:
+            path = Path(stored_path)
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    return deleted_counts
 
 @router.post("/register", response_model=TokenResponse)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
@@ -170,4 +277,55 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
             }
             for entry in recent_audit_entries
         ],
+    }
+
+
+@router.get("/admin/users/{user_id}/shipments")
+def admin_user_shipments(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    shipments = list(
+        db.execute(
+            select(Shipment)
+            .where(Shipment.user_id == user.id)
+            .order_by(Shipment.created_at.desc(), Shipment.id.desc())
+        ).scalars()
+    )
+    grouped_rows = _group_owner_shipments(shipments)
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "is_admin": bool(user.is_admin),
+            "created_at": user.created_at.isoformat() if user.created_at else "",
+        },
+        "metrics": {
+            "shipment_groups": len(grouped_rows),
+            "shipment_rows": len(shipments),
+            "live_shipments": sum(1 for row in grouped_rows if row.get("shipment_status") == "active"),
+            "completed_shipments": sum(1 for row in grouped_rows if row.get("shipment_status") == "completed"),
+            "archived_shipments": sum(1 for row in grouped_rows if row.get("shipment_status") == "archived"),
+        },
+        "shipments": grouped_rows,
+    }
+
+
+@router.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="Use your own account settings instead of removing the owner account")
+
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Admin accounts cannot be removed from this view")
+
+    deleted_counts = _remove_user_data(db, user)
+    return {
+        "deleted": True,
+        "email": user.email,
+        "removed": deleted_counts,
     }
