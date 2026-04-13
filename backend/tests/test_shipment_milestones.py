@@ -29,6 +29,57 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 
 class ShipmentMilestoneTests(unittest.TestCase):
+    def test_reopen_completed_shipment_cycle_returns_to_active(self) -> None:
+        engine = create_engine("sqlite:///:memory:", future=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(engine)
+
+        db = SessionLocal()
+        user = User(email="completed@example.com", password_hash="x")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        completed_shipments = [
+            Shipment(
+                user_id=user.id,
+                customer_name="Cycle Customer",
+                container_number="MSBU1891823",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="completed",
+                clearance_doc_number="M-1234",
+            ),
+            Shipment(
+                user_id=user.id,
+                customer_name="Cycle Customer",
+                container_number="MSBU1904849",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="completed",
+                clearance_doc_number="M-1234",
+            ),
+        ]
+        db.add_all(completed_shipments)
+        db.commit()
+
+        reopened, effective_doc = _apply_group_status_transition(
+            db,
+            user,
+            bl_number="FRE/CCU/0126/976",
+            container_numbers=["MSBU1891823"],
+            next_status="active",
+        )
+        db.commit()
+
+        self.assertEqual(effective_doc, "M-1234")
+        self.assertEqual(
+            sorted(shipment.container_number for shipment in reopened),
+            ["MSBU1891823", "MSBU1904849"],
+        )
+        self.assertTrue(all(shipment.shipment_status == "active" for shipment in reopened))
+
+        db.close()
+        engine.dispose()
+
     def test_restore_to_live_recovers_full_archived_bl_cycle(self) -> None:
         engine = create_engine("sqlite:///:memory:", future=True)
         SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

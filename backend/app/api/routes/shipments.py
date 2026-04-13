@@ -2363,6 +2363,12 @@ def _apply_group_status_transition(
         raise HTTPException(status_code=404, detail="Shipment group not found")
 
     if next_status == "active":
+        if any((shipment.shipment_status or "").lower() == "completed" for shipment in shipments):
+            for shipment in shipments:
+                if (shipment.shipment_status or "").lower() == "completed":
+                    shipment.shipment_status = "active"
+            return shipments, _first_non_empty([shipment.clearance_doc_number for shipment in shipments]) or clearance_doc_number
+
         target_bl = _normalize_bl_number(_first_non_empty([shipment.bl_number for shipment in shipments]))
         restore_containers = sorted(
             {

@@ -1983,8 +1983,12 @@ function App() {
             tone: "success",
             text:
               shipmentStatus === "active"
-                ? `${data.count ?? 0} archived shipment record(s) restored to the live dashboard.`
-                : `${data.count ?? 0} shipment record(s) marked ${shipmentStatus}.`,
+                ? cleanText(row?.shipment_status).toLowerCase() === "archived"
+                  ? `${data.count ?? 0} shipment record(s) returned to the live dashboard.`
+                  : `${data.count ?? 0} shipment record(s) reopened.`
+                : shipmentStatus === "completed"
+                  ? `${data.count ?? 0} shipment record(s) marked complete.`
+                  : `${data.count ?? 0} shipment record(s) moved to archive.`,
           });
         await loadDashboard({ silent: true });
       } catch (error) {
@@ -2976,9 +2980,10 @@ function App() {
         <Modal title={`Manage Shipment${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`} onClose={() => setActionRow(null)}>
           {(() => {
             const actionStatus = cleanText(actionRow.shipment_status).toLowerCase();
-            const canActivate = actionStatus !== "active";
+            const canActivate = ["completed", "archived"].includes(actionStatus);
             const canComplete = !["completed", "archived"].includes(actionStatus);
             const canArchive = actionStatus !== "archived";
+            const reopenLabel = actionStatus === "archived" ? "Bring back to live" : "Reopen shipment";
             return (
           <div className="action-modal-shell">
             <section className="action-modal-hero action-modal-hero-balanced">
@@ -3064,18 +3069,18 @@ function App() {
 
               <section className="action-modal-section">
                 <div className="action-modal-section-head">
-                  <span>Shipment State</span>
-                  <p>Change the shipment only when the real operational stage has moved forward.</p>
+                  <span>Shipment stage</span>
+                  <p>Move the shipment forward when work is complete, or reopen it if it needs to go live again.</p>
                 </div>
                 <div className="action-modal-buttons action-modal-buttons-stacked">
                   {canActivate ? (
                     <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
-                      Restore to Live
+                      {reopenLabel}
                     </ActionButton>
                   ) : null}
                   {canComplete ? (
                     <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
-                      Mark Complete
+                      Mark as complete
                     </ActionButton>
                   ) : null}
                   {canArchive ? (
@@ -3086,13 +3091,13 @@ function App() {
                         if (!cleanText(actionRow?.clearance_doc_number)) {
                           setFeedback({
                             tone: "warning",
-                            text: "Archive is allowed only after this BL is completed and a clearance document number has been saved.",
+                            text: "Move to archive only after this BL is complete and the clearance number has been saved.",
                           });
                         }
                         setConfirmAction({ type: "archived", row: actionRow });
                       }}
                     >
-                      Move to Archive
+                      Move to archive
                     </ActionButton>
                   ) : null}
                 </div>
