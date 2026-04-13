@@ -14,6 +14,7 @@ class ShipmentGroupUpdateRequest(BaseModel):
     customer_name: str = ""
     bl_number: str = ""
     container_numbers: list[str] = []
+    clearance_doc_number: str = ""
     do_date: str = ""
     document_status: str = ""
     original_docs_received_date: str = ""

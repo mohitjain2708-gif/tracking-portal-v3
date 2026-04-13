@@ -3379,6 +3379,7 @@ def update_group_details(
 
     canonical_customer = _sync_customer_directory(db, payload.customer_name)
     normalized_bl = _normalize_bl_number(payload.bl_number)
+    normalized_clearance_doc_number = _clean_text(payload.clearance_doc_number)
     normalized_do_date = _normalize_manual_date(payload.do_date)
     normalized_document_status = _normalize_document_status(payload.document_status)
     normalized_original_docs_received_date = _normalize_manual_date(payload.original_docs_received_date)
@@ -3436,6 +3437,7 @@ def update_group_details(
         else:
             shipment.customer_name = canonical_customer
             shipment.bl_number = normalized_bl
+        shipment.clearance_doc_number = normalized_clearance_doc_number
         shipment.do_date = normalized_do_date
         shipment.document_status = normalized_document_status
         shipment.original_docs_received_date = normalized_original_docs_received_date
@@ -3456,6 +3458,7 @@ def update_group_details(
             "container_numbers": container_numbers,
             "previous_bl_number": previous_bl,
             "next_bl_number": normalized_bl,
+            "clearance_doc_number": normalized_clearance_doc_number,
             "do_date": normalized_do_date,
             "document_status": normalized_document_status,
             "original_docs_received_date": normalized_original_docs_received_date,

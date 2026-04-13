@@ -5,6 +5,7 @@ const INITIAL_FORM = {
   customer_name: "",
   container_input: "",
   bl_number: "",
+  clearance_doc_number: "",
   do_date: "",
   document_status: "",
   original_docs_received_date: "",
@@ -1339,14 +1340,15 @@ function App() {
 
   const openEditShipment = useCallback((row) => {
     setEditRow(row);
-    setEditForm({
-      customer_name: row.customer_name || "",
-      container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
-      bl_number: row.bl_number || "",
-      do_date: toInputDateValue(row.do_date),
-      document_status: row.document_status || "",
-      original_docs_received_date: toInputDateValue(row.original_docs_received_date),
-    });
+      setEditForm({
+        customer_name: row.customer_name || "",
+        container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
+        bl_number: row.bl_number || "",
+        clearance_doc_number: row.clearance_doc_number || "",
+        do_date: toInputDateValue(row.do_date),
+        document_status: row.document_status || "",
+        original_docs_received_date: toInputDateValue(row.original_docs_received_date),
+      });
   }, []);
 
   const handleEditFieldChange = useCallback((field, value) => {
@@ -1359,6 +1361,7 @@ function App() {
   const getOperationalDraft = useCallback(
     (row) =>
       operationalDrafts[row.group_key] || {
+        clearance_doc_number: row.clearance_doc_number || "",
         do_date: toInputDateValue(row.do_date),
         document_status: row.document_status || "",
         original_docs_received_date: toInputDateValue(row.original_docs_received_date),
@@ -1369,6 +1372,7 @@ function App() {
   const setOperationalDraftValue = useCallback((row, updates) => {
     setOperationalDrafts((current) => {
       const existing = current[row.group_key] || {
+        clearance_doc_number: row.clearance_doc_number || "",
         do_date: toInputDateValue(row.do_date),
         document_status: row.document_status || "",
         original_docs_received_date: toInputDateValue(row.original_docs_received_date),
@@ -1406,16 +1410,17 @@ function App() {
       setEditSubmitting(true);
       setFeedback(null);
       try {
-        await api.updateShipmentGroupDetails({
-          current_bl_number: editRow.bl_number,
-          current_container_numbers: editRow.container_numbers || [editRow.primary_container_number].filter(Boolean),
-          customer_name: editForm.customer_name.trim(),
-          bl_number: editForm.bl_number.trim().toUpperCase(),
-          container_numbers: containerNumbers,
-          do_date: fromInputDateValue(editForm.do_date),
-          document_status: editForm.document_status,
-          original_docs_received_date: fromInputDateValue(editForm.original_docs_received_date),
-        });
+          await api.updateShipmentGroupDetails({
+            current_bl_number: editRow.bl_number,
+            current_container_numbers: editRow.container_numbers || [editRow.primary_container_number].filter(Boolean),
+            customer_name: editForm.customer_name.trim(),
+            bl_number: editForm.bl_number.trim().toUpperCase(),
+            container_numbers: containerNumbers,
+            clearance_doc_number: editForm.clearance_doc_number.trim().toUpperCase(),
+            do_date: fromInputDateValue(editForm.do_date),
+            document_status: editForm.document_status,
+            original_docs_received_date: fromInputDateValue(editForm.original_docs_received_date),
+          });
         setEditRow(null);
         setAuditRow(null);
         setEditForm(INITIAL_FORM);
@@ -1437,13 +1442,14 @@ function App() {
         setFeedback(null);
         try {
           await api.updateShipmentGroupDetails({
-          current_bl_number: row.bl_number,
-          current_container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
-          customer_name: row.customer_name || "",
-          bl_number: row.bl_number || "",
-          container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
-          do_date: updates.do_date ?? row.do_date ?? "",
-          document_status: updates.document_status ?? row.document_status ?? "",
+            current_bl_number: row.bl_number,
+            current_container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
+            customer_name: row.customer_name || "",
+            bl_number: row.bl_number || "",
+            container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
+            clearance_doc_number: updates.clearance_doc_number ?? row.clearance_doc_number ?? "",
+            do_date: updates.do_date ?? row.do_date ?? "",
+            document_status: updates.document_status ?? row.document_status ?? "",
             original_docs_received_date:
               updates.original_docs_received_date ?? row.original_docs_received_date ?? "",
           });
@@ -3514,10 +3520,37 @@ function App() {
                     <strong>{auditRow.bl_number || "Not linked"}</strong>
                   </div>
                   {["completed", "archived"].includes(cleanText(auditRow.shipment_status).toLowerCase()) ? (
-                    <div>
+                    <label className="audit-field">
                       <span>Clearance Doc</span>
-                      <strong>{auditRow.clearance_doc_number || "Not saved"}</strong>
-                    </div>
+                      <div className="inline-field-stack">
+                        <input
+                          className="inline-field-control"
+                          value={getOperationalDraft(auditRow).clearance_doc_number || auditRow.clearance_doc_number || ""}
+                          onChange={(event) =>
+                            setOperationalDraftValue(auditRow, {
+                              clearance_doc_number: event.target.value.toUpperCase(),
+                            })
+                          }
+                          placeholder="Enter clearance number"
+                        />
+                        <ActionButton
+                          type="button"
+                          tone="ghost"
+                          compact
+                          disabled={Boolean(fieldSavingKeys[`${auditRow.group_key}:clearance_doc_number`])}
+                          onClick={async () => {
+                            const draft = getOperationalDraft(auditRow);
+                            await handleOperationalFieldSave(auditRow, {
+                              clearance_doc_number: cleanText(
+                                draft.clearance_doc_number ?? auditRow.clearance_doc_number
+                              ).toUpperCase(),
+                            });
+                          }}
+                        >
+                          {fieldSavingKeys[`${auditRow.group_key}:clearance_doc_number`] ? "Saving..." : "Save"}
+                        </ActionButton>
+                      </div>
+                    </label>
                   ) : null}
                 </div>
                 <div className="audit-kv-block">
@@ -4089,6 +4122,16 @@ function App() {
                 value={editForm.bl_number}
                 onChange={(event) => handleEditFieldChange("bl_number", event.target.value)}
                 placeholder="265636541"
+              />
+
+              <label className="field-label" htmlFor="edit_clearance_doc_number">
+                Clearance Doc Number
+              </label>
+              <input
+                id="edit_clearance_doc_number"
+                value={editForm.clearance_doc_number}
+                onChange={(event) => handleEditFieldChange("clearance_doc_number", event.target.value.toUpperCase())}
+                placeholder="M-7401"
               />
 
               <div className="audit-form-grid">
