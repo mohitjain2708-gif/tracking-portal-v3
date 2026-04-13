@@ -2230,7 +2230,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             total=total,
             completed=0,
             progress=0,
-            message=f"Starting refresh for {total} shipment(s).",
+            message=f"Starting refresh for {total} live shipment(s). Completed and archived shipments are left unchanged.",
         )
         if total == 0:
             _set_refresh_job(
@@ -2238,7 +2238,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
                 state="completed",
                 completed=0,
                 progress=100,
-                message="No active shipments to refresh.",
+                message="No live shipments need a refresh right now.",
                 refreshed_count=0,
             )
             return
@@ -2287,7 +2287,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             state="completed",
             completed=total,
             progress=100,
-            message=f"Tracking refreshed for {total} active shipments.",
+            message=f"Tracking refreshed for {total} live shipment(s). Completed and archived shipments were left unchanged.",
             refreshed_count=total,
         )
     except Exception as exc:

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
 import unittest
+from tempfile import NamedTemporaryFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import app.api.routes.shipments as shipments_module
 from app.api.routes.shipments import (
+    _get_refresh_job,
+    _run_refresh_all_job,
     _apply_group_status_transition,
     _containers_from_import_row,
     _derive_ldb_milestones,
@@ -290,6 +295,114 @@ class ShipmentMilestoneTests(unittest.TestCase):
         self.assertEqual(review["invalid_count"], 0)
         self.assertEqual(review["valid_count"], 3)
         self.assertEqual(review["skipped_blank_count"], 0)
+
+    def test_refresh_all_only_targets_live_shipments(self) -> None:
+        engine = create_engine("sqlite:///:memory:", future=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(engine)
+
+        db = SessionLocal()
+        user = User(email="refresh@example.com", password_hash="x")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        db.add_all(
+            [
+                Shipment(user_id=user.id, customer_name="Live One", container_number="MSBU1891823", bl_number="BL-1", shipment_status="active"),
+                Shipment(user_id=user.id, customer_name="Done One", container_number="MSBU1904849", bl_number="BL-2", shipment_status="completed"),
+                Shipment(user_id=user.id, customer_name="Archive One", container_number="MSMU3793687", bl_number="BL-3", shipment_status="archived"),
+            ]
+        )
+        db.commit()
+
+        built_for: list[str] = []
+        original_builder = shipments_module._build_tracking_payload
+        original_apply = shipments_module._apply_tracking_payload
+        original_log = shipments_module._log_audit_event
+        original_scope_ready = shipments_module._ensure_user_scope_ready
+        try:
+            shipments_module._ensure_user_scope_ready = lambda db, current_user: None
+            shipments_module._build_tracking_payload = lambda container_number, use_cache=False: built_for.append(container_number) or {
+                "data": {},
+                "status": "success",
+                "error": "",
+                "cached": False,
+                "has_data": False,
+            }
+            shipments_module._apply_tracking_payload = lambda shipment, payload: None
+            shipments_module._log_audit_event = lambda *args, **kwargs: None
+
+            result = shipments_module.refresh_all(db, user)
+        finally:
+            shipments_module._ensure_user_scope_ready = original_scope_ready
+            shipments_module._build_tracking_payload = original_builder
+            shipments_module._apply_tracking_payload = original_apply
+            shipments_module._log_audit_event = original_log
+
+        self.assertEqual(result["refreshed_count"], 1)
+        self.assertEqual(built_for, ["MSBU1891823"])
+
+        db.close()
+        engine.dispose()
+
+    def test_background_refresh_job_skips_completed_and_archived_shipments(self) -> None:
+        with NamedTemporaryFile(suffix=".db", delete=False) as handle:
+            db_path = handle.name
+        db_url = f"sqlite:///{db_path}"
+
+        engine = create_engine(db_url, future=True, connect_args={"check_same_thread": False})
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(engine)
+
+        db = SessionLocal()
+        user = User(email="background-refresh@example.com", password_hash="x")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        db.add_all(
+            [
+                Shipment(user_id=user.id, customer_name="Live One", container_number="MSBU1891823", bl_number="BL-1", shipment_status="active"),
+                Shipment(user_id=user.id, customer_name="Live Two", container_number="MSBU1904849", bl_number="BL-2", shipment_status="active"),
+                Shipment(user_id=user.id, customer_name="Done One", container_number="MSMU3793687", bl_number="BL-3", shipment_status="completed"),
+                Shipment(user_id=user.id, customer_name="Archive One", container_number="MSNU1703477", bl_number="BL-4", shipment_status="archived"),
+            ]
+        )
+        db.commit()
+        user_id = user.id
+        db.close()
+
+        built_for: list[str] = []
+        original_builder = shipments_module._build_tracking_payload
+        original_apply = shipments_module._apply_tracking_payload
+        original_log = shipments_module._log_audit_event
+        try:
+            shipments_module._build_tracking_payload = lambda container_number, use_cache=False: built_for.append(container_number) or {
+                "data": {},
+                "status": "success",
+                "error": "",
+                "cached": False,
+                "has_data": False,
+            }
+            shipments_module._apply_tracking_payload = lambda shipment, payload: None
+            shipments_module._log_audit_event = lambda *args, **kwargs: None
+
+            _run_refresh_all_job("bg-refresh-test", db_url, user_id)
+        finally:
+            shipments_module._build_tracking_payload = original_builder
+            shipments_module._apply_tracking_payload = original_apply
+            shipments_module._log_audit_event = original_log
+            engine.dispose()
+            try:
+                os.unlink(db_path)
+            except OSError:
+                pass
+
+        job = _get_refresh_job("bg-refresh-test")
+        self.assertIsNotNone(job)
+        self.assertEqual(job["refreshed_count"], 2)
+        self.assertEqual(sorted(built_for), ["MSBU1891823", "MSBU1904849"])
 
 
 if __name__ == "__main__":

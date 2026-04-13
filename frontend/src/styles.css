@@ -507,9 +507,9 @@ select:focus {
 }
 
 .progress-banner-copy {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
   font-size: 13px;
@@ -517,6 +517,12 @@ select:focus {
 
 .progress-banner-copy strong {
   color: var(--primary);
+}
+
+.progress-banner-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .progress-banner-copy span {

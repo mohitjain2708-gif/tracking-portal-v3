@@ -1799,7 +1799,7 @@ function App() {
     try {
       setFeedback({
         tone: "info",
-        text: "Preparing live tracking refresh from LDB and CONCOR.",
+        text: "Preparing a live refresh for shipments that are still in progress.",
       });
       const { task_id: taskId } = await api.startRefreshAllTracking();
 
@@ -1815,7 +1815,7 @@ function App() {
               tone: status.state === "failed" ? "error" : status.state === "completed" ? "success" : "info",
               text:
                 status.message ||
-                "Fetching live tracking from LDB and CONCOR. This can take a short while for multiple containers.",
+                "Checking live tracking for shipments that are still in progress.",
             });
 
             if (status.state === "completed") {
@@ -2450,7 +2450,7 @@ function App() {
             {refreshing ? "Refreshing..." : "Refresh Dashboard"}
           </ActionButton>
           <ActionButton type="button" tone="secondary" onClick={handleRefreshAllTracking}>
-            Refresh Tracking
+            Refresh Live Shipments
           </ActionButton>
           <label className="toggle-card compact-toggle">
             <span className="toggle-copy">
@@ -2601,6 +2601,7 @@ function App() {
           <section className="surface progress-banner" aria-live="polite">
             <div className="progress-banner-copy">
               <strong>Refreshing live tracking</strong>
+              <small>Completed and archived shipments are left unchanged.</small>
               <span>{Math.round(trackingRefreshProgress)}%</span>
             </div>
             <div className="progress-track" aria-hidden="true">
