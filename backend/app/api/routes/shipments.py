@@ -16,9 +16,10 @@ from uuid import uuid4
 
 import requests
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
@@ -119,6 +120,9 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "last_refresh_status": "VARCHAR(64) NOT NULL DEFAULT ''",
     "last_refresh_error": "TEXT NOT NULL DEFAULT ''",
     "clearance_doc_number": "VARCHAR(120) NOT NULL DEFAULT ''",
+    "do_date": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "document_status": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "original_docs_received_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "source_type": "VARCHAR(64) NOT NULL DEFAULT 'manual'",
     "source_label": "VARCHAR(255) NOT NULL DEFAULT 'Manual Entry'",
     "source_batch_id": "INTEGER NOT NULL DEFAULT 0",
@@ -682,6 +686,22 @@ def _format_to_dd_mm_yyyy(date_str: str) -> str:
         except Exception:
             continue
     return date_str
+
+
+def _normalize_manual_date(value: Any) -> str:
+    text_value = _clean_text(value)
+    if not text_value:
+        return ""
+    return _format_to_dd_mm_yyyy(text_value)
+
+
+def _normalize_document_status(value: Any) -> str:
+    text_value = _clean_text(value).lower()
+    if text_value == "copy":
+        return "Copy"
+    if text_value == "original":
+        return "Original"
+    return ""
 
 
 def _format_ldb_date(iso_text: str) -> str:
@@ -1580,6 +1600,9 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "last_refresh_status": shipment.last_refresh_status,
         "last_refresh_error": shipment.last_refresh_error,
         "clearance_doc_number": shipment.clearance_doc_number,
+        "do_date": getattr(shipment, "do_date", ""),
+        "document_status": getattr(shipment, "document_status", ""),
+        "original_docs_received_date": getattr(shipment, "original_docs_received_date", ""),
         "action_required": action_required,
         "action_required_reason": "Pristine booking date detected for an arrived Birgunj shipment" if action_required else "",
         "source_type": source_type,
@@ -2727,6 +2750,9 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "last_refresh_status": _first_non_empty([item.get("last_refresh_status", "") for item in refresh_entries]),
                 "last_refresh_error": _first_non_empty([item.get("last_refresh_error", "") for item in refresh_entries]),
                 "clearance_doc_number": _first_non_empty([item.get("clearance_doc_number", "") for item in sorted_entries]),
+                "do_date": _first_non_empty([item.get("do_date", "") for item in sorted_entries]),
+                "document_status": _first_non_empty([item.get("document_status", "") for item in sorted_entries]),
+                "original_docs_received_date": _first_non_empty([item.get("original_docs_received_date", "") for item in sorted_entries]),
                 "action_required": any(bool(item.get("action_required")) for item in sorted_entries),
                 "action_required_reason": _first_non_empty([item.get("action_required_reason", "") for item in sorted_entries]),
                 "documents": documents,
@@ -3149,6 +3175,90 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_po
     }
 
 
+@router.get("/dashboard-export")
+def export_dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
+    _ensure_user_scope_ready(db, current_user)
+    rows = _group_dashboard_rows(_get_shipments(db, current_user))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Live Dashboard"
+
+    headers = [
+        "Customer",
+        "BL Number",
+        "Containers",
+        "Shipment Status",
+        "Movement",
+        "Latest Location",
+        "Movement Since",
+        "Train No",
+        "Departure",
+        "DO Date",
+        "Document Status",
+        "Original Docs Received",
+        "Clearance Doc",
+        "Action Needed",
+    ]
+    sheet.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(color="FFFFFF", bold=True)
+    thin_border = Border(
+        left=Side(style="thin", color="D0D7E2"),
+        right=Side(style="thin", color="D0D7E2"),
+        top=Side(style="thin", color="D0D7E2"),
+        bottom=Side(style="thin", color="D0D7E2"),
+    )
+
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    for row in rows:
+        sheet.append(
+            [
+                row.get("customer_name", ""),
+                row.get("bl_number", ""),
+                ", ".join(row.get("container_numbers") or []),
+                row.get("shipment_status", ""),
+                row.get("movement_category", ""),
+                row.get("latest_location", ""),
+                row.get("movement_since_date") or row.get("latest_time", ""),
+                row.get("train_no", ""),
+                row.get("departure", ""),
+                row.get("do_date", ""),
+                row.get("document_status", ""),
+                row.get("original_docs_received_date", ""),
+                row.get("clearance_doc_number", ""),
+                "Yes" if row.get("action_required") else "",
+            ]
+        )
+
+    widths = [28, 18, 40, 16, 18, 34, 16, 12, 16, 16, 18, 20, 18, 14]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    sheet.freeze_panes = "A2"
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="tracking-dashboard.xlsx"'},
+    )
+
+
 @router.get("/customers")
 def customer_suggestions(q: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
@@ -3269,6 +3379,13 @@ def update_group_details(
 
     canonical_customer = _sync_customer_directory(db, payload.customer_name)
     normalized_bl = _normalize_bl_number(payload.bl_number)
+    normalized_do_date = _normalize_manual_date(payload.do_date)
+    normalized_document_status = _normalize_document_status(payload.document_status)
+    normalized_original_docs_received_date = _normalize_manual_date(payload.original_docs_received_date)
+    if normalized_document_status != "Original":
+        normalized_original_docs_received_date = ""
+    if normalized_document_status == "Original" and not normalized_original_docs_received_date:
+        raise HTTPException(status_code=400, detail="Original document date is required when document status is Original")
     previous_bl = _first_non_empty([shipment.bl_number for shipment in target_shipments])
     active_status = max(
         (shipment.shipment_status or "active" for shipment in target_shipments),
@@ -3319,6 +3436,9 @@ def update_group_details(
         else:
             shipment.customer_name = canonical_customer
             shipment.bl_number = normalized_bl
+        shipment.do_date = normalized_do_date
+        shipment.document_status = normalized_document_status
+        shipment.original_docs_received_date = normalized_original_docs_received_date
         updated_shipments.append(shipment)
 
     if previous_bl and normalized_bl and previous_bl != normalized_bl:
@@ -3336,6 +3456,9 @@ def update_group_details(
             "container_numbers": container_numbers,
             "previous_bl_number": previous_bl,
             "next_bl_number": normalized_bl,
+            "do_date": normalized_do_date,
+            "document_status": normalized_document_status,
+            "original_docs_received_date": normalized_original_docs_received_date,
         },
     )
     db.commit()

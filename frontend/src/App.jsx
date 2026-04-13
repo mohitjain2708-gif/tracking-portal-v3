@@ -5,6 +5,9 @@ const INITIAL_FORM = {
   customer_name: "",
   container_input: "",
   bl_number: "",
+  do_date: "",
+  document_status: "",
+  original_docs_received_date: "",
 };
 
 const INITIAL_MAPPING = {
@@ -37,6 +40,8 @@ const DOCUMENT_FIELDS = [
   ["packing_list", "Packing List"],
   ["bl_copy", "BL Copy"],
 ];
+
+const DOCUMENT_STATUS_OPTIONS = ["", "Copy", "Original"];
 
 const STATUS_OPTIONS = ["active", "completed", "archived"];
 const SHIPMENT_STATUS_FILTERS = [
@@ -78,6 +83,33 @@ function parseContainerInput(value) {
 
 function isValidContainerNumber(value) {
   return /^[A-Z]{4}\d{7}$/.test(cleanText(value).toUpperCase());
+}
+
+function toInputDateValue(value) {
+  const text = cleanText(value);
+  if (!text) {
+    return "";
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+  const parts = text.split("-");
+  if (parts.length === 3 && parts[0].length === 2) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return "";
+}
+
+function fromInputDateValue(value) {
+  const text = cleanText(value);
+  if (!text) {
+    return "";
+  }
+  const parts = text.split("-");
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return text;
 }
 
 function normalizeLooseText(value) {
@@ -529,9 +561,9 @@ function StatCard({ label, value, onClick, helperText }) {
   );
 }
 
-function ActionButton({ children, tone = "default", ...props }) {
+function ActionButton({ children, tone = "default", compact = false, ...props }) {
   return (
-    <button className={`button button-${tone}`} {...props}>
+    <button className={`button button-${tone}${compact ? " button-compact" : ""}`} {...props}>
       {children}
     </button>
   );
@@ -813,6 +845,8 @@ function App() {
   const [editRow, setEditRow] = useState(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editForm, setEditForm] = useState(INITIAL_FORM);
+  const [fieldSavingKeys, setFieldSavingKeys] = useState({});
+  const [operationalDrafts, setOperationalDrafts] = useState({});
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
     packing_list: null,
@@ -1147,8 +1181,8 @@ function App() {
     if (!refreshedAuditRow) {
       return;
     }
-    const currentIdentity = `${auditRow.group_key}|${auditRow.latest_time}|${auditRow.last_refresh_at}|${auditRow.last_refresh_status}`;
-    const nextIdentity = `${refreshedAuditRow.group_key}|${refreshedAuditRow.latest_time}|${refreshedAuditRow.last_refresh_at}|${refreshedAuditRow.last_refresh_status}`;
+    const currentIdentity = `${auditRow.group_key}|${auditRow.latest_time}|${auditRow.last_refresh_at}|${auditRow.last_refresh_status}|${auditRow.do_date}|${auditRow.document_status}|${auditRow.original_docs_received_date}`;
+    const nextIdentity = `${refreshedAuditRow.group_key}|${refreshedAuditRow.latest_time}|${refreshedAuditRow.last_refresh_at}|${refreshedAuditRow.last_refresh_status}|${refreshedAuditRow.do_date}|${refreshedAuditRow.document_status}|${refreshedAuditRow.original_docs_received_date}`;
     if (currentIdentity !== nextIdentity) {
       setAuditRow(refreshedAuditRow);
     }
@@ -1309,6 +1343,9 @@ function App() {
       customer_name: row.customer_name || "",
       container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
       bl_number: row.bl_number || "",
+      do_date: toInputDateValue(row.do_date),
+      document_status: row.document_status || "",
+      original_docs_received_date: toInputDateValue(row.original_docs_received_date),
     });
   }, []);
 
@@ -1317,6 +1354,33 @@ function App() {
       ...current,
       [field]: field === "bl_number" ? value.toUpperCase() : value,
     }));
+  }, []);
+
+  const getOperationalDraft = useCallback(
+    (row) =>
+      operationalDrafts[row.group_key] || {
+        do_date: toInputDateValue(row.do_date),
+        document_status: row.document_status || "",
+        original_docs_received_date: toInputDateValue(row.original_docs_received_date),
+      },
+    [operationalDrafts]
+  );
+
+  const setOperationalDraftValue = useCallback((row, updates) => {
+    setOperationalDrafts((current) => {
+      const existing = current[row.group_key] || {
+        do_date: toInputDateValue(row.do_date),
+        document_status: row.document_status || "",
+        original_docs_received_date: toInputDateValue(row.original_docs_received_date),
+      };
+      return {
+        ...current,
+        [row.group_key]: {
+          ...existing,
+          ...updates,
+        },
+      };
+    });
   }, []);
 
   const handleEditShipment = useCallback(
@@ -1348,6 +1412,9 @@ function App() {
           customer_name: editForm.customer_name.trim(),
           bl_number: editForm.bl_number.trim().toUpperCase(),
           container_numbers: containerNumbers,
+          do_date: fromInputDateValue(editForm.do_date),
+          document_status: editForm.document_status,
+          original_docs_received_date: fromInputDateValue(editForm.original_docs_received_date),
         });
         setEditRow(null);
         setAuditRow(null);
@@ -1361,6 +1428,78 @@ function App() {
       }
     },
     [editForm, editRow, loadDashboard]
+  );
+
+  const handleOperationalFieldSave = useCallback(
+      async (row, updates) => {
+        const saveKey = `${row.group_key}:${Object.keys(updates).sort().join("|")}`;
+        setFieldSavingKeys((current) => ({ ...current, [saveKey]: true }));
+        setFeedback(null);
+        try {
+          await api.updateShipmentGroupDetails({
+          current_bl_number: row.bl_number,
+          current_container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
+          customer_name: row.customer_name || "",
+          bl_number: row.bl_number || "",
+          container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
+          do_date: updates.do_date ?? row.do_date ?? "",
+          document_status: updates.document_status ?? row.document_status ?? "",
+            original_docs_received_date:
+              updates.original_docs_received_date ?? row.original_docs_received_date ?? "",
+          });
+          await loadDashboard({ silent: true });
+          return true;
+        } catch (error) {
+          setFeedback({ tone: "error", text: error.message || "Could not save the shipment fields." });
+          return false;
+        } finally {
+          setFieldSavingKeys((current) => {
+            const next = { ...current };
+            delete next[saveKey];
+            return next;
+        });
+      }
+      },
+      [loadDashboard]
+    );
+
+  const saveDoDateDraft = useCallback(
+    async (row) => {
+      const draft = getOperationalDraft(row);
+      const saved = await handleOperationalFieldSave(row, {
+        do_date: fromInputDateValue(draft.do_date),
+      });
+      if (saved) {
+        setOperationalDraftValue(row, { do_date: draft.do_date });
+      }
+    },
+    [getOperationalDraft, handleOperationalFieldSave, setOperationalDraftValue]
+  );
+
+  const saveDocumentDraft = useCallback(
+    async (row) => {
+      const draft = getOperationalDraft(row);
+      if (draft.document_status === "Original" && !cleanText(draft.original_docs_received_date)) {
+        setFeedback({
+          tone: "error",
+          text: `Choose the received date before saving Original documents for ${row.customer_name || row.bl_number || "this shipment"}.`,
+        });
+        return;
+      }
+      const saved = await handleOperationalFieldSave(row, {
+        document_status: draft.document_status,
+        original_docs_received_date:
+          draft.document_status === "Original" ? fromInputDateValue(draft.original_docs_received_date) : "",
+      });
+      if (saved) {
+        setOperationalDraftValue(row, {
+          document_status: draft.document_status,
+          original_docs_received_date:
+            draft.document_status === "Original" ? draft.original_docs_received_date : "",
+        });
+      }
+    },
+    [getOperationalDraft, handleOperationalFieldSave, setOperationalDraftValue]
   );
 
   const handleShipmentImportPreview = useCallback(async () => {
@@ -1839,6 +1978,23 @@ function App() {
     },
     [loadDashboard]
   );
+
+  const handleDashboardExport = useCallback(async () => {
+    setFeedback(null);
+    try {
+      const blob = await api.downloadShipmentDashboardReport();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "tracking-dashboard.xlsx";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Could not download the dashboard report." });
+    }
+  }, []);
 
   const handleBulkStatusChange = useCallback(
     async (shipmentStatus, clearanceDocNumbers = {}) => {
@@ -2455,6 +2611,11 @@ function App() {
             <p className="eyebrow">Live Dashboard</p>
             <h2>BL Movement Board</h2>
           </div>
+          <div className="compact-actions">
+            <ActionButton type="button" tone="secondary" onClick={handleDashboardExport}>
+              Download Report
+            </ActionButton>
+          </div>
         </div>
 
         <div className="filter-bar">
@@ -2542,6 +2703,8 @@ function App() {
               <div>Movement Since</div>
               <div>Train No</div>
               <div>Departure</div>
+              <div>DO Date</div>
+              <div>Document Status</div>
               <div className="th-center">Documents</div>
               <div className="th-center">Actions</div>
             </div>
@@ -2568,6 +2731,8 @@ function App() {
                 <SortableHeader label="Movement Since" columnKey="movement_since_date" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Train No" columnKey="train_no" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Departure" columnKey="departure" sortConfig={sortConfig} onSort={handleSort} />
+                <th>DO Date</th>
+                <th>Document Status</th>
                 <th className="th-center">Documents</th>
                 <th className="th-center">Actions</th>
               </tr>
@@ -2575,13 +2740,13 @@ function App() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="12" className="empty-cell">
+                  <td colSpan="14" className="empty-cell">
                     Loading shipments...
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan="12" className="empty-cell">
+                  <td colSpan="14" className="empty-cell">
                     No shipments match the current filters.
                   </td>
                 </tr>
@@ -2589,6 +2754,11 @@ function App() {
                 filteredRows.map((row) => {
                   const rowKey = cleanText(row.group_key || row.id);
                   const isSelected = selectedGroupKeys.includes(rowKey);
+                  const draft = getOperationalDraft(row);
+                  const doDateSaving = Boolean(fieldSavingKeys[`${row.group_key}:do_date`]);
+                  const documentSaving = Boolean(
+                    fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
+                  );
                   return (
                     <tr
                       key={row.group_key || row.id}
@@ -2635,6 +2805,75 @@ function App() {
                       <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <div className="inline-field-stack">
+                          <input
+                            className="inline-field-control"
+                            type="date"
+                            value={draft.do_date}
+                            onChange={(event) =>
+                              setOperationalDraftValue(row, { do_date: event.target.value })
+                            }
+                          />
+                          <ActionButton
+                            type="button"
+                            tone="ghost"
+                            compact
+                            disabled={doDateSaving}
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              await saveDoDateDraft(row);
+                            }}
+                          >
+                            {doDateSaving ? "Saving..." : "Save"}
+                          </ActionButton>
+                        </div>
+                      </td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <div className="inline-field-stack">
+                          <select
+                            className="inline-field-control"
+                            value={draft.document_status}
+                            onChange={(event) =>
+                              setOperationalDraftValue(row, {
+                                document_status: event.target.value,
+                                original_docs_received_date:
+                                  event.target.value === "Original" ? draft.original_docs_received_date : "",
+                              })
+                            }
+                          >
+                            {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                              <option key={option || "empty"} value={option}>
+                                {option || "Select"}
+                              </option>
+                            ))}
+                          </select>
+                          {draft.document_status === "Original" ? (
+                            <input
+                              className="inline-field-control"
+                              type="date"
+                              value={draft.original_docs_received_date}
+                              onChange={(event) =>
+                                setOperationalDraftValue(row, {
+                                  original_docs_received_date: event.target.value,
+                                })
+                              }
+                            />
+                          ) : null}
+                          <ActionButton
+                            type="button"
+                            tone="ghost"
+                            compact
+                            disabled={documentSaving}
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              await saveDocumentDraft(row);
+                            }}
+                          >
+                            {documentSaving ? "Saving..." : "Save"}
+                          </ActionButton>
+                        </div>
+                      </td>
                       <td className="td-center">
                         <div className="docs-inline">
                           <span className={`docs-status ${row.documents_complete ? "is-complete" : ""}`}>
@@ -3333,6 +3572,88 @@ function App() {
                   </div>
                 </div>
               </section>
+
+              <section className="audit-detail-card">
+                <p className="audit-detail-title">Document Flow</p>
+                <div className="audit-form-grid">
+                  <label className="audit-field">
+                    <span>DO Date</span>
+                    <input
+                      className="inline-field-control"
+                      type="date"
+                      value={getOperationalDraft(auditRow).do_date}
+                      onChange={(event) =>
+                        setOperationalDraftValue(auditRow, { do_date: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="audit-field">
+                    <span>Document Status</span>
+                    <select
+                      className="inline-field-control"
+                      value={getOperationalDraft(auditRow).document_status}
+                      onChange={(event) =>
+                        setOperationalDraftValue(auditRow, {
+                          document_status: event.target.value,
+                          original_docs_received_date:
+                            event.target.value === "Original"
+                              ? getOperationalDraft(auditRow).original_docs_received_date
+                              : "",
+                        })
+                      }
+                    >
+                      {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                        <option key={option || "empty"} value={option}>
+                          {option || "Select"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {getOperationalDraft(auditRow).document_status === "Original" ? (
+                    <label className="audit-field">
+                      <span>Original Received</span>
+                      <input
+                        className="inline-field-control"
+                        type="date"
+                        value={getOperationalDraft(auditRow).original_docs_received_date}
+                        onChange={(event) =>
+                          setOperationalDraftValue(auditRow, {
+                            original_docs_received_date: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  ) : null}
+                </div>
+                <div className="audit-card-actions">
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
+                    compact
+                    disabled={Boolean(fieldSavingKeys[`${auditRow.group_key}:do_date`])}
+                    onClick={async () => {
+                      await saveDoDateDraft(auditRow);
+                    }}
+                  >
+                    {fieldSavingKeys[`${auditRow.group_key}:do_date`] ? "Saving..." : "Save DO Date"}
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
+                    compact
+                    disabled={Boolean(
+                      fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
+                    )}
+                    onClick={async () => {
+                      await saveDocumentDraft(auditRow);
+                    }}
+                  >
+                    {fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
+                      ? "Saving..."
+                      : "Save Document Status"}
+                  </ActionButton>
+                </div>
+              </section>
             </div>
 
             {auditRow.last_refresh_error ? (
@@ -3763,16 +4084,63 @@ function App() {
             <label className="field-label" htmlFor="edit_bl_number">
               BL Number
             </label>
-            <input
-              id="edit_bl_number"
-              value={editForm.bl_number}
-              onChange={(event) => handleEditFieldChange("bl_number", event.target.value)}
-              placeholder="265636541"
-            />
+              <input
+                id="edit_bl_number"
+                value={editForm.bl_number}
+                onChange={(event) => handleEditFieldChange("bl_number", event.target.value)}
+                placeholder="265636541"
+              />
 
-            <div className="button-row compact-row edit-actions-row">
-              <ActionButton type="button" tone="ghost" onClick={() => setEditRow(null)}>
-                Cancel
+              <div className="audit-form-grid">
+                <label className="audit-field" htmlFor="edit_do_date">
+                  <span>DO Date</span>
+                  <input
+                    id="edit_do_date"
+                    className="inline-field-control"
+                    type="date"
+                    value={editForm.do_date}
+                    onChange={(event) => handleEditFieldChange("do_date", event.target.value)}
+                  />
+                </label>
+                <label className="audit-field" htmlFor="edit_document_status">
+                  <span>Document Status</span>
+                  <select
+                    id="edit_document_status"
+                    className="inline-field-control"
+                    value={editForm.document_status}
+                    onChange={(event) => {
+                      handleEditFieldChange("document_status", event.target.value);
+                      if (event.target.value !== "Original") {
+                        handleEditFieldChange("original_docs_received_date", "");
+                      }
+                    }}
+                  >
+                    {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                      <option key={option || "empty"} value={option}>
+                        {option || "Select"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {editForm.document_status === "Original" ? (
+                  <label className="audit-field" htmlFor="edit_original_docs_received_date">
+                    <span>Original Received</span>
+                    <input
+                      id="edit_original_docs_received_date"
+                      className="inline-field-control"
+                      type="date"
+                      value={editForm.original_docs_received_date}
+                      onChange={(event) =>
+                        handleEditFieldChange("original_docs_received_date", event.target.value)
+                      }
+                    />
+                  </label>
+                ) : null}
+              </div>
+
+              <div className="button-row compact-row edit-actions-row">
+                <ActionButton type="button" tone="ghost" onClick={() => setEditRow(null)}>
+                  Cancel
               </ActionButton>
               <ActionButton type="submit" tone="primary" disabled={editSubmitting}>
                 {editSubmitting ? "Saving..." : "Save Details"}

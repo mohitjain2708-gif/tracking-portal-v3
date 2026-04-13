@@ -14,6 +14,9 @@ class ShipmentGroupUpdateRequest(BaseModel):
     customer_name: str = ""
     bl_number: str = ""
     container_numbers: list[str] = []
+    do_date: str = ""
+    document_status: str = ""
+    original_docs_received_date: str = ""
 
 
 class ShipmentStatusUpdateRequest(BaseModel):
@@ -44,6 +47,9 @@ class ShipmentResponse(BaseModel):
     last_refresh_status: str = ""
     last_refresh_error: str = ""
     clearance_doc_number: str = ""
+    do_date: str = ""
+    document_status: str = ""
+    original_docs_received_date: str = ""
     source_type: str = ""
     source_label: str = ""
     source_batch_id: int = 0

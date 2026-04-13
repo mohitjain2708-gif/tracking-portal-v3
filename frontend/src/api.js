@@ -228,6 +228,7 @@ export const api = {
 
   listShipments: () => request("/api/shipments"),
   getShipmentDashboard: () => request("/api/shipments/dashboard"),
+  downloadShipmentDashboardReport: () => requestBlob("/api/shipments/dashboard-export"),
   getShipmentStats: () => request("/api/shipments/stats"),
   getLocationDistances: (locations) =>
     request("/api/shipments/location-distances", {

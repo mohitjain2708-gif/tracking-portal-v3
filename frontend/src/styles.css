@@ -543,6 +543,13 @@ select:focus {
   white-space: nowrap;
 }
 
+.button-compact {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 11px;
+  border-radius: 8px;
+}
+
 .button-primary {
   background: var(--primary);
   color: #fff;
@@ -939,7 +946,7 @@ select:focus {
 
 .shipment-table {
   width: 100%;
-  min-width: 1228px;
+  min-width: 1560px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -1105,6 +1112,33 @@ select:focus {
   gap: 8px;
   min-width: 160px;
   text-align: center;
+}
+
+.inline-field-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.inline-field-control {
+  width: 100%;
+  min-height: 36px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0 12px;
+  font: inherit;
+  color: var(--text);
+}
+
+.inline-field-control:focus {
+  outline: none;
+  border-color: rgba(13, 59, 102, 0.32);
+  box-shadow: 0 0 0 3px rgba(13, 59, 102, 0.08);
+}
+
+.inline-field-stack .button {
+  justify-self: start;
 }
 
 .docs-status {
@@ -1626,7 +1660,7 @@ select:focus {
 
 .audit-detail-grid {
   display: grid;
-  grid-template-columns: 1.35fr 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1640,7 +1674,7 @@ select:focus {
 }
 
 .audit-detail-card-wide {
-  grid-column: span 1;
+  grid-column: 1 / -1;
 }
 
 .audit-detail-title {
@@ -1677,6 +1711,30 @@ select:focus {
   line-height: 1.42;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+.audit-form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.audit-field {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-field span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.audit-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-start;
 }
 
 .audit-container-chips {
