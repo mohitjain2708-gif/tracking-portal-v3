@@ -936,6 +936,7 @@ function App() {
   const [rowContextMenu, setRowContextMenu] = useState(null);
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
+  const [auditJournalExpanded, setAuditJournalExpanded] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editForm, setEditForm] = useState(INITIAL_FORM);
@@ -1994,7 +1995,7 @@ function App() {
     try {
       setFeedback({
         tone: "info",
-        text: "Preparing a live refresh for shipments that are still in progress.",
+        text: "Refreshing live tracking.",
       });
       const { task_id: taskId } = await api.startRefreshAllTracking();
 
@@ -2010,7 +2011,7 @@ function App() {
               tone: status.state === "failed" ? "error" : status.state === "completed" ? "success" : "info",
               text:
                 status.message ||
-                "Checking live tracking for shipments that are still in progress.",
+                "Refreshing live tracking.",
             });
 
             if (status.state === "completed") {
@@ -2163,7 +2164,7 @@ function App() {
       try {
         setFeedback({
           tone: "info",
-          text: "Fetching live tracking from LDB and CONCOR for the selected shipment group.",
+          text: "Refreshing this shipment.",
         });
         const data = await api.refreshGroupTracking({
           bl_number: row.bl_number,
@@ -2171,7 +2172,7 @@ function App() {
         });
         setFeedback({
           tone: "success",
-          text: `Tracking refreshed for ${data.refreshed_count ?? 0} shipment(s).`,
+          text: `Live tracking updated for ${data.refreshed_count ?? 1} shipment${(data.refreshed_count ?? 1) === 1 ? "" : "s"}.`,
         });
         await loadDashboard({ silent: true });
       } catch (error) {
@@ -2578,8 +2579,10 @@ function App() {
   useEffect(() => {
     if (!auditRow) {
       setAuditEntries([]);
+      setAuditJournalExpanded(false);
       return undefined;
     }
+    setAuditJournalExpanded(false);
     let active = true;
     api
       .getGroupAuditTrail({
@@ -2800,7 +2803,6 @@ function App() {
           <section className="surface progress-banner" aria-live="polite">
             <div className="progress-banner-copy">
               <strong>Refreshing live tracking</strong>
-              <small>Completed and archived shipments are left unchanged.</small>
               <span>{Math.round(trackingRefreshProgress)}%</span>
             </div>
             <div className="progress-track" aria-hidden="true">
@@ -2820,7 +2822,7 @@ function App() {
           <div>
             <p className="eyebrow">Intake</p>
             <h2>Add or import shipments</h2>
-            <p className="panel-copy">Choose one path when you need it. The dashboard stays quiet the rest of the time.</p>
+            <p className="panel-copy">Bring shipments in the way that suits you.</p>
           </div>
         </div>
 
@@ -2828,21 +2830,21 @@ function App() {
           <IntakeLauncherCard
             eyebrow="Manual"
             title="Add shipment"
-            description="Create one shipment cycle with one or more containers on the same BL."
+            description="Enter a shipment by hand."
             isActive={activeIntakePanel === "manual"}
             onClick={() => setActiveIntakePanel((current) => (current === "manual" ? null : "manual"))}
           />
           <IntakeLauncherCard
             eyebrow="Workbook"
             title="Import from Excel"
-            description="Choose a workbook, match the columns, and bring the rows into tracking."
+            description="Bring in an Excel sheet."
             isActive={activeIntakePanel === "excel"}
             onClick={() => setActiveIntakePanel((current) => (current === "excel" ? null : "excel"))}
           />
           <IntakeLauncherCard
             eyebrow="Google"
             title="Import from Google Sheets"
-            description="Paste the sheet link, choose a tab, then continue into the same mapping flow."
+            description="Bring in a Google Sheet."
             isActive={activeIntakePanel === "google"}
             onClick={() => setActiveIntakePanel((current) => (current === "google" ? null : "google"))}
           />
@@ -2854,7 +2856,7 @@ function App() {
               <div>
                 <p className="eyebrow">Manual</p>
                 <h2>Add shipment</h2>
-                <p className="panel-copy">Add one shipment cycle with one or more containers on the same BL.</p>
+                <p className="panel-copy">Enter the customer, BL, and containers.</p>
               </div>
             </div>
 
@@ -2910,7 +2912,7 @@ function App() {
               <div>
                 <p className="eyebrow">Workbook</p>
                 <h2>Import from Excel</h2>
-                <p className="panel-copy">Choose a workbook, confirm the columns, and add the rows you want to track.</p>
+                <p className="panel-copy">Upload the sheet, then match the fields.</p>
               </div>
             </div>
 
@@ -3029,7 +3031,7 @@ function App() {
               <div>
                 <p className="eyebrow">Google</p>
                 <h2>Import from Google Sheets</h2>
-                <p className="panel-copy">Paste the sheet link, choose a tab, then continue into the same mapping flow.</p>
+                <p className="panel-copy">Paste the sheet link, choose the tab, then match the fields.</p>
               </div>
             </div>
 
@@ -3118,7 +3120,7 @@ function App() {
         <div className="panel-heading compact-heading">
           <div>
             <p className="eyebrow">Overview</p>
-            <h2>Where Shipments Stand</h2>
+            <h2>Shipment Overview</h2>
           </div>
         </div>
         <div className="dashboard-header-metrics">
@@ -3242,14 +3244,7 @@ function App() {
               </ActionButton>
             </div>
           </section>
-        ) : (
-          <section className="bulk-toolbar bulk-toolbar-hint">
-            <div className="bulk-toolbar-copy">
-              <strong>Need to update several shipments together?</strong>
-              <span>Use the checkboxes on the left, then choose complete, archive, or delete in one step.</span>
-            </div>
-          </section>
-        )}
+        ) : null}
 
         {stickyHeaderActive && (
           <div
@@ -3389,7 +3384,7 @@ function App() {
                       </td>
                       <td>
                         <div className="row-display-field">
-                          <span className="row-display-label">Documents</span>
+                          <span className="row-display-label">Status</span>
                           <strong>{formatDocumentStatusSummary(row)}</strong>
                         </div>
                       </td>
@@ -3498,7 +3493,7 @@ function App() {
                       <strong>{row.do_date || "Not set"}</strong>
                     </div>
                     <div className="mobile-fact">
-                      <span>Document Status</span>
+                      <span>Status</span>
                       <strong>{formatDocumentStatusSummary(row)}</strong>
                     </div>
                     <div className="mobile-fact">
@@ -4507,33 +4502,50 @@ function App() {
             <div className="audit-journal">
               <div className="preview-header">
                 <div>
-                  <h3>Action Journal</h3>
-                  <p>A readable activity trail for this shipment group.</p>
+                  <h3>Activity</h3>
+                  <p>
+                    {auditEntries.length
+                      ? `Latest update: ${formatAuditActionLabel(auditEntries[0]?.action)}`
+                      : "No activity yet."}
+                  </p>
                 </div>
-                <ActionButton
-                  type="button"
-                  tone="secondary"
-                  onClick={() =>
-                    exportRowsAsCsv(
-                      "shipment-audit.csv",
-                      auditEntries,
-                      [
-                        { label: "Created At", value: (row) => row.created_at },
-                        { label: "Action", value: (row) => row.action },
-                        { label: "BL", value: (row) => row.bl_number },
-                        { label: "Container", value: (row) => row.container_number },
-                        { label: "Status", value: (row) => row.shipment_status },
-                        { label: "Details", value: (row) => JSON.stringify(row.details || {}) },
-                      ]
-                    )
-                  }
-                >
-                  Export Audit
-                </ActionButton>
+                <div className="preview-actions">
+                  {auditEntries.length ? (
+                    <ActionButton
+                      type="button"
+                      tone="secondary"
+                      onClick={() => setAuditJournalExpanded((current) => !current)}
+                    >
+                      {auditJournalExpanded ? "Hide details" : "Show details"}
+                    </ActionButton>
+                  ) : null}
+                  {auditEntries.length ? (
+                    <ActionButton
+                      type="button"
+                      tone="secondary"
+                      onClick={() =>
+                        exportRowsAsCsv(
+                          "shipment-audit.csv",
+                          auditEntries,
+                          [
+                            { label: "Created At", value: (row) => row.created_at },
+                            { label: "Action", value: (row) => row.action },
+                            { label: "BL", value: (row) => row.bl_number },
+                            { label: "Container", value: (row) => row.container_number },
+                            { label: "Status", value: (row) => row.shipment_status },
+                            { label: "Details", value: (row) => JSON.stringify(row.details || {}) },
+                          ]
+                        )
+                      }
+                    >
+                      Download
+                    </ActionButton>
+                  ) : null}
+                </div>
               </div>
               {auditEntries.length === 0 ? (
-                <div className="history-table-wrap empty-state-panel">No audit trail available yet.</div>
-              ) : (
+                <div className="history-table-wrap empty-state-panel">No activity yet.</div>
+              ) : auditJournalExpanded ? (
                 <div className="audit-timeline">
                   {auditEntries.map((entry) => (
                     <article key={entry.id} className="audit-timeline-item">
@@ -4543,6 +4555,18 @@ function App() {
                       </div>
                       <h4>{formatAuditActionLabel(entry.action)}</h4>
                       <p>{formatAuditDetails(entry.details)}</p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="audit-journal-collapsed">
+                  {auditEntries.slice(0, 3).map((entry) => (
+                    <article key={entry.id} className="audit-journal-summary">
+                      <div>
+                        <strong>{formatAuditActionLabel(entry.action)}</strong>
+                        <p>{formatAuditDetails(entry.details)}</p>
+                      </div>
+                      <span>{entry.created_at || "-"}</span>
                     </article>
                   ))}
                 </div>

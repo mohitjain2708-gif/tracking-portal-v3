@@ -2144,6 +2144,13 @@ select:focus {
   gap: 14px;
 }
 
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .related-cycles-panel {
   display: grid;
   gap: 14px;
@@ -2290,6 +2297,40 @@ select:focus {
 .audit-timeline {
   display: grid;
   gap: 12px;
+}
+
+.audit-journal-collapsed {
+  display: grid;
+  gap: 10px;
+}
+
+.audit-journal-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.audit-journal-summary strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #1f3045;
+}
+
+.audit-journal-summary p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.audit-journal-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .audit-timeline-item {

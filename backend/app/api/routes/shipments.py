@@ -2368,28 +2368,35 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
                 if _clean_container(shipment.container_number)
             }
         )
-        total = len(unique_containers)
+        shipment_groups = {
+            f"BL:{_normalize_bl_number(shipment.bl_number)}"
+            if _normalize_bl_number(shipment.bl_number)
+            else f"SHIP:{shipment.id}"
+            for shipment in shipments
+        }
+        total = len(shipment_groups)
+        total_containers = len(unique_containers)
         _set_refresh_job(
             task_id,
             state="running",
             total=total,
             completed=0,
             progress=0,
-            message=f"Starting refresh for {total} live shipment(s). Completed and archived shipments are left unchanged.",
+            message=f"Refreshing live tracking for {total} shipment{'s' if total != 1 else ''}.",
         )
-        if total == 0:
+        if total_containers == 0:
             _set_refresh_job(
                 task_id,
                 state="completed",
                 completed=0,
                 progress=100,
-                message="No live shipments need a refresh right now.",
+                message="No live shipments need an update right now.",
                 refreshed_count=0,
             )
             return
 
         payloads: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total))) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total_containers))) as executor:
             futures = {
                 executor.submit(_build_tracking_payload, container_number, False): container_number
                 for container_number in unique_containers
@@ -2411,8 +2418,8 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
                 _set_refresh_job(
                     task_id,
                     completed=completed,
-                    progress=round((completed / total) * 100),
-                    message=f"Refreshed {completed} of {total} shipments.",
+                    progress=round((completed / total_containers) * 100),
+                    message="Refreshing live tracking.",
                 )
 
         for shipment in shipments:
@@ -2432,7 +2439,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             state="completed",
             completed=total,
             progress=100,
-            message=f"Tracking refreshed for {total} live shipment(s). Completed and archived shipments were left unchanged.",
+            message=f"Live tracking updated for {total} shipment{'s' if total != 1 else ''}.",
             refreshed_count=total,
         )
     except Exception as exc:
