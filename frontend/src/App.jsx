@@ -732,12 +732,12 @@ function DashboardMetric({ label, value, tone = "default", icon, customers = [] 
   );
 }
 
-function SortableHeader({ label, columnKey, sortConfig, onSort }) {
+function SortableHeader({ label, columnKey, sortConfig, onSort, className = "" }) {
   const isActive = sortConfig.key === columnKey;
   const indicator = !isActive ? "↕" : sortConfig.direction === "asc" ? "↑" : "↓";
 
   return (
-    <th>
+    <th className={className}>
       <button
         type="button"
         className={`header-sort ${isActive ? "is-active" : ""}`}
@@ -3183,7 +3183,13 @@ function App() {
                     aria-label="Select all visible shipments"
                   />
                 </th>
-                <SortableHeader label="Customer" columnKey="customer_name" sortConfig={sortConfig} onSort={handleSort} />
+                <SortableHeader
+                  label="Customer"
+                  columnKey="customer_name"
+                  sortConfig={sortConfig}
+                  onSort={handleSort}
+                  className="identity-col"
+                />
                 <SortableHeader label="Containers" columnKey="container_number" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="BL" columnKey="bl_number" sortConfig={sortConfig} onSort={handleSort} />
                 <SortableHeader label="Status" columnKey="shipment_status" sortConfig={sortConfig} onSort={handleSort} />
@@ -3232,8 +3238,13 @@ function App() {
                           aria-label={`Select shipment ${row.bl_number || row.primary_container_number}`}
                         />
                       </td>
-                      <td>
-                        <div className="cell-title customer-name">{row.customer_name || "-"}</div>
+                      <td className="identity-col">
+                        <div className="identity-cell">
+                          <div className="cell-title customer-name">{row.customer_name || "-"}</div>
+                          <div className="identity-subline">
+                            {row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <div className="container-list-cell">
@@ -3285,7 +3296,7 @@ function App() {
                             event.stopPropagation();
                             setDocumentRow(row);
                           }}>
-                              {row.documents_complete ? "Documents Submitted" : "Submit Documents"}
+                              {row.documents_complete ? "Open Documents" : "Add Documents"}
                             </ActionButton>
                           </div>
                         </td>
@@ -3396,7 +3407,7 @@ function App() {
                       tone="ghost"
                       onClick={() => setDocumentRow(row)}
                     >
-                      {row.documents_complete ? "View Documents" : "Submit Documents"}
+                      {row.documents_complete ? "Open Documents" : "Add Documents"}
                     </ActionButton>
                   </div>
                 </article>
@@ -3863,7 +3874,7 @@ function App() {
       ) : null}
 
       {documentRow && (
-        <Modal title={`${documentRow.documents_complete ? "Manage Documents" : "Submit Documents"} for ${documentRow.bl_number}`} onClose={() => {
+        <Modal title={`${documentRow.documents_complete ? "Documents" : "Add Documents"} for ${documentRow.bl_number}`} onClose={() => {
           setDocumentRow(null);
           setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
         }}>
@@ -3926,7 +3937,7 @@ function App() {
               Cancel
             </ActionButton>
             <ActionButton type="button" tone="primary" onClick={handleDocumentSubmit}>
-              {documentRow.documents_complete ? "Save Changes" : "Submit Documents"}
+              {documentRow.documents_complete ? "Save Changes" : "Add Documents"}
             </ActionButton>
           </div>
         </Modal>
@@ -4975,3 +4986,4 @@ function App() {
 }
 
 export default App;
+

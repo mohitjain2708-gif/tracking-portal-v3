@@ -1,4 +1,4 @@
-﻿* {
+* {
   box-sizing: border-box;
 }
 
@@ -1173,7 +1173,7 @@ select:focus {
 
 .shipment-table {
   width: 100%;
-  min-width: 1560px;
+  min-width: 1520px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -1208,15 +1208,15 @@ select:focus {
 }
 
 .dense-table th {
-  padding: 10px 12px;
-  color: #475467;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  padding: 13px 14px;
+  color: #607086;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .dense-table td {
-  padding: 14px 12px;
+  padding: 18px 14px;
   font-size: 13px;
   color: #132033;
 }
@@ -1245,11 +1245,12 @@ select:focus {
 }
 
 .shipment-table tbody tr:hover {
-  background: #f8fafc;
+  background: #fbfcfe;
 }
 
-.shipment-table tbody tr:hover td.selection-col {
-  background: #f8fafc;
+.shipment-table tbody tr:hover td.selection-col,
+.shipment-table tbody tr:hover td.identity-col {
+  background: #fbfcfe;
 }
 
 .interactive-row {
@@ -1260,12 +1261,25 @@ select:focus {
   background: rgba(19, 58, 99, 0.04);
 }
 
-.interactive-row.is-selected td.selection-col {
+.interactive-row.is-selected td.selection-col,
+.interactive-row.is-selected td.identity-col {
   background: rgba(19, 58, 99, 0.04);
 }
 
 .selection-col {
   width: 44px;
+}
+
+.identity-col {
+  position: sticky;
+  left: 44px;
+  z-index: 1;
+  background: #ffffff;
+}
+
+.shipment-table th.identity-col {
+  z-index: 3;
+  background: rgba(239, 245, 251, 0.98);
 }
 
 .selection-col input[type="checkbox"] {
@@ -1281,14 +1295,26 @@ select:focus {
 }
 
 .customer-name {
-  max-width: 248px;
-  line-height: 1.45;
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+.identity-cell {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.identity-subline {
+  font-size: 11px;
+  color: #7a889b;
+  letter-spacing: 0.02em;
 }
 
 .container-list-cell {
-  max-width: 270px;
-  color: #435166;
-  line-height: 1.55;
+  max-width: 250px;
+  color: #526176;
+  line-height: 1.65;
   font-size: 12px;
 }
 
@@ -1357,11 +1383,11 @@ select:focus {
 
 .docs-inline {
   display: grid;
-  justify-items: center;
+  justify-items: start;
   align-content: center;
-  gap: 8px;
-  min-width: 160px;
-  text-align: center;
+  gap: 10px;
+  min-width: 166px;
+  text-align: left;
 }
 
 .inline-field-control {
@@ -1418,16 +1444,16 @@ select:focus {
 
 .row-display-field {
   display: grid;
-  gap: 4px;
-  min-width: 148px;
+  gap: 6px;
+  min-width: 150px;
 }
 
 .row-display-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: #74849b;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: #7a889b;
 }
 
 .row-display-field strong {
@@ -1449,7 +1475,7 @@ select:focus {
   justify-content: center;
   width: fit-content;
   border-radius: 999px;
-  padding: 4px 8px;
+  padding: 5px 9px;
   background: #fff7ed;
   color: var(--warning);
   font-size: 11px;
@@ -2741,3 +2767,4 @@ select:focus {
     min-height: 40px;
   }
 }
+
