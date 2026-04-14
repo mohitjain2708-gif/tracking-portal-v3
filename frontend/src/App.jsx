@@ -3290,20 +3290,14 @@ function App() {
                             {row.documents_complete ? "Documents Submitted" : "Submit Documents"}
                           </ActionButton>
                         </div>
-                      </td>
-                      <td className="td-center">
-                        <div className="action-group compact-actions-row">
-                          <ActionButton type="button" tone="ghost" onClick={(event) => {
-                            event.stopPropagation();
-                            setQuickEditRow(row);
-                          }}>
-                            Edit
-                          </ActionButton>
-                          <ActionButton type="button" tone="ghost" onClick={(event) => {
-                            event.stopPropagation();
-                            setActionRow(row);
-                          }}>
-                            Manage
+                        </td>
+                        <td className="td-center">
+                          <div className="action-group compact-actions-row">
+                            <ActionButton type="button" tone="ghost" onClick={(event) => {
+                              event.stopPropagation();
+                              setActionRow(row);
+                            }}>
+                              Manage
                           </ActionButton>
                         </div>
                       </td>
