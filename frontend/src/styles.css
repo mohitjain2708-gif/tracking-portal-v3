@@ -1628,12 +1628,19 @@ select:focus {
   gap: 12px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
 }
 
 .modal-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .modal-header h3 {
@@ -2779,6 +2786,15 @@ select:focus {
   .modal-actions {
     padding-left: 14px;
     padding-right: 14px;
+  }
+
+  .modal-header {
+    align-items: flex-start;
+  }
+
+  .modal-header-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 

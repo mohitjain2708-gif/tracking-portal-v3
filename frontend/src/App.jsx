@@ -937,6 +937,8 @@ function App() {
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditJournalExpanded, setAuditJournalExpanded] = useState(false);
+  const [actionReturnRow, setActionReturnRow] = useState(null);
+  const [editReturnRow, setEditReturnRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editForm, setEditForm] = useState(INITIAL_FORM);
@@ -1477,16 +1479,25 @@ function App() {
         setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
         return;
       }
+      if (editRow) {
+        setEditRow(null);
+        setEditForm(INITIAL_FORM);
+        if (editReturnRow) {
+          setAuditRow(editReturnRow);
+          setEditReturnRow(null);
+        }
+        return;
+      }
       if (actionRow) {
         setActionRow(null);
+        if (actionReturnRow) {
+          setAuditRow(actionReturnRow);
+          setActionReturnRow(null);
+        }
         return;
       }
       if (auditRow) {
         setAuditRow(null);
-        return;
-      }
-      if (editRow) {
-        setEditRow(null);
         return;
       }
       if (shipmentImportReviewOpen) {
@@ -1520,12 +1531,14 @@ function App() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [
     actionRow,
+    actionReturnRow,
     auditRow,
     clearancePrompt,
     confirmAction,
     currentUser,
     documentRow,
     editRow,
+    editReturnRow,
     ownerDeleteUser,
     ownerUserShipments,
     passwordModalOpen,
@@ -1611,16 +1624,33 @@ function App() {
 
   const openEditShipment = useCallback((row) => {
     setEditRow(row);
-      setEditForm({
-        customer_name: row.customer_name || "",
-        container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
-        bl_number: row.bl_number || "",
-        clearance_doc_number: row.clearance_doc_number || "",
-        do_date: toInputDateValue(row.do_date),
-        document_status: row.document_status || "",
-        original_docs_received_date: toInputDateValue(row.original_docs_received_date),
-      });
+    setEditForm({
+      customer_name: row.customer_name || "",
+      container_input: (row.container_numbers || [row.primary_container_number]).filter(Boolean).join("\n"),
+      bl_number: row.bl_number || "",
+      clearance_doc_number: row.clearance_doc_number || "",
+      do_date: toInputDateValue(row.do_date),
+      document_status: row.document_status || "",
+      original_docs_received_date: toInputDateValue(row.original_docs_received_date),
+    });
   }, []);
+
+  const closeActionModal = useCallback(() => {
+    setActionRow(null);
+    if (actionReturnRow) {
+      setAuditRow(actionReturnRow);
+      setActionReturnRow(null);
+    }
+  }, [actionReturnRow]);
+
+  const closeEditModal = useCallback(() => {
+    setEditRow(null);
+    setEditForm(INITIAL_FORM);
+    if (editReturnRow) {
+      setAuditRow(editReturnRow);
+      setEditReturnRow(null);
+    }
+  }, [editReturnRow]);
 
   const handleEditFieldChange = useCallback((field, value) => {
     setEditForm((current) => ({
@@ -1692,9 +1722,25 @@ function App() {
             document_status: editForm.document_status,
             original_docs_received_date: fromInputDateValue(editForm.original_docs_received_date),
           });
+        const updatedAuditRow = editReturnRow
+          ? {
+              ...editReturnRow,
+              customer_name: editForm.customer_name.trim(),
+              bl_number: editForm.bl_number.trim().toUpperCase(),
+              container_numbers: containerNumbers,
+              primary_container_number: containerNumbers[0] || "",
+              clearance_doc_number: editForm.clearance_doc_number.trim().toUpperCase(),
+              do_date: fromInputDateValue(editForm.do_date),
+              document_status: editForm.document_status,
+              original_docs_received_date: fromInputDateValue(editForm.original_docs_received_date),
+            }
+          : null;
         setEditRow(null);
-        setAuditRow(null);
         setEditForm(INITIAL_FORM);
+        if (updatedAuditRow) {
+          setAuditRow(updatedAuditRow);
+          setEditReturnRow(null);
+        }
         setFeedback({ tone: "success", text: "Shipment details updated successfully." });
         await loadDashboard({ silent: true });
       } catch (error) {
@@ -1703,7 +1749,7 @@ function App() {
         setEditSubmitting(false);
       }
     },
-    [editForm, editRow, loadDashboard]
+    [editForm, editReturnRow, editRow, loadDashboard]
   );
 
   const handleOperationalFieldSave = useCallback(
@@ -3519,7 +3565,10 @@ function App() {
       </section>
 
       {actionRow && (
-        <Modal title={`Manage Shipment${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`} onClose={() => setActionRow(null)}>
+        <Modal
+          title={`Manage Shipment${actionRow.bl_number ? ` - ${actionRow.bl_number}` : ` - ${actionRow.primary_container_number}`}`}
+          onClose={closeActionModal}
+        >
           {(() => {
             const actionStatus = cleanText(actionRow.shipment_status).toLowerCase();
             const canActivate = ["completed", "archived"].includes(actionStatus);
@@ -3582,7 +3631,7 @@ function App() {
                 <div className="action-modal-buttons action-modal-buttons-stacked">
                   <ActionButton type="button" tone="secondary" onClick={async () => {
                     await handleRefreshGroup(actionRow);
-                    setActionRow(null);
+                    closeActionModal();
                   }}>
                     Refresh Shipment
                   </ActionButton>
@@ -3592,6 +3641,7 @@ function App() {
                     onClick={() => {
                       setAuditRow(actionRow);
                       setActionRow(null);
+                      setActionReturnRow(null);
                     }}
                   >
                     Open Detail
@@ -3600,8 +3650,10 @@ function App() {
                     type="button"
                     tone="ghost"
                     onClick={() => {
+                      setEditReturnRow(actionReturnRow || actionRow);
                       openEditShipment(actionRow);
                       setActionRow(null);
+                      setActionReturnRow(null);
                     }}
                   >
                     Edit Details
@@ -3691,15 +3743,15 @@ function App() {
                     await handleGroupDelete(confirmAction.row);
                   } else if (confirmAction.type === "completed") {
                     setClearancePrompt(confirmAction.row);
-                  setClearanceDocNumber("");
-                } else {
-                  await handleGroupStatusChange(confirmAction.row, confirmAction.type);
-                }
-                setConfirmAction(null);
-                if (confirmAction.type === "delete") {
-                  setActionRow(null);
-                }
-              }}
+                    setClearanceDocNumber("");
+                  } else {
+                    await handleGroupStatusChange(confirmAction.row, confirmAction.type);
+                    if (confirmAction.type === "delete") {
+                      closeActionModal();
+                    }
+                  }
+                  setConfirmAction(null);
+                }}
             >
               Confirm
             </ActionButton>
@@ -4184,6 +4236,7 @@ function App() {
                 type="button"
                 tone="secondary"
                 onClick={() => {
+                  setEditReturnRow(auditRow);
                   openEditShipment(auditRow);
                   setAuditRow(null);
                 }}
@@ -4194,6 +4247,7 @@ function App() {
                 type="button"
                 tone="secondary"
                 onClick={() => {
+                  setActionReturnRow(auditRow);
                   setActionRow(auditRow);
                   setAuditRow(null);
                 }}
@@ -4939,7 +4993,7 @@ function App() {
       )}
 
       {editRow && (
-        <Modal title="Edit Shipment Details" onClose={() => setEditRow(null)}>
+        <Modal title="Edit Shipment Details" onClose={closeEditModal}>
           <form className="stack-form" onSubmit={handleEditShipment}>
             <label className="field-label" htmlFor="edit_customer_name">
               Customer Name
@@ -5034,7 +5088,7 @@ function App() {
               </div>
 
               <div className="button-row compact-row edit-actions-row">
-                <ActionButton type="button" tone="ghost" onClick={() => setEditRow(null)}>
+                <ActionButton type="button" tone="ghost" onClick={closeEditModal}>
                   Cancel
               </ActionButton>
               <ActionButton type="submit" tone="primary" disabled={editSubmitting}>
