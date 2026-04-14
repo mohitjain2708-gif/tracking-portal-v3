@@ -266,6 +266,21 @@ function formatTrackingSourceLabel(value) {
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
+function applyShipmentOverlayUpdate(current, referenceRow, shipmentStatus, extra = {}) {
+  if (!current || current.group_key !== referenceRow.group_key) {
+    return current;
+  }
+  return {
+    ...current,
+    shipment_status: shipmentStatus,
+    clearance_doc_number: extra.clearance_doc_number || current.clearance_doc_number || "",
+    do_date: extra.do_date ?? current.do_date ?? "",
+    document_status: extra.document_status ?? current.document_status ?? "",
+    original_docs_received_date:
+      extra.original_docs_received_date ?? current.original_docs_received_date ?? "",
+  };
+}
+
 function formatImportCompletionText(data) {
   const imported = Number(data?.imported_count ?? 0);
   const duplicateCount = Number(data?.duplicate_count ?? 0);
@@ -1433,6 +1448,93 @@ function App() {
     };
   }, [rowContextMenu]);
 
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      if (rowContextMenu) {
+        setRowContextMenu(null);
+        return;
+      }
+      if (quickEditRow) {
+        setQuickEditRow(null);
+        return;
+      }
+      if (confirmAction) {
+        setConfirmAction(null);
+        return;
+      }
+      if (clearancePrompt) {
+        setClearancePrompt(null);
+        setClearanceDocNumber("");
+        return;
+      }
+      if (documentRow) {
+        setDocumentRow(null);
+        setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
+        return;
+      }
+      if (actionRow) {
+        setActionRow(null);
+        return;
+      }
+      if (auditRow) {
+        setAuditRow(null);
+        return;
+      }
+      if (editRow) {
+        setEditRow(null);
+        return;
+      }
+      if (shipmentImportReviewOpen) {
+        setShipmentImportReviewOpen(false);
+        return;
+      }
+      if (sourceBatchDetail) {
+        setSourceBatchDetail(null);
+        return;
+      }
+      if (recordsView) {
+        setRecordsView(null);
+        setRecordsSearch("");
+        setRecordsMovementFilter("All");
+        return;
+      }
+      if (ownerDeleteUser) {
+        setOwnerDeleteUser(null);
+        return;
+      }
+      if (ownerUserShipments) {
+        setOwnerUserShipments(null);
+        return;
+      }
+      if (passwordModalOpen && !currentUser?.password_reset_required) {
+        setPasswordModalOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [
+    actionRow,
+    auditRow,
+    clearancePrompt,
+    confirmAction,
+    currentUser,
+    documentRow,
+    editRow,
+    ownerDeleteUser,
+    ownerUserShipments,
+    passwordModalOpen,
+    quickEditRow,
+    recordsView,
+    rowContextMenu,
+    shipmentImportReviewOpen,
+    sourceBatchDetail,
+  ]);
+
   const toggleGroupSelection = useCallback((row) => {
     const key = cleanText(row.group_key || row.id);
     setSelectedGroupKeys((current) =>
@@ -2114,6 +2216,8 @@ function App() {
           shipment_status: shipmentStatus,
           ...extra,
         });
+        setActionRow((current) => applyShipmentOverlayUpdate(current, row, shipmentStatus, extra));
+        setAuditRow((current) => applyShipmentOverlayUpdate(current, row, shipmentStatus, extra));
         setDashboardRows((current) =>
             current.map((item) =>
               item.group_key === row.group_key
@@ -2167,6 +2271,8 @@ function App() {
           bl_number: row.bl_number,
           container_numbers: row.container_numbers,
         });
+        setActionRow((current) => (current?.group_key === row.group_key ? null : current));
+        setAuditRow((current) => (current?.group_key === row.group_key ? null : current));
         setDashboardRows((current) => current.filter((item) => item.group_key !== row.group_key));
         setShipments((current) => current.filter((shipment) => !rowMatchesShipment(row, shipment)));
         setFeedback({
@@ -3595,7 +3701,7 @@ function App() {
                   await handleGroupStatusChange(confirmAction.row, confirmAction.type);
                 }
                 setConfirmAction(null);
-                if (confirmAction.type !== "completed") {
+                if (confirmAction.type === "delete") {
                   setActionRow(null);
                 }
               }}
@@ -3745,7 +3851,6 @@ function App() {
                 });
                 setClearancePrompt(null);
                 setClearanceDocNumber("");
-                setActionRow(null);
               }}
             >
               Save and Complete
