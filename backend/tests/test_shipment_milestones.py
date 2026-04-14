@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import datetime, timedelta
 from tempfile import NamedTemporaryFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -375,6 +376,53 @@ class ShipmentMilestoneTests(unittest.TestCase):
         self.assertEqual(review["invalid_count"], 0)
         self.assertEqual(review["valid_count"], 3)
         self.assertEqual(review["skipped_blank_count"], 0)
+
+    def test_dashboard_identifiers_count_rail_start_from_wagon_loaded_date(self) -> None:
+        now = datetime.now()
+        within_week = (now - timedelta(days=2)).strftime("%d-%m-%Y")
+        older = (now - timedelta(days=20)).strftime("%d-%m-%Y")
+
+        shipment_one = Shipment(
+            customer_name="Rail One",
+            container_number="MSBU1891823",
+            bl_number="BL-RAIL-1",
+            shipment_status="active",
+            movement_category="On Rail",
+            latest_location="MUZAFFARPUR JN., Sonpur Division",
+            latest_time=within_week,
+            wagon_loaded_date=within_week,
+            departure="",
+        )
+        shipment_two = Shipment(
+            customer_name="Rail One",
+            container_number="MSBU1904849",
+            bl_number="BL-RAIL-1",
+            shipment_status="active",
+            movement_category="On Rail",
+            latest_location="MUZAFFARPUR JN., Sonpur Division",
+            latest_time=within_week,
+            wagon_loaded_date=within_week,
+            departure="",
+        )
+        shipment_three = Shipment(
+            customer_name="Rail Two",
+            container_number="MSMU3793687",
+            bl_number="BL-RAIL-2",
+            shipment_status="active",
+            movement_category="On Rail",
+            latest_location="SAMASTIPUR",
+            latest_time=older,
+            wagon_loaded_date=older,
+            departure="",
+        )
+
+        identifiers = _dashboard_identifiers([shipment_one, shipment_two, shipment_three])
+
+        self.assertEqual(identifiers["railed_out_this_week"], 1)
+        self.assertEqual(
+            identifiers["railed_out_this_week_customers"],
+            [{"customer_name": "Rail One", "shipment_count": 1, "container_count": 1}],
+        )
 
     def test_refresh_all_only_targets_live_shipments(self) -> None:
         engine = create_engine("sqlite:///:memory:", future=True)

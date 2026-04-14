@@ -2944,26 +2944,26 @@ function App() {
       <section className="surface metrics-panel">
         <div className="panel-heading compact-heading">
           <div>
-            <p className="eyebrow">Movement Summary</p>
-            <h2>Shipment Position</h2>
+            <p className="eyebrow">Overview</p>
+            <h2>Where Shipments Stand</h2>
           </div>
         </div>
         <div className="dashboard-header-metrics">
           <DashboardMetric
-            label="At ICD Birgunj"
+            label="At Birgunj"
             value={dashboardIdentifiers.total_at_icd_birgunj || 0}
             tone="primary"
             icon={<MovementIcon type="Arrived Birgunj" />}
           />
           <DashboardMetric
-            label="Today Arrivals"
+            label="Arrived Today"
             value={dashboardIdentifiers.today_arrivals || 0}
             tone="success"
             icon={<MovementIcon type="On Rail" />}
             customers={dashboardIdentifiers.today_arrival_customers || []}
           />
           <DashboardMetric
-            label="Approaching Destination"
+            label="Near Birgunj"
             value={dashboardIdentifiers.approaching_birgunj || 0}
             tone="warning"
             icon={
@@ -2977,7 +2977,7 @@ function App() {
             customers={dashboardIdentifiers.approaching_birgunj_customers || []}
           />
           <DashboardMetric
-            label="Railed Out This Week"
+            label="Started Rail This Week"
             value={dashboardIdentifiers.railed_out_this_week || 0}
             tone="primary"
             icon={

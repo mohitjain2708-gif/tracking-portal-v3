@@ -2895,6 +2895,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "pristine_booking_date": _earliest_non_empty_date([item.get("pristine_booking_date", "") for item in sorted_entries]),
                 "train_no": _first_non_empty([item.get("train_no", "") for item in sorted_entries]),
                 "departure": _first_non_empty([item.get("departure", "") for item in sorted_entries]),
+                "wagon_loaded_date": _earliest_non_empty_date([item.get("wagon_loaded_date", "") for item in sorted_entries]),
                 "tracking_source": ",".join(tracking_sources),
                 "source_type": _first_non_empty([item.get("source_type", "") for item in sorted_entries]),
                 "source_label": _first_non_empty([item.get("source_label", "") for item in sorted_entries]),
@@ -2948,6 +2949,11 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
         movement_category = _clean_text(row.get("movement_category")) or "Hi Seas"
         customer_name = _format_customer_name(row.get("customer_name", ""))
         arrived = movement_category == "Arrived Birgunj"
+        rail_start_date = (
+            _parse_date(row.get("departure", ""))
+            or _parse_date(row.get("wagon_loaded_date", ""))
+            or (_parse_date(row.get("movement_since_date", "")) if movement_category == "On Rail" else None)
+        )
         if arrived:
             total_at_icd_birgunj += 1
             arrival_date = _clean_text(row.get("birgunj_arrival_date", "")) or _clean_text(row.get("latest_time", ""))
@@ -2967,8 +2973,7 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
             if customer_name:
                 approaching_birgunj_customers[customer_name] = approaching_birgunj_customers.get(customer_name, 0) + 1
 
-        departure_date = _parse_date(row.get("departure", ""))
-        if departure_date and departure_date.date() >= rolling_week_cutoff:
+        if rail_start_date and rail_start_date.date() >= rolling_week_cutoff:
             railed_out_this_week += 1
             if customer_name:
                 railed_out_this_week_customers[customer_name] = railed_out_this_week_customers.get(customer_name, 0) + 1
