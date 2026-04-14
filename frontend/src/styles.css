@@ -329,6 +329,8 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.82);
+  content-visibility: auto;
+  contain-intrinsic-size: 320px;
 }
 
 .owner-card-head {
@@ -773,6 +775,8 @@ select:focus {
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
   position: relative;
   overflow: visible;
+  content-visibility: auto;
+  contain-intrinsic-size: 58px 220px;
 }
 
 .dashboard-metric:hover {
@@ -856,6 +860,8 @@ select:focus {
 
 .dashboard-panel {
   z-index: 1;
+  content-visibility: auto;
+  contain-intrinsic-size: 720px;
 }
 
 .dashboard-metric-tooltip p {
@@ -1875,6 +1881,8 @@ select:focus {
 .audit-panel {
   display: grid;
   gap: 14px;
+  content-visibility: auto;
+  contain-intrinsic-size: 640px;
 }
 
 .history-tools {
@@ -2585,6 +2593,8 @@ select:focus {
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.84);
   animation: rise-in 0.22s ease both;
+  content-visibility: auto;
+  contain-intrinsic-size: 420px;
 }
 
 .stack-form textarea {

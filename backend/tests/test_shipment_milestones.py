@@ -39,6 +39,8 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 class ShipmentMilestoneTests(unittest.TestCase):
     def test_dashboard_identifiers_count_shipment_groups_not_containers(self) -> None:
+        today_text = datetime.now().strftime("%d-%m-%Y")
+        recent_rail_text = (datetime.now() - timedelta(days=2)).strftime("%d-%m-%Y")
         shipments = [
             Shipment(
                 customer_name="Grouped Customer",
@@ -47,8 +49,8 @@ class ShipmentMilestoneTests(unittest.TestCase):
                 shipment_status="active",
                 movement_category="Arrived Birgunj",
                 latest_location="ICD BIRGANJ, Samastipur",
-                birgunj_arrival_date="14-04-2026",
-                departure="12-04-2026",
+                birgunj_arrival_date=today_text,
+                departure=recent_rail_text,
             ),
             Shipment(
                 customer_name="Grouped Customer",
@@ -57,8 +59,8 @@ class ShipmentMilestoneTests(unittest.TestCase):
                 shipment_status="active",
                 movement_category="Arrived Birgunj",
                 latest_location="ICD BIRGANJ, Samastipur",
-                birgunj_arrival_date="14-04-2026",
-                departure="12-04-2026",
+                birgunj_arrival_date=today_text,
+                departure=recent_rail_text,
             ),
             Shipment(
                 customer_name="Approaching Customer",
@@ -67,7 +69,7 @@ class ShipmentMilestoneTests(unittest.TestCase):
                 shipment_status="active",
                 movement_category="On Rail",
                 latest_location="RAXAUL JN., Samastipur",
-                departure="13-04-2026",
+                departure=recent_rail_text,
             ),
             Shipment(
                 customer_name="Approaching Customer",
@@ -76,7 +78,7 @@ class ShipmentMilestoneTests(unittest.TestCase):
                 shipment_status="active",
                 movement_category="On Rail",
                 latest_location="RAXAUL JN., Samastipur",
-                departure="13-04-2026",
+                departure=recent_rail_text,
             ),
         ]
 

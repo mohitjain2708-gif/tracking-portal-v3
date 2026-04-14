@@ -1,4 +1,4 @@
-import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, isDemoSessionEnabled } from "./api";
 
 const INITIAL_FORM = {
@@ -266,18 +266,27 @@ function formatTrackingSourceLabel(value) {
   return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }
 
+function applyOperationalFieldUpdate(current, updates = {}) {
+  if (!current) {
+    return current;
+  }
+  return {
+    ...current,
+    clearance_doc_number: updates.clearance_doc_number ?? current.clearance_doc_number ?? "",
+    do_date: updates.do_date ?? current.do_date ?? "",
+    document_status: updates.document_status ?? current.document_status ?? "",
+    original_docs_received_date:
+      updates.original_docs_received_date ?? current.original_docs_received_date ?? "",
+  };
+}
+
 function applyShipmentOverlayUpdate(current, referenceRow, shipmentStatus, extra = {}) {
   if (!current || current.group_key !== referenceRow.group_key) {
     return current;
   }
   return {
-    ...current,
+    ...applyOperationalFieldUpdate(current, extra),
     shipment_status: shipmentStatus,
-    clearance_doc_number: extra.clearance_doc_number || current.clearance_doc_number || "",
-    do_date: extra.do_date ?? current.do_date ?? "",
-    document_status: extra.document_status ?? current.document_status ?? "",
-    original_docs_received_date:
-      extra.original_docs_received_date ?? current.original_docs_received_date ?? "",
   };
 }
 
@@ -926,6 +935,8 @@ function App() {
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
   const locationDistanceCacheRef = useRef({});
+  const deferredSearch = useDeferredValue(search);
+  const deferredRecordsSearch = useDeferredValue(recordsSearch);
   const [documentRow, setDocumentRow] = useState(null);
   const [recordsView, setRecordsView] = useState(null);
   const [recordsSearch, setRecordsSearch] = useState("");
@@ -1363,10 +1374,10 @@ function App() {
     return sourceRows.filter((row) => {
       const matchesMovement =
         recordsMovementFilter === "All" || row.movement_category === recordsMovementFilter;
-      const matchesSearch = rowMatchesSearch(row, recordsSearch);
+      const matchesSearch = rowMatchesSearch(row, deferredRecordsSearch);
       return matchesMovement && matchesSearch;
     });
-  }, [archivedHistoryRows, completedHistoryRows, recordsMovementFilter, recordsSearch, recordsView]);
+  }, [archivedHistoryRows, completedHistoryRows, deferredRecordsSearch, recordsMovementFilter, recordsView]);
 
   const movementCounts = useMemo(() => {
     return normalizedRows.reduce(
@@ -1389,7 +1400,7 @@ function App() {
         || (shipmentStatusFilter === "action_needed" ? Boolean(row.action_required) : row.shipment_status === shipmentStatusFilter);
       const matchesMovement =
         movementFilter === "All" || row.movement_category === movementFilter;
-      const matchesSearch = rowMatchesSearch(row, search);
+      const matchesSearch = rowMatchesSearch(row, deferredSearch);
 
       return matchesStatus && matchesMovement && matchesSearch;
     });
@@ -1401,7 +1412,7 @@ function App() {
           : compareValues(left[sortConfig.key], right[sortConfig.key], sortConfig.key);
       return sortConfig.direction === "asc" ? result : -result;
     });
-  }, [locationDistanceMap, movementFilter, normalizedRows, search, shipmentStatusFilter, sortConfig]);
+  }, [deferredSearch, locationDistanceMap, movementFilter, normalizedRows, shipmentStatusFilter, sortConfig]);
 
   useEffect(() => {
     const currentKeys = new Set(normalizedRows.map((row) => cleanText(row.group_key || row.id)));
@@ -1758,19 +1769,42 @@ function App() {
         setFieldSavingKeys((current) => ({ ...current, [saveKey]: true }));
         setFeedback(null);
         try {
+          const appliedUpdates = {
+            clearance_doc_number: updates.clearance_doc_number ?? row.clearance_doc_number ?? "",
+            do_date: updates.do_date ?? row.do_date ?? "",
+            document_status: updates.document_status ?? row.document_status ?? "",
+            original_docs_received_date:
+              updates.original_docs_received_date ?? row.original_docs_received_date ?? "",
+          };
           await api.updateShipmentGroupDetails({
             current_bl_number: row.bl_number,
             current_container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
             customer_name: row.customer_name || "",
             bl_number: row.bl_number || "",
             container_numbers: row.container_numbers || [row.primary_container_number].filter(Boolean),
-            clearance_doc_number: updates.clearance_doc_number ?? row.clearance_doc_number ?? "",
-            do_date: updates.do_date ?? row.do_date ?? "",
-            document_status: updates.document_status ?? row.document_status ?? "",
-            original_docs_received_date:
-              updates.original_docs_received_date ?? row.original_docs_received_date ?? "",
+            ...appliedUpdates,
           });
-          await loadDashboard({ silent: true });
+          setDashboardRows((current) =>
+            current.map((item) =>
+              item.group_key === row.group_key ? applyOperationalFieldUpdate(item, appliedUpdates) : item
+            )
+          );
+          setShipments((current) =>
+            current.map((shipment) =>
+              rowMatchesShipment(row, shipment) ? applyOperationalFieldUpdate(shipment, appliedUpdates) : shipment
+            )
+          );
+          setAuditRow((current) =>
+            current?.group_key === row.group_key ? applyOperationalFieldUpdate(current, appliedUpdates) : current
+          );
+          setActionRow((current) =>
+            current?.group_key === row.group_key ? applyOperationalFieldUpdate(current, appliedUpdates) : current
+          );
+          setQuickEditRow((current) =>
+            current?.group_key === row.group_key ? applyOperationalFieldUpdate(current, appliedUpdates) : current
+          );
+          setFeedback({ tone: "success", text: "Saved." });
+          void loadDashboard({ silent: true });
           return true;
         } catch (error) {
           setFeedback({ tone: "error", text: error.message || "Could not save the shipment fields." });
@@ -2239,7 +2273,7 @@ function App() {
       try {
         await api.uploadBLDocument(blNumber, documentType, file);
         setFeedback({ tone: "success", text: `${documentType.replace("_", " ")} uploaded for ${blNumber}.` });
-        await loadDashboard({ silent: true });
+        void loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Document upload failed" });
       } finally {
@@ -2302,7 +2336,7 @@ function App() {
                   ? `${data.count ?? 0} shipment record(s) marked complete.`
                   : `${data.count ?? 0} shipment record(s) moved to archive.`,
           });
-        await loadDashboard({ silent: true });
+        void loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Status update failed" });
       }
@@ -2372,7 +2406,7 @@ function App() {
           tone: "success",
           text: `${data.group_count ?? selectedRows.length} shipment group${(data.group_count ?? selectedRows.length) === 1 ? "" : "s"} updated.`,
         });
-        await loadDashboard({ silent: true });
+        void loadDashboard({ silent: true });
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Bulk update failed" });
       }
