@@ -22,6 +22,8 @@ class Shipment(Base):
     pristine_booking_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     train_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     departure: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    wagon_loaded_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    concor_location_code: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     rail_status: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     movement_category: Mapped[str] = mapped_column(String(64), nullable=False, default="Hi Seas")
     delay_days: Mapped[float] = mapped_column(Float, nullable=False, default=0)

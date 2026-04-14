@@ -108,6 +108,8 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "pristine_booking_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
     "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "wagon_loaded_date": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "concor_location_code": "VARCHAR(32) NOT NULL DEFAULT ''",
     "rail_status": "VARCHAR(64) NOT NULL DEFAULT ''",
     "movement_category": "VARCHAR(64) NOT NULL DEFAULT 'Hi Seas'",
     "delay_days": "FLOAT NOT NULL DEFAULT 0",
@@ -544,14 +546,21 @@ def _normalize_existing_movement(value: str) -> str:
     return movement
 
 
-def _movement_category(location: str, train_no: str, departure: str, delay_days: float = 0) -> str:
+def _movement_category(
+    location: str,
+    train_no: str,
+    departure: str,
+    delay_days: float = 0,
+    concor_location_code: str = "",
+) -> str:
     location_text = _clean_text(location)
     location_upper = location_text.upper()
     train_number = _clean_text(train_no)
     departure_text = _clean_text(departure)
+    concor_code = _clean_text(concor_location_code).upper()
     if _is_arrived(location_text):
         return "Arrived Birgunj"
-    if train_number or departure_text:
+    if train_number or departure_text or concor_code == "WGN":
         return "On Rail"
     if _is_port(location_text) or "VIZAG" in location_upper or "VISHAKAPATNAM" in location_upper:
         return "At Port"
@@ -592,6 +601,7 @@ def _effective_shipment_movement(shipment: Shipment) -> str:
             shipment.train_no,
             shipment.departure,
             shipment.delay_days,
+            getattr(shipment, "concor_location_code", ""),
         )
     )
 
@@ -621,12 +631,13 @@ def _movement_since_date(
     port_arrival_date: str,
     birgunj_arrival_date: str,
     departure: str,
+    wagon_loaded_date: str = "",
 ) -> str:
     movement = _normalize_existing_movement(movement_category or "")
     if movement == "Arrived Birgunj":
         return _clean_text(birgunj_arrival_date) or _clean_text(latest_time)
     if movement == "On Rail":
-        return _clean_text(departure) or _clean_text(latest_time)
+        return _clean_text(departure) or _clean_text(wagon_loaded_date) or _clean_text(latest_time)
     if movement == "At Port":
         return _clean_text(port_arrival_date) or _clean_text(latest_time)
     return _clean_text(latest_time)
@@ -693,6 +704,22 @@ def _normalize_manual_date(value: Any) -> str:
     if not text_value:
         return ""
     return _format_to_dd_mm_yyyy(text_value)
+
+
+def _extract_concor_wagon_signal(details_text: str, last_reported_text: str = "") -> tuple[str, str]:
+    combined_text = " ".join(
+        part for part in (_clean_text(details_text), _clean_text(last_reported_text)) if part
+    )
+    if not combined_text:
+        return "", ""
+
+    code_match = re.search(r"\bWGN\b", combined_text, re.IGNORECASE)
+    if not code_match:
+        return "", ""
+
+    date_match = re.search(r"since\s*\(?\s*(\d{2}/\d{2}/\d{4})", combined_text, re.IGNORECASE)
+    wagon_loaded_date = _format_to_dd_mm_yyyy(date_match.group(1)) if date_match else ""
+    return "WGN", wagon_loaded_date
 
 
 def _normalize_document_status(value: Any) -> str:
@@ -978,11 +1005,23 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
             return None
         departure = _format_to_dd_mm_yyyy(_json_value(container_track, "DEPARTURE_DATE_&_TIME"))
         last_reported_raw = _json_value(container_track, "LAST_REPORTED_STATION")
+        details_text = _json_value(container_track, "DETAILS") or _json_value(container_track, "details")
+        concor_location_code, wagon_loaded_date = _extract_concor_wagon_signal(details_text, last_reported_raw)
         last_reported_date = ""
         date_match = re.search(r"(\d{2}/\d{2}/\d{4})", last_reported_raw)
         if date_match:
             last_reported_date = _format_to_dd_mm_yyyy(date_match.group(1))
-        return {"train_no": _json_value(container_track, "TRAIN_NUMBER"), "wagon_no": _json_value(container_track, "WAGON_NUMBER"), "train_origin": _json_value(container_track, "TRAIN_ORIGNATING_STATION"), "train_destination": _json_value(container_track, "TRAIN_DESTINATION_STATION"), "departure": departure, "last_reported_station": last_reported_date, "shipping_line": ""}
+        return {
+            "train_no": _json_value(container_track, "TRAIN_NUMBER"),
+            "wagon_no": _json_value(container_track, "WAGON_NUMBER"),
+            "train_origin": _json_value(container_track, "TRAIN_ORIGNATING_STATION"),
+            "train_destination": _json_value(container_track, "TRAIN_DESTINATION_STATION"),
+            "departure": departure,
+            "last_reported_station": last_reported_date,
+            "shipping_line": "",
+            "concor_location_code": concor_location_code,
+            "wagon_loaded_date": wagon_loaded_date,
+        }
     except Exception:
         return None
 
@@ -1573,6 +1612,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         shipment.port_arrival_date,
         getattr(shipment, "birgunj_arrival_date", ""),
         shipment.departure,
+        getattr(shipment, "wagon_loaded_date", ""),
     )
     return {
         "id": shipment.id,
@@ -1588,6 +1628,8 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "pristine_booking_date": getattr(shipment, "pristine_booking_date", ""),
         "train_no": shipment.train_no,
         "departure": shipment.departure,
+        "wagon_loaded_date": getattr(shipment, "wagon_loaded_date", ""),
+        "concor_location_code": getattr(shipment, "concor_location_code", ""),
         "rail_status": shipment.rail_status,
         "movement_category": movement_category,
         "delay_days": shipment.delay_days,
@@ -2094,13 +2136,21 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
     delay_days = float(ldb_data.get("delay_days", 0) or 0)
     train_no = concor_data.get("train_no", "")
     departure = concor_data.get("departure", "")
+    wagon_loaded_date = concor_data.get("wagon_loaded_date", "")
+    concor_location_code = concor_data.get("concor_location_code", "")
     wagon_no = concor_data.get("wagon_no", "")
     train_origin = concor_data.get("train_origin", "")
     train_destination = concor_data.get("train_destination", "")
     shipping_line = concor_data.get("shipping_line", "")
     if not latest_location and concor_data.get("last_reported_station"):
         latest_location = concor_data["last_reported_station"]
-    movement_category = _movement_category(latest_location, train_no, departure, delay_days)
+    movement_category = _movement_category(
+        latest_location,
+        train_no,
+        departure,
+        delay_days,
+        concor_location_code,
+    )
 
     if pristine_data.get("arrival_date"):
         latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
@@ -2116,6 +2166,8 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         "pristine_booking_date": pristine_data.get("booking_date", ""),
         "train_no": train_no,
         "departure": departure,
+        "wagon_loaded_date": wagon_loaded_date,
+        "concor_location_code": concor_location_code,
         "rail_status": rail_status,
         "movement_category": movement_category,
         "delay_days": delay_days,
@@ -2131,7 +2183,7 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
     }
     has_data = bool(ldb_data or concor_data or pristine_data)
     status = "success" if has_data else "no_data"
-    error = "" if train_no or not concor_data else "CONCOR returned but no train number"
+    error = "" if train_no or concor_location_code == "WGN" or not concor_data else "CONCOR returned but no train number"
     if not has_data:
         error = "No data from any API"
 
@@ -2156,6 +2208,8 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     shipment.pristine_booking_date = data.get("pristine_booking_date", "") or ""
     shipment.train_no = data.get("train_no", "") or ""
     shipment.departure = data.get("departure", "") or ""
+    shipment.wagon_loaded_date = data.get("wagon_loaded_date", "") or ""
+    shipment.concor_location_code = data.get("concor_location_code", "") or ""
     shipment.rail_status = data.get("rail_status", "") or ""
     shipment.movement_category = _normalize_existing_movement(data.get("movement_category", "") or "Hi Seas")
     shipment.delay_days = float(data.get("delay_days", 0) or 0)

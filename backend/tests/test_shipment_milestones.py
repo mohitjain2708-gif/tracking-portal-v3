@@ -13,7 +13,9 @@ from app.api.routes.shipments import (
     _apply_group_status_transition,
     _containers_from_import_row,
     _derive_ldb_milestones,
+    _extract_concor_wagon_signal,
     _effective_shipment_location,
+    _movement_category,
     _movement_since_date,
     _normalize_bl_number,
     _summarize_import_rows,
@@ -175,6 +177,32 @@ class ShipmentMilestoneTests(unittest.TestCase):
         )
 
         self.assertTrue(_shipment_needs_action(shipment))
+
+    def test_concor_wgn_signal_marks_shipment_as_on_rail(self) -> None:
+        movement = _movement_category(
+            "MMLP-VISAKHAPATNAM",
+            "",
+            "",
+            0,
+            "WGN",
+        )
+
+        self.assertEqual(movement, "On Rail")
+
+    def test_concor_wgn_since_date_becomes_rail_start_date(self) -> None:
+        self.assertEqual(
+            _movement_since_date("On Rail", "14-04-2026", "19-03-2026", "", "", "13-04-2026"),
+            "13-04-2026",
+        )
+
+    def test_extract_concor_wagon_signal_parses_wgn_since_date(self) -> None:
+        location_code, wagon_loaded_date = _extract_concor_wagon_signal(
+            "Arrived at MMLP-VISAKHAPATNAM on 19/03/2026 14:20:00 and currently at location WGN since (13/04/2026 19:31:00)",
+            "",
+        )
+
+        self.assertEqual(location_code, "WGN")
+        self.assertEqual(wagon_loaded_date, "13-04-2026")
 
     def test_at_port_uses_first_port_entry_not_latest_internal_move(self) -> None:
         last_event = _entry(
