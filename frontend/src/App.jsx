@@ -3168,7 +3168,6 @@ function App() {
               <div>DO Date</div>
               <div>Document Status</div>
               <div className="th-center">Documents</div>
-              <div className="th-center">Actions</div>
             </div>
           </div>
         )}
@@ -3196,19 +3195,18 @@ function App() {
                 <th>DO Date</th>
                 <th>Document Status</th>
                 <th className="th-center">Documents</th>
-                <th className="th-center">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="14" className="empty-cell">
+                  <td colSpan="13" className="empty-cell">
                     Loading shipments...
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan="14" className="empty-cell">
+                  <td colSpan="13" className="empty-cell">
                     No shipments match the current filters.
                   </td>
                 </tr>
@@ -3278,32 +3276,22 @@ function App() {
                           <strong>{formatDocumentStatusSummary(row)}</strong>
                         </div>
                       </td>
-                      <td className="td-center">
-                        <div className="docs-inline">
-                          <span className={`docs-status ${row.documents_complete ? "is-complete" : ""}`}>
-                            {row.documents_complete ? "Complete" : "Pending"}
-                          </span>
+                        <td className="td-center">
+                          <div className="docs-inline">
+                            <span className={`docs-status ${row.documents_complete ? "is-complete" : ""}`}>
+                              {row.documents_complete ? "Complete" : "Pending"}
+                            </span>
                           <ActionButton type="button" tone="ghost" onClick={(event) => {
                             event.stopPropagation();
                             setDocumentRow(row);
                           }}>
-                            {row.documents_complete ? "Documents Submitted" : "Submit Documents"}
-                          </ActionButton>
-                        </div>
+                              {row.documents_complete ? "Documents Submitted" : "Submit Documents"}
+                            </ActionButton>
+                          </div>
                         </td>
-                        <td className="td-center">
-                          <div className="action-group compact-actions-row">
-                            <ActionButton type="button" tone="ghost" onClick={(event) => {
-                              event.stopPropagation();
-                              setActionRow(row);
-                            }}>
-                              Manage
-                          </ActionButton>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                      </tr>
+                    );
+                  })
               )}
             </tbody>
           </table>
@@ -3409,12 +3397,6 @@ function App() {
                       onClick={() => setDocumentRow(row)}
                     >
                       {row.documents_complete ? "View Documents" : "Submit Documents"}
-                    </ActionButton>
-                    <ActionButton type="button" tone="ghost" onClick={() => setQuickEditRow(row)}>
-                      Quick Edit
-                    </ActionButton>
-                    <ActionButton type="button" tone="ghost" onClick={() => setActionRow(row)}>
-                      Manage
                     </ActionButton>
                   </div>
                 </article>
@@ -4096,6 +4078,16 @@ function App() {
                 }}
               >
                 Edit Details
+              </ActionButton>
+              <ActionButton
+                type="button"
+                tone="secondary"
+                onClick={() => {
+                  setActionRow(auditRow);
+                  setAuditRow(null);
+                }}
+              >
+                Manage
               </ActionButton>
             </>
           }
