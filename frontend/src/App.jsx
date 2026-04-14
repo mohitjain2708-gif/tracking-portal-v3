@@ -132,6 +132,17 @@ function hasDocumentDraftChanges(row, draft) {
   return toInputDateValue(row?.original_docs_received_date) !== cleanText(draft?.original_docs_received_date);
 }
 
+function formatDocumentStatusSummary(row) {
+  const status = cleanText(row?.document_status);
+  if (!status) {
+    return "Not set";
+  }
+  if (status === "Original" && cleanText(row?.original_docs_received_date)) {
+    return `Original · ${row.original_docs_received_date}`;
+  }
+  return status;
+}
+
 function normalizeLooseText(value) {
   return cleanText(value)
     .toLowerCase()
@@ -906,6 +917,8 @@ function App() {
   const [recordsMovementFilter, setRecordsMovementFilter] = useState("All");
   const [bulkConfirmAction, setBulkConfirmAction] = useState(null);
   const [bulkClearanceMap, setBulkClearanceMap] = useState({});
+  const [quickEditRow, setQuickEditRow] = useState(null);
+  const [rowContextMenu, setRowContextMenu] = useState(null);
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [editRow, setEditRow] = useState(null);
@@ -1403,6 +1416,23 @@ function App() {
     }));
   }, []);
 
+  useEffect(() => {
+    if (!rowContextMenu) {
+      return undefined;
+    }
+
+    const closeMenu = () => setRowContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [rowContextMenu]);
+
   const toggleGroupSelection = useCallback((row) => {
     const key = cleanText(row.group_key || row.id);
     setSelectedGroupKeys((current) =>
@@ -1644,6 +1674,30 @@ function App() {
       }
     },
     [getOperationalDraft, handleOperationalFieldSave, setOperationalDraftValue]
+  );
+
+  const saveQuickEditDraft = useCallback(
+    async (row) => {
+      const draft = getOperationalDraft(row);
+      if (draft.document_status === "Original" && !cleanText(draft.original_docs_received_date)) {
+        setFeedback({
+          tone: "error",
+          text: `Choose the received date before saving Original documents for ${row.customer_name || row.bl_number || "this shipment"}.`,
+        });
+        return false;
+      }
+      const saved = await handleOperationalFieldSave(row, {
+        do_date: fromInputDateValue(draft.do_date),
+        document_status: draft.document_status,
+        original_docs_received_date:
+          draft.document_status === "Original" ? fromInputDateValue(draft.original_docs_received_date) : "",
+      });
+      if (saved) {
+        setQuickEditRow(null);
+      }
+      return saved;
+    },
+    [getOperationalDraft, handleOperationalFieldSave]
   );
 
   const handleShipmentImportPreview = useCallback(async () => {
@@ -3162,18 +3216,15 @@ function App() {
                 filteredRows.map((row) => {
                   const rowKey = cleanText(row.group_key || row.id);
                   const isSelected = selectedGroupKeys.includes(rowKey);
-                  const draft = getOperationalDraft(row);
-                  const doDateSaving = Boolean(fieldSavingKeys[`${row.group_key}:do_date`]);
-                  const documentSaving = Boolean(
-                    fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
-                  );
-                  const doDateDirty = hasDoDateDraftChanges(row, draft);
-                  const documentDirty = hasDocumentDraftChanges(row, draft);
                   return (
                     <tr
                       key={row.group_key || row.id}
                       className={`interactive-row ${isSelected ? "is-selected" : ""}`}
                       onClick={() => setAuditRow(row)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setRowContextMenu({ row, x: event.clientX, y: event.clientY });
+                      }}
                     >
                       <td className="td-center selection-col" onClick={(event) => event.stopPropagation()}>
                         <input
@@ -3215,87 +3266,16 @@ function App() {
                       <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
-                      <td onClick={(event) => event.stopPropagation()}>
-                        <div className="row-field-panel">
-                          <span className="row-field-label">DO date</span>
-                          <input
-                            className="inline-field-control"
-                            type="date"
-                            value={draft.do_date}
-                            onChange={(event) =>
-                              setOperationalDraftValue(row, { do_date: event.target.value })
-                            }
-                          />
-                          {doDateDirty || doDateSaving ? (
-                            <ActionButton
-                              type="button"
-                              tone="ghost"
-                              compact
-                              disabled={doDateSaving}
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                await saveDoDateDraft(row);
-                              }}
-                            >
-                              {doDateSaving ? "Saving..." : "Apply"}
-                            </ActionButton>
-                          ) : (
-                            <span className="row-field-note">{draft.do_date ? "Saved" : "Optional"}</span>
-                          )}
+                      <td>
+                        <div className="row-display-field">
+                          <span className="row-display-label">DO Date</span>
+                          <strong>{row.do_date || "Not set"}</strong>
                         </div>
                       </td>
-                      <td onClick={(event) => event.stopPropagation()}>
-                        <div className="row-field-panel row-field-panel-docs">
-                          <span className="row-field-label">Documents</span>
-                          <select
-                            className="inline-field-control"
-                            value={draft.document_status}
-                            onChange={(event) =>
-                              setOperationalDraftValue(row, {
-                                document_status: event.target.value,
-                                original_docs_received_date:
-                                  event.target.value === "Original" ? draft.original_docs_received_date : "",
-                              })
-                            }
-                          >
-                            {DOCUMENT_STATUS_OPTIONS.map((option) => (
-                              <option key={option || "empty"} value={option}>
-                                {option || "Select"}
-                              </option>
-                            ))}
-                          </select>
-                          {draft.document_status === "Original" ? (
-                            <input
-                              className="inline-field-control"
-                              type="date"
-                              value={draft.original_docs_received_date}
-                              onChange={(event) =>
-                                setOperationalDraftValue(row, {
-                                  original_docs_received_date: event.target.value,
-                                })
-                              }
-                            />
-                          ) : null}
-                          {documentDirty || documentSaving ? (
-                            <ActionButton
-                              type="button"
-                              tone="ghost"
-                              compact
-                              disabled={documentSaving}
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                await saveDocumentDraft(row);
-                              }}
-                            >
-                              {documentSaving ? "Saving..." : "Apply"}
-                            </ActionButton>
-                          ) : (
-                            <span className="row-field-note">
-                              {draft.document_status === "Original" && draft.original_docs_received_date
-                                ? `Original received ${draft.original_docs_received_date}`
-                                : draft.document_status || "No document choice"}
-                            </span>
-                          )}
+                      <td>
+                        <div className="row-display-field">
+                          <span className="row-display-label">Documents</span>
+                          <strong>{formatDocumentStatusSummary(row)}</strong>
                         </div>
                       </td>
                       <td className="td-center">
@@ -3313,6 +3293,12 @@ function App() {
                       </td>
                       <td className="td-center">
                         <div className="action-group compact-actions-row">
+                          <ActionButton type="button" tone="ghost" onClick={(event) => {
+                            event.stopPropagation();
+                            setQuickEditRow(row);
+                          }}>
+                            Edit
+                          </ActionButton>
                           <ActionButton type="button" tone="ghost" onClick={(event) => {
                             event.stopPropagation();
                             setActionRow(row);
@@ -3338,14 +3324,6 @@ function App() {
             filteredRows.map((row) => {
               const rowKey = cleanText(row.group_key || row.id);
               const isSelected = selectedGroupKeys.includes(rowKey);
-              const draft = getOperationalDraft(row);
-              const doDateSaving = Boolean(fieldSavingKeys[`${row.group_key}:do_date`]);
-              const documentSaving = Boolean(
-                fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
-              );
-              const doDateDirty = hasDoDateDraftChanges(row, draft);
-              const documentDirty = hasDocumentDraftChanges(row, draft);
-
               return (
                 <article
                   key={`mobile-${row.group_key || row.id}`}
@@ -3417,83 +3395,17 @@ function App() {
                       <strong>{row.departure || "-"}</strong>
                     </div>
                     <div className="mobile-fact">
+                      <span>DO Date</span>
+                      <strong>{row.do_date || "Not set"}</strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Document Status</span>
+                      <strong>{formatDocumentStatusSummary(row)}</strong>
+                    </div>
+                    <div className="mobile-fact">
                       <span>Documents</span>
                       <strong>{row.documents_complete ? "Complete" : "Pending"}</strong>
                     </div>
-                  </div>
-
-                  <div className="mobile-shipment-fields" onClick={(event) => event.stopPropagation()}>
-                    <label className="mobile-field">
-                      <span>DO Date</span>
-                      <input
-                        className="inline-field-control"
-                        type="date"
-                        value={draft.do_date}
-                        onChange={(event) => setOperationalDraftValue(row, { do_date: event.target.value })}
-                      />
-                    </label>
-                    {doDateDirty || doDateSaving ? (
-                      <ActionButton
-                        type="button"
-                        tone="ghost"
-                        compact
-                        disabled={doDateSaving}
-                        onClick={async () => {
-                          await saveDoDateDraft(row);
-                        }}
-                      >
-                        {doDateSaving ? "Saving..." : "Apply DO Date"}
-                      </ActionButton>
-                    ) : null}
-
-                    <label className="mobile-field">
-                      <span>Document Status</span>
-                      <select
-                        className="inline-field-control"
-                        value={draft.document_status}
-                        onChange={(event) =>
-                          setOperationalDraftValue(row, {
-                            document_status: event.target.value,
-                            original_docs_received_date:
-                              event.target.value === "Original" ? draft.original_docs_received_date : "",
-                          })
-                        }
-                      >
-                        {DOCUMENT_STATUS_OPTIONS.map((option) => (
-                          <option key={`mobile-${option || "empty"}`} value={option}>
-                            {option || "Select"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {draft.document_status === "Original" ? (
-                      <label className="mobile-field">
-                        <span>Original Received</span>
-                        <input
-                          className="inline-field-control"
-                          type="date"
-                          value={draft.original_docs_received_date}
-                          onChange={(event) =>
-                            setOperationalDraftValue(row, {
-                              original_docs_received_date: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                    ) : null}
-                    {documentDirty || documentSaving ? (
-                      <ActionButton
-                        type="button"
-                        tone="ghost"
-                        compact
-                        disabled={documentSaving}
-                        onClick={async () => {
-                          await saveDocumentDraft(row);
-                        }}
-                      >
-                        {documentSaving ? "Saving..." : "Apply Document Update"}
-                      </ActionButton>
-                    ) : null}
                   </div>
 
                   <div className="mobile-shipment-actions" onClick={(event) => event.stopPropagation()}>
@@ -3503,6 +3415,9 @@ function App() {
                       onClick={() => setDocumentRow(row)}
                     >
                       {row.documents_complete ? "View Documents" : "Submit Documents"}
+                    </ActionButton>
+                    <ActionButton type="button" tone="ghost" onClick={() => setQuickEditRow(row)}>
+                      Quick Edit
                     </ActionButton>
                     <ActionButton type="button" tone="ghost" onClick={() => setActionRow(row)}>
                       Manage
@@ -3851,6 +3766,125 @@ function App() {
           </div>
         </Modal>
       )}
+
+      {rowContextMenu ? (
+        <div
+          className="context-menu"
+          style={{ top: rowContextMenu.y, left: rowContextMenu.x }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setAuditRow(rowContextMenu.row);
+              setRowContextMenu(null);
+            }}
+          >
+            Open Shipment Detail
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setQuickEditRow(rowContextMenu.row);
+              setRowContextMenu(null);
+            }}
+          >
+            Edit DO Date & Documents
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActionRow(rowContextMenu.row);
+              setRowContextMenu(null);
+            }}
+          >
+            Manage Shipment
+          </button>
+        </div>
+      ) : null}
+
+      {quickEditRow ? (
+        <Modal
+          title={`Quick Edit${quickEditRow.bl_number ? ` - ${quickEditRow.bl_number}` : ""}`}
+          onClose={() => setQuickEditRow(null)}
+        >
+          <div className="quick-edit-shell">
+            <div className="quick-edit-summary">
+              <p className="eyebrow">Shipment</p>
+              <h4>{quickEditRow.customer_name || "Shipment group"}</h4>
+              <span>{quickEditRow.bl_number ? `BL ${quickEditRow.bl_number}` : "BL not linked"}</span>
+            </div>
+            <div className="quick-edit-grid">
+              <label className="field">
+                <span>DO Date</span>
+                <input
+                  type="date"
+                  value={getOperationalDraft(quickEditRow).do_date}
+                  onChange={(event) => setOperationalDraftValue(quickEditRow, { do_date: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Document Status</span>
+                <select
+                  value={getOperationalDraft(quickEditRow).document_status}
+                  onChange={(event) =>
+                    setOperationalDraftValue(quickEditRow, {
+                      document_status: event.target.value,
+                      original_docs_received_date:
+                        event.target.value === "Original"
+                          ? getOperationalDraft(quickEditRow).original_docs_received_date
+                          : "",
+                    })
+                  }
+                >
+                  {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                    <option key={`quick-${option || "empty"}`} value={option}>
+                      {option || "Select"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {getOperationalDraft(quickEditRow).document_status === "Original" ? (
+                <label className="field">
+                  <span>Original Received</span>
+                  <input
+                    type="date"
+                    value={getOperationalDraft(quickEditRow).original_docs_received_date}
+                    onChange={(event) =>
+                      setOperationalDraftValue(quickEditRow, {
+                        original_docs_received_date: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+              ) : null}
+            </div>
+            <div className="modal-actions">
+              <ActionButton type="button" tone="ghost" onClick={() => setQuickEditRow(null)}>
+                Cancel
+              </ActionButton>
+              <ActionButton
+                type="button"
+                tone="primary"
+                disabled={
+                  Boolean(fieldSavingKeys[`${quickEditRow.group_key}:do_date`]) ||
+                  Boolean(fieldSavingKeys[`${quickEditRow.group_key}:document_status|original_docs_received_date`]) ||
+                  (!hasDoDateDraftChanges(quickEditRow, getOperationalDraft(quickEditRow)) &&
+                    !hasDocumentDraftChanges(quickEditRow, getOperationalDraft(quickEditRow)))
+                }
+                onClick={async () => {
+                  await saveQuickEditDraft(quickEditRow);
+                }}
+              >
+                {fieldSavingKeys[`${quickEditRow.group_key}:do_date`] ||
+                fieldSavingKeys[`${quickEditRow.group_key}:document_status|original_docs_received_date`]
+                  ? "Saving..."
+                  : "Save Changes"}
+              </ActionButton>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {documentRow && (
         <Modal title={`${documentRow.documents_complete ? "Manage Documents" : "Submit Documents"} for ${documentRow.bl_number}`} onClose={() => {

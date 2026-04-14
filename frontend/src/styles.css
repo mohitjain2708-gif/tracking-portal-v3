@@ -1416,6 +1416,33 @@ select:focus {
   font-size: 11px;
 }
 
+.row-display-field {
+  display: grid;
+  gap: 4px;
+  min-width: 148px;
+}
+
+.row-display-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #74849b;
+}
+
+.row-display-field strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f3045;
+  line-height: 1.35;
+}
+
+.row-display-note {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #6b7a91;
+}
+
 .docs-status {
   display: inline-flex;
   align-items: center;
@@ -1502,6 +1529,64 @@ select:focus {
 
 .modal-card-wide {
   width: min(1120px, 100%);
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(214, 223, 234, 0.94);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(18px);
+}
+
+.context-menu button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #203145;
+  text-align: left;
+  font: inherit;
+}
+
+.context-menu button:hover {
+  background: rgba(19, 58, 99, 0.06);
+}
+
+.quick-edit-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.quick-edit-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.quick-edit-summary h4 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  color: #1f3045;
+}
+
+.quick-edit-summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.quick-edit-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .modal-header,
