@@ -3097,7 +3097,7 @@ function App() {
             </div>
           </div>
         )}
-        <div className="table-wrap" ref={tableWrapRef}>
+        <div className="table-wrap dashboard-table-wrap" ref={tableWrapRef}>
           <table className="shipment-table dense-table">
             <thead>
               <tr>
@@ -3290,6 +3290,185 @@ function App() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mobile-shipment-list">
+          {loading ? (
+            <div className="mobile-shipment-empty">Loading shipments...</div>
+          ) : filteredRows.length === 0 ? (
+            <div className="mobile-shipment-empty">No shipments match the current filters.</div>
+          ) : (
+            filteredRows.map((row) => {
+              const rowKey = cleanText(row.group_key || row.id);
+              const isSelected = selectedGroupKeys.includes(rowKey);
+              const draft = getOperationalDraft(row);
+              const doDateSaving = Boolean(fieldSavingKeys[`${row.group_key}:do_date`]);
+              const documentSaving = Boolean(
+                fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
+              );
+
+              return (
+                <article
+                  key={`mobile-${row.group_key || row.id}`}
+                  className={`mobile-shipment-card ${isSelected ? "is-selected" : ""}`}
+                  onClick={() => setAuditRow(row)}
+                >
+                  <div className="mobile-shipment-card-head">
+                    <label
+                      className="mobile-select-toggle"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleGroupSelection(row)}
+                        aria-label={`Select shipment ${row.bl_number || row.primary_container_number}`}
+                      />
+                      <span>Select</span>
+                    </label>
+                    <div className="mobile-shipment-meta">
+                      <span className={badgeClass("movement", row.movement_category || "Hi Seas")}>
+                        {row.movement_category || "Hi Seas"}
+                      </span>
+                      <span className={badgeClass("status", row.shipment_status || "unknown")}>
+                        {formatShipmentStatusLabel(row.shipment_status || "active")}
+                      </span>
+                      {row.action_required ? (
+                        <span
+                          className="soft-attention-pill"
+                          title={row.action_required_reason || "Action required"}
+                        >
+                          Action needed
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="mobile-shipment-identity">
+                    <h3>{row.customer_name || "Shipment group"}</h3>
+                    <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}</p>
+                  </div>
+
+                  <div className="mobile-shipment-facts">
+                    <div className="mobile-fact">
+                      <span>Containers</span>
+                      <strong>
+                        {(row.container_numbers?.length
+                          ? row.container_numbers
+                          : [row.primary_container_number]
+                        )
+                          .filter(Boolean)
+                          .join(", ") || "-"}
+                      </strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Current Location</span>
+                      <strong>{row.latest_location || "Not available"}</strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Movement Since</span>
+                      <strong>{row.movement_since_date || row.latest_time || "-"}</strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Train</span>
+                      <strong>{row.train_no || "-"}</strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Departure</span>
+                      <strong>{row.departure || "-"}</strong>
+                    </div>
+                    <div className="mobile-fact">
+                      <span>Documents</span>
+                      <strong>{row.documents_complete ? "Complete" : "Pending"}</strong>
+                    </div>
+                  </div>
+
+                  <div className="mobile-shipment-fields" onClick={(event) => event.stopPropagation()}>
+                    <label className="mobile-field">
+                      <span>DO Date</span>
+                      <input
+                        className="inline-field-control"
+                        type="date"
+                        value={draft.do_date}
+                        onChange={(event) => setOperationalDraftValue(row, { do_date: event.target.value })}
+                      />
+                    </label>
+                    <ActionButton
+                      type="button"
+                      tone="ghost"
+                      compact
+                      disabled={doDateSaving}
+                      onClick={async () => {
+                        await saveDoDateDraft(row);
+                      }}
+                    >
+                      {doDateSaving ? "Saving..." : "Save DO Date"}
+                    </ActionButton>
+
+                    <label className="mobile-field">
+                      <span>Document Status</span>
+                      <select
+                        className="inline-field-control"
+                        value={draft.document_status}
+                        onChange={(event) =>
+                          setOperationalDraftValue(row, {
+                            document_status: event.target.value,
+                            original_docs_received_date:
+                              event.target.value === "Original" ? draft.original_docs_received_date : "",
+                          })
+                        }
+                      >
+                        {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                          <option key={`mobile-${option || "empty"}`} value={option}>
+                            {option || "Select"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {draft.document_status === "Original" ? (
+                      <label className="mobile-field">
+                        <span>Original Received</span>
+                        <input
+                          className="inline-field-control"
+                          type="date"
+                          value={draft.original_docs_received_date}
+                          onChange={(event) =>
+                            setOperationalDraftValue(row, {
+                              original_docs_received_date: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                    ) : null}
+                    <ActionButton
+                      type="button"
+                      tone="ghost"
+                      compact
+                      disabled={documentSaving}
+                      onClick={async () => {
+                        await saveDocumentDraft(row);
+                      }}
+                    >
+                      {documentSaving ? "Saving..." : "Save Document Status"}
+                    </ActionButton>
+                  </div>
+
+                  <div className="mobile-shipment-actions" onClick={(event) => event.stopPropagation()}>
+                    <ActionButton
+                      type="button"
+                      tone="ghost"
+                      onClick={() => setDocumentRow(row)}
+                    >
+                      {row.documents_complete ? "View Documents" : "Submit Documents"}
+                    </ActionButton>
+                    <ActionButton type="button" tone="ghost" onClick={() => setActionRow(row)}>
+                      Manage
+                    </ActionButton>
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
       </section>
 
