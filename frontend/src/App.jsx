@@ -935,12 +935,12 @@ function App() {
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
   const locationDistanceCacheRef = useRef({});
-  const deferredSearch = useDeferredValue(search);
-  const deferredRecordsSearch = useDeferredValue(recordsSearch);
   const [documentRow, setDocumentRow] = useState(null);
   const [recordsView, setRecordsView] = useState(null);
   const [recordsSearch, setRecordsSearch] = useState("");
   const [recordsMovementFilter, setRecordsMovementFilter] = useState("All");
+  const deferredSearch = useDeferredValue(search);
+  const deferredRecordsSearch = useDeferredValue(recordsSearch);
   const [bulkConfirmAction, setBulkConfirmAction] = useState(null);
   const [bulkClearanceMap, setBulkClearanceMap] = useState({});
   const [quickEditRow, setQuickEditRow] = useState(null);
