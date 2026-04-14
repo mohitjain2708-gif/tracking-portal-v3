@@ -244,6 +244,7 @@ export const api = {
 
   listShipments: () => request("/api/shipments"),
   getShipmentDashboard: () => request("/api/shipments/dashboard"),
+  getPortalBootstrap: () => request("/api/shipments/bootstrap"),
   downloadShipmentDashboardReport: () => requestBlob("/api/shipments/dashboard-export"),
   getShipmentStats: () => request("/api/shipments/stats"),
   getLocationDistances: (locations) =>

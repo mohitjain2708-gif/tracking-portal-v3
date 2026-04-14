@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isDemoSessionEnabled } from "./api";
 
 const INITIAL_FORM = {
@@ -885,6 +885,7 @@ function App() {
   const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
+  const locationDistanceCacheRef = useRef({});
   const [documentRow, setDocumentRow] = useState(null);
   const [recordsView, setRecordsView] = useState(null);
   const [recordsSearch, setRecordsSearch] = useState("");
@@ -1009,20 +1010,13 @@ function App() {
     }
 
     try {
-      const [shipmentsData, dashboardData, sourceBatchData, sourceMappingData, sourceConnectionData] = await Promise.all([
-        api.listShipments(),
-        api.getShipmentDashboard(),
-        api.listShipmentSourceBatches(8),
-        api.listShipmentSourceMappings(),
-        api.listShipmentSourceConnections(),
-      ]);
-
-      setShipments(Array.isArray(shipmentsData) ? shipmentsData : []);
-      setDashboardRows(Array.isArray(dashboardData?.rows) ? dashboardData.rows : []);
-      setSourceBatches(Array.isArray(sourceBatchData) ? sourceBatchData : []);
-      setSourceMappings(Array.isArray(sourceMappingData) ? sourceMappingData : []);
-      setSourceConnections(Array.isArray(sourceConnectionData) ? sourceConnectionData : []);
-      setDashboardIdentifiers(dashboardData?.identifiers || {
+      const bootstrap = await api.getPortalBootstrap();
+      const nextShipments = Array.isArray(bootstrap?.shipments) ? bootstrap.shipments : [];
+      const nextDashboardRows = Array.isArray(bootstrap?.dashboard?.rows) ? bootstrap.dashboard.rows : [];
+      const nextSourceBatches = Array.isArray(bootstrap?.source_batches) ? bootstrap.source_batches : [];
+      const nextSourceMappings = Array.isArray(bootstrap?.source_mappings) ? bootstrap.source_mappings : [];
+      const nextSourceConnections = Array.isArray(bootstrap?.source_connections) ? bootstrap.source_connections : [];
+      const nextDashboardIdentifiers = bootstrap?.dashboard?.identifiers || {
         total_at_icd_birgunj: 0,
         today_arrivals: 0,
         approaching_birgunj: 0,
@@ -1030,6 +1024,15 @@ function App() {
         today_arrival_customers: [],
         approaching_birgunj_customers: [],
         railed_out_this_week_customers: [],
+      };
+
+      startTransition(() => {
+        setShipments(nextShipments);
+        setDashboardRows(nextDashboardRows);
+        setSourceBatches(nextSourceBatches);
+        setSourceMappings(nextSourceMappings);
+        setSourceConnections(nextSourceConnections);
+        setDashboardIdentifiers(nextDashboardIdentifiers);
       });
     } catch (error) {
       if (!demoSessionEnabled && /authentication|unauthorized|missing authentication token/i.test(error.message || "")) {
@@ -1098,20 +1101,42 @@ function App() {
     }
 
     let active = true;
+    const applyVisibleDistances = () => {
+      const visibleDistances = {};
+      locations.forEach((location) => {
+        if (Object.prototype.hasOwnProperty.call(locationDistanceCacheRef.current, location)) {
+          visibleDistances[location] = locationDistanceCacheRef.current[location];
+        }
+      });
+      setLocationDistanceMap(visibleDistances);
+    };
+
+    const missingLocations = locations.filter(
+      (location) => !Object.prototype.hasOwnProperty.call(locationDistanceCacheRef.current, location)
+    );
+
+    if (missingLocations.length === 0) {
+      applyVisibleDistances();
+      return undefined;
+    }
 
     api
-      .getLocationDistances(locations)
+      .getLocationDistances(missingLocations)
       .then((data) => {
         if (!active) {
           return;
         }
-        setLocationDistanceMap(data?.items || {});
+        locationDistanceCacheRef.current = {
+          ...locationDistanceCacheRef.current,
+          ...(data?.items || {}),
+        };
+        applyVisibleDistances();
       })
       .catch(() => {
         if (!active) {
           return;
         }
-        setLocationDistanceMap({});
+        applyVisibleDistances();
       });
 
     return () => {

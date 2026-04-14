@@ -1654,6 +1654,97 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     }
 
 
+def _serialize_source_batches(
+    db: Session,
+    current_user: User,
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(limit, 100))
+    batches = list(
+        db.execute(
+            select(ShipmentBatch)
+            .where(ShipmentBatch.user_id == current_user.id)
+            .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
+            .limit(safe_limit)
+        ).scalars()
+    )
+    source_ids = sorted({batch.source_id for batch in batches if batch.source_id})
+    source_map = (
+        {
+            source.id: source
+            for source in db.execute(select(ShipmentSource).where(ShipmentSource.id.in_(source_ids))).scalars()
+        }
+        if source_ids
+        else {}
+    )
+    return [
+        {
+            "id": batch.id,
+            "source_id": batch.source_id,
+            "batch_label": batch.batch_label,
+            "source_sheet": batch.source_sheet,
+            "header_row": batch.header_row,
+            "status": batch.status,
+            "imported_count": batch.imported_count,
+            "duplicate_count": batch.duplicate_count,
+            "invalid_count": batch.invalid_count,
+            "skipped_blank_count": batch.skipped_blank_count,
+            "created_at": batch.created_at.isoformat(),
+            "source_label": source_map.get(batch.source_id).source_label if source_map.get(batch.source_id) else "",
+            "source_type": source_map.get(batch.source_id).source_type if source_map.get(batch.source_id) else "",
+            "source_reference": source_map.get(batch.source_id).source_reference if source_map.get(batch.source_id) else "",
+        }
+        for batch in batches
+    ]
+
+
+def _serialize_source_mappings(db: Session, current_user: User) -> list[dict[str, Any]]:
+    profiles = list(
+        db.execute(
+            select(SourceMappingProfile)
+            .where(SourceMappingProfile.user_id == current_user.id)
+            .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
+        ).scalars()
+    )
+    return [
+        {
+            "id": profile.id,
+            "source_type": profile.source_type,
+            "source_sheet": profile.source_sheet,
+            "profile_label": profile.profile_label,
+            "mapping_json": json.loads(profile.mapping_json or "{}"),
+            "updated_at": profile.updated_at.isoformat(),
+        }
+        for profile in profiles
+    ]
+
+
+def _serialize_source_connections(db: Session, current_user: User) -> list[dict[str, Any]]:
+    connections = list(
+        db.execute(
+            select(SourceConnection)
+            .where(SourceConnection.user_id == current_user.id)
+            .order_by(SourceConnection.updated_at.desc(), SourceConnection.id.desc())
+        ).scalars()
+    )
+    return [
+        {
+            "id": connection.id,
+            "source_id": connection.source_id,
+            "provider": connection.provider,
+            "connection_label": connection.connection_label,
+            "source_url": connection.source_url,
+            "worksheet_name": connection.worksheet_name,
+            "mapping_profile_id": connection.mapping_profile_id,
+            "status": connection.status,
+            "config": json.loads(connection.config_json or "{}"),
+            "updated_at": connection.updated_at.isoformat(),
+        }
+        for connection in connections
+    ]
+
+
 def _ensure_shipment_columns() -> None:
     inspector = inspect(engine)
     existing_columns = {column["name"] for column in inspector.get_columns("shipments")}
@@ -2935,51 +3026,13 @@ def list_sources(db: Session = Depends(get_db), current_user: User = Depends(get
 @router.get("/source-mappings")
 def list_source_mappings(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    profiles = list(
-        db.execute(
-            select(SourceMappingProfile)
-            .where(SourceMappingProfile.user_id == current_user.id)
-            .order_by(SourceMappingProfile.updated_at.desc(), SourceMappingProfile.id.desc())
-        ).scalars()
-    )
-    return [
-        {
-            "id": profile.id,
-            "source_type": profile.source_type,
-            "source_sheet": profile.source_sheet,
-            "profile_label": profile.profile_label,
-            "mapping_json": json.loads(profile.mapping_json or "{}"),
-            "updated_at": profile.updated_at.isoformat(),
-        }
-        for profile in profiles
-    ]
+    return _serialize_source_mappings(db, current_user)
 
 
 @router.get("/source-connections")
 def list_source_connections(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    connections = list(
-        db.execute(
-            select(SourceConnection)
-            .where(SourceConnection.user_id == current_user.id)
-            .order_by(SourceConnection.updated_at.desc(), SourceConnection.id.desc())
-        ).scalars()
-    )
-    return [
-        {
-            "id": connection.id,
-            "source_id": connection.source_id,
-            "provider": connection.provider,
-            "connection_label": connection.connection_label,
-            "source_url": connection.source_url,
-            "worksheet_name": connection.worksheet_name,
-            "mapping_profile_id": connection.mapping_profile_id,
-            "status": connection.status,
-            "config": json.loads(connection.config_json or "{}"),
-            "updated_at": connection.updated_at.isoformat(),
-        }
-        for connection in connections
-    ]
+    return _serialize_source_connections(db, current_user)
 
 
 @router.post("/source-connections/google-sheets")
@@ -3138,39 +3191,7 @@ def list_source_batches(
     current_user: User = Depends(get_portal_user),
 ):
     _ensure_user_scope_ready(db, current_user)
-    safe_limit = max(1, min(limit, 100))
-    batches = list(
-        db.execute(
-            select(ShipmentBatch)
-            .where(ShipmentBatch.user_id == current_user.id)
-            .order_by(ShipmentBatch.created_at.desc(), ShipmentBatch.id.desc())
-            .limit(safe_limit)
-        ).scalars()
-    )
-    source_ids = sorted({batch.source_id for batch in batches if batch.source_id})
-    source_map = {
-        source.id: source
-        for source in db.execute(select(ShipmentSource).where(ShipmentSource.id.in_(source_ids))).scalars()
-    } if source_ids else {}
-    return [
-        {
-            "id": batch.id,
-            "source_id": batch.source_id,
-            "batch_label": batch.batch_label,
-            "source_sheet": batch.source_sheet,
-            "header_row": batch.header_row,
-            "status": batch.status,
-            "imported_count": batch.imported_count,
-            "duplicate_count": batch.duplicate_count,
-            "invalid_count": batch.invalid_count,
-            "skipped_blank_count": batch.skipped_blank_count,
-            "created_at": batch.created_at.isoformat(),
-            "source_label": source_map.get(batch.source_id).source_label if source_map.get(batch.source_id) else "",
-            "source_type": source_map.get(batch.source_id).source_type if source_map.get(batch.source_id) else "",
-            "source_reference": source_map.get(batch.source_id).source_reference if source_map.get(batch.source_id) else "",
-        }
-        for batch in batches
-    ]
+    return _serialize_source_batches(db, current_user, limit=limit)
 
 
 @router.get("/source-batches/{batch_id}")
@@ -3234,6 +3255,25 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_po
     return {
         "rows": _group_dashboard_rows(shipments),
         "identifiers": _dashboard_identifiers(shipments),
+    }
+
+
+@router.get("/bootstrap")
+def dashboard_bootstrap(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    shipments = _get_shipments(db, current_user)
+    return {
+        "shipments": [_shipment_to_dict(shipment) for shipment in shipments],
+        "dashboard": {
+            "rows": _group_dashboard_rows(shipments),
+            "identifiers": _dashboard_identifiers(shipments),
+        },
+        "source_batches": _serialize_source_batches(db, current_user, limit=8),
+        "source_mappings": _serialize_source_mappings(db, current_user),
+        "source_connections": _serialize_source_connections(db, current_user),
     }
 
 
