@@ -2927,24 +2927,13 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
 
 def _format_customer_count_items(counter: dict[str, int]) -> list[dict[str, Any]]:
     return [
-        {"customer_name": name, "container_count": count}
+        {"customer_name": name, "shipment_count": count, "container_count": count}
         for name, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
     ]
 
 
 def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
-    active_shipments = [shipment for shipment in shipments if shipment.shipment_status != "archived"]
-    containers: dict[str, Shipment] = {}
-    container_customers: dict[str, set[str]] = {}
-    for shipment in active_shipments:
-        container_number = _clean_container(shipment.container_number)
-        if not container_number:
-            continue
-        container_customers.setdefault(container_number, set()).add(_format_customer_name(shipment.customer_name))
-        if container_number in containers:
-            continue
-        containers[container_number] = shipment
-
+    rows = _group_dashboard_rows(shipments)
     today_text = datetime.now().strftime("%d-%m-%Y")
     rolling_week_cutoff = (datetime.now() - timedelta(days=7)).date()
     total_at_icd_birgunj = 0
@@ -2955,32 +2944,33 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
     approaching_birgunj_customers: dict[str, int] = {}
     railed_out_this_week_customers: dict[str, int] = {}
 
-    for container_number, shipment in containers.items():
-        movement_category = _effective_shipment_movement(shipment)
+    for row in rows:
+        movement_category = _clean_text(row.get("movement_category")) or "Hi Seas"
+        customer_name = _format_customer_name(row.get("customer_name", ""))
         arrived = movement_category == "Arrived Birgunj"
         if arrived:
             total_at_icd_birgunj += 1
-            arrival_date = _clean_text(getattr(shipment, "birgunj_arrival_date", "")) or shipment.latest_time
+            arrival_date = _clean_text(row.get("birgunj_arrival_date", "")) or _clean_text(row.get("latest_time", ""))
             if _format_to_dd_mm_yyyy(arrival_date) == today_text:
                 today_arrivals += 1
-                for customer_name in container_customers.get(container_number, set()):
+                if customer_name:
                     today_arrival_customers[customer_name] = today_arrival_customers.get(customer_name, 0) + 1
             continue
 
-        location_text = _clean_text(shipment.latest_location)
+        location_text = _clean_text(row.get("latest_location", ""))
         if not location_text:
             continue
         distance_info = _resolve_location_distance(location_text)
         distance_km = distance_info.get("distance_km")
         if distance_info.get("found") and isinstance(distance_km, (int, float)) and float(distance_km) < 40:
             approaching_birgunj += 1
-            for customer_name in container_customers.get(container_number, set()):
+            if customer_name:
                 approaching_birgunj_customers[customer_name] = approaching_birgunj_customers.get(customer_name, 0) + 1
 
-        departure_date = _parse_date(shipment.departure)
+        departure_date = _parse_date(row.get("departure", ""))
         if departure_date and departure_date.date() >= rolling_week_cutoff:
             railed_out_this_week += 1
-            for customer_name in container_customers.get(container_number, set()):
+            if customer_name:
                 railed_out_this_week_customers[customer_name] = railed_out_this_week_customers.get(customer_name, 0) + 1
 
     return {

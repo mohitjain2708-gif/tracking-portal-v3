@@ -12,6 +12,7 @@ from app.api.routes.shipments import (
     _run_refresh_all_job,
     _apply_group_status_transition,
     _containers_from_import_row,
+    _dashboard_identifiers,
     _derive_ldb_milestones,
     _extract_concor_wagon_signal,
     _effective_shipment_location,
@@ -36,6 +37,57 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 
 class ShipmentMilestoneTests(unittest.TestCase):
+    def test_dashboard_identifiers_count_shipment_groups_not_containers(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1891823",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                birgunj_arrival_date="14-04-2026",
+                departure="12-04-2026",
+            ),
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1904849",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                birgunj_arrival_date="14-04-2026",
+                departure="12-04-2026",
+            ),
+            Shipment(
+                customer_name="Approaching Customer",
+                container_number="MSMU3793687",
+                bl_number="OTHER/BL/1",
+                shipment_status="active",
+                movement_category="On Rail",
+                latest_location="RAXAUL JN., Samastipur",
+                departure="13-04-2026",
+            ),
+            Shipment(
+                customer_name="Approaching Customer",
+                container_number="MSNU1703477",
+                bl_number="OTHER/BL/1",
+                shipment_status="active",
+                movement_category="On Rail",
+                latest_location="RAXAUL JN., Samastipur",
+                departure="13-04-2026",
+            ),
+        ]
+
+        identifiers = _dashboard_identifiers(shipments)
+
+        self.assertEqual(identifiers["total_at_icd_birgunj"], 1)
+        self.assertEqual(identifiers["today_arrivals"], 1)
+        self.assertEqual(identifiers["approaching_birgunj"], 1)
+        self.assertEqual(identifiers["railed_out_this_week"], 1)
+        self.assertEqual(identifiers["today_arrival_customers"][0]["shipment_count"], 1)
+        self.assertEqual(identifiers["approaching_birgunj_customers"][0]["shipment_count"], 1)
+
     def test_reopen_completed_shipment_cycle_returns_to_active(self) -> None:
         engine = create_engine("sqlite:///:memory:", future=True)
         SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

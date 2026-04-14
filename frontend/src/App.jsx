@@ -676,12 +676,13 @@ function MovementIdentifier({ filter, isActive, count, onClick }) {
 }
 
 function DashboardMetric({ label, value, tone = "default", icon, customers = [] }) {
+  const getCount = (item) => item?.shipment_count ?? item?.container_count ?? 0;
   return (
     <article
       className={`dashboard-metric dashboard-metric-${tone}`}
       title={
         customers.length
-          ? customers.map((item) => `${item.customer_name} - ${item.container_count}`).join(", ")
+          ? customers.map((item) => `${item.customer_name} - ${getCount(item)}`).join(", ")
           : ""
       }
     >
@@ -697,7 +698,7 @@ function DashboardMetric({ label, value, tone = "default", icon, customers = [] 
             {customers.map((item) => (
               <li key={item.customer_name}>
                 <span>{item.customer_name}</span>
-                <strong>{item.container_count}</strong>
+                <strong>{getCount(item)}</strong>
               </li>
             ))}
           </ul>
