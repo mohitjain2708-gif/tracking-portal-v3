@@ -119,6 +119,19 @@ function fromInputDateValue(value) {
   return text;
 }
 
+function hasDoDateDraftChanges(row, draft) {
+  return toInputDateValue(row?.do_date) !== cleanText(draft?.do_date);
+}
+
+function hasDocumentDraftChanges(row, draft) {
+  const currentStatus = cleanText(row?.document_status);
+  const draftStatus = cleanText(draft?.document_status);
+  if (currentStatus !== draftStatus) {
+    return true;
+  }
+  return toInputDateValue(row?.original_docs_received_date) !== cleanText(draft?.original_docs_received_date);
+}
+
 function normalizeLooseText(value) {
   return cleanText(value)
     .toLowerCase()
@@ -3069,7 +3082,14 @@ function App() {
               </ActionButton>
             </div>
           </section>
-        ) : null}
+        ) : (
+          <section className="bulk-toolbar bulk-toolbar-hint">
+            <div className="bulk-toolbar-copy">
+              <strong>Need to update several shipments together?</strong>
+              <span>Use the checkboxes on the left, then choose complete, archive, or delete in one step.</span>
+            </div>
+          </section>
+        )}
 
         {stickyHeaderActive && (
           <div
@@ -3147,6 +3167,8 @@ function App() {
                   const documentSaving = Boolean(
                     fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
                   );
+                  const doDateDirty = hasDoDateDraftChanges(row, draft);
+                  const documentDirty = hasDocumentDraftChanges(row, draft);
                   return (
                     <tr
                       key={row.group_key || row.id}
@@ -3194,7 +3216,8 @@ function App() {
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
                       <td onClick={(event) => event.stopPropagation()}>
-                        <div className="inline-field-stack">
+                        <div className="row-field-panel">
+                          <span className="row-field-label">DO date</span>
                           <input
                             className="inline-field-control"
                             type="date"
@@ -3203,22 +3226,27 @@ function App() {
                               setOperationalDraftValue(row, { do_date: event.target.value })
                             }
                           />
-                          <ActionButton
-                            type="button"
-                            tone="ghost"
-                            compact
-                            disabled={doDateSaving}
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              await saveDoDateDraft(row);
-                            }}
-                          >
-                            {doDateSaving ? "Saving..." : "Save"}
-                          </ActionButton>
+                          {doDateDirty || doDateSaving ? (
+                            <ActionButton
+                              type="button"
+                              tone="ghost"
+                              compact
+                              disabled={doDateSaving}
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                await saveDoDateDraft(row);
+                              }}
+                            >
+                              {doDateSaving ? "Saving..." : "Apply"}
+                            </ActionButton>
+                          ) : (
+                            <span className="row-field-note">{draft.do_date ? "Saved" : "Optional"}</span>
+                          )}
                         </div>
                       </td>
                       <td onClick={(event) => event.stopPropagation()}>
-                        <div className="inline-field-stack">
+                        <div className="row-field-panel row-field-panel-docs">
+                          <span className="row-field-label">Documents</span>
                           <select
                             className="inline-field-control"
                             value={draft.document_status}
@@ -3248,18 +3276,26 @@ function App() {
                               }
                             />
                           ) : null}
-                          <ActionButton
-                            type="button"
-                            tone="ghost"
-                            compact
-                            disabled={documentSaving}
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              await saveDocumentDraft(row);
-                            }}
-                          >
-                            {documentSaving ? "Saving..." : "Save"}
-                          </ActionButton>
+                          {documentDirty || documentSaving ? (
+                            <ActionButton
+                              type="button"
+                              tone="ghost"
+                              compact
+                              disabled={documentSaving}
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                await saveDocumentDraft(row);
+                              }}
+                            >
+                              {documentSaving ? "Saving..." : "Apply"}
+                            </ActionButton>
+                          ) : (
+                            <span className="row-field-note">
+                              {draft.document_status === "Original" && draft.original_docs_received_date
+                                ? `Original received ${draft.original_docs_received_date}`
+                                : draft.document_status || "No document choice"}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="td-center">
@@ -3307,6 +3343,8 @@ function App() {
               const documentSaving = Boolean(
                 fieldSavingKeys[`${row.group_key}:document_status|original_docs_received_date`]
               );
+              const doDateDirty = hasDoDateDraftChanges(row, draft);
+              const documentDirty = hasDocumentDraftChanges(row, draft);
 
               return (
                 <article
@@ -3394,17 +3432,19 @@ function App() {
                         onChange={(event) => setOperationalDraftValue(row, { do_date: event.target.value })}
                       />
                     </label>
-                    <ActionButton
-                      type="button"
-                      tone="ghost"
-                      compact
-                      disabled={doDateSaving}
-                      onClick={async () => {
-                        await saveDoDateDraft(row);
-                      }}
-                    >
-                      {doDateSaving ? "Saving..." : "Save DO Date"}
-                    </ActionButton>
+                    {doDateDirty || doDateSaving ? (
+                      <ActionButton
+                        type="button"
+                        tone="ghost"
+                        compact
+                        disabled={doDateSaving}
+                        onClick={async () => {
+                          await saveDoDateDraft(row);
+                        }}
+                      >
+                        {doDateSaving ? "Saving..." : "Apply DO Date"}
+                      </ActionButton>
+                    ) : null}
 
                     <label className="mobile-field">
                       <span>Document Status</span>
@@ -3441,17 +3481,19 @@ function App() {
                         />
                       </label>
                     ) : null}
-                    <ActionButton
-                      type="button"
-                      tone="ghost"
-                      compact
-                      disabled={documentSaving}
-                      onClick={async () => {
-                        await saveDocumentDraft(row);
-                      }}
-                    >
-                      {documentSaving ? "Saving..." : "Save Document Status"}
-                    </ActionButton>
+                    {documentDirty || documentSaving ? (
+                      <ActionButton
+                        type="button"
+                        tone="ghost"
+                        compact
+                        disabled={documentSaving}
+                        onClick={async () => {
+                          await saveDocumentDraft(row);
+                        }}
+                      >
+                        {documentSaving ? "Saving..." : "Apply Document Update"}
+                      </ActionButton>
+                    ) : null}
                   </div>
 
                   <div className="mobile-shipment-actions" onClick={(event) => event.stopPropagation()}>
