@@ -1713,7 +1713,7 @@ def _serialize_source_mappings(db: Session, current_user: User) -> list[dict[str
             "source_type": profile.source_type,
             "source_sheet": profile.source_sheet,
             "profile_label": profile.profile_label,
-            "mapping_json": json.loads(profile.mapping_json or "{}"),
+            "mapping_json": _safe_json_loads(profile.mapping_json, {}),
             "updated_at": profile.updated_at.isoformat(),
         }
         for profile in profiles
@@ -1738,7 +1738,7 @@ def _serialize_source_connections(db: Session, current_user: User) -> list[dict[
             "worksheet_name": connection.worksheet_name,
             "mapping_profile_id": connection.mapping_profile_id,
             "status": connection.status,
-            "config": json.loads(connection.config_json or "{}"),
+            "config": _safe_json_loads(connection.config_json, {}),
             "updated_at": connection.updated_at.isoformat(),
         }
         for connection in connections
@@ -1760,6 +1760,17 @@ def _json_dumps(value: Any) -> str:
         return json.dumps(value or {}, ensure_ascii=False)
     except Exception:
         return "{}"
+
+
+def _safe_json_loads(raw_value: Any, fallback: Any) -> Any:
+    if raw_value in (None, ""):
+        return fallback
+    if isinstance(raw_value, (dict, list)):
+        return raw_value
+    try:
+        return json.loads(raw_value)
+    except Exception:
+        return fallback
 
 
 def _get_or_create_source(
