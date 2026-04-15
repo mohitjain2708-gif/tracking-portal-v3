@@ -157,6 +157,7 @@ def main() -> None:
             existing_users_by_email[email] = user
             existing_user_ids.add(user.id)
             user_id_map[old_id] = user.id
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "customer_directory"):
             existing = session.get(CustomerDirectory, int(row["id"]))
@@ -178,6 +179,7 @@ def main() -> None:
                     updated_at=row["updated_at"],
                 )
             )
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "templates"):
             existing = session.get(Template, int(row["id"]))
@@ -196,6 +198,7 @@ def main() -> None:
             )
             session.add(template)
             template_id_map[int(row["id"])] = int(row["id"])
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "upload_sessions"):
             existing = session.get(UploadSession, int(row["id"]))
@@ -216,6 +219,7 @@ def main() -> None:
             )
             session.add(upload)
             upload_session_id_map[int(row["id"])] = int(row["id"])
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "jobs"):
             existing = session.get(Job, int(row["id"]))
@@ -234,6 +238,7 @@ def main() -> None:
                     updated_at=row["updated_at"],
                 )
             )
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "shipment_sources"):
             existing = session.get(ShipmentSource, int(row["id"]))
@@ -255,6 +260,7 @@ def main() -> None:
                 )
             )
             source_id_map[int(row["id"])] = int(row["id"])
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "shipment_batches"):
             existing = session.get(ShipmentBatch, int(row["id"]))
@@ -280,6 +286,7 @@ def main() -> None:
                 )
             )
             batch_id_map[int(row["id"])] = int(row["id"])
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "raw_source_rows"):
             existing = session.get(RawSourceRow, int(row["id"]))
@@ -300,6 +307,7 @@ def main() -> None:
                     updated_at=row["updated_at"],
                 )
             )
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "source_mapping_profiles"):
             existing = session.get(SourceMappingProfile, int(row["id"]))
@@ -319,6 +327,7 @@ def main() -> None:
                 )
             )
             mapping_profile_id_map[int(row["id"])] = int(row["id"])
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "source_connections"):
             existing = session.get(SourceConnection, int(row["id"]))
@@ -340,6 +349,7 @@ def main() -> None:
                     updated_at=row["updated_at"],
                 )
             )
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "shipments"):
             existing = session.get(Shipment, int(row["id"]))
@@ -385,6 +395,7 @@ def main() -> None:
                     updated_at=row["updated_at"],
                 )
             )
+        session.flush()
 
         for row in _load_rows(sqlite_conn, "audit_logs"):
             existing = session.get(AuditLog, int(row["id"]))
@@ -402,6 +413,7 @@ def main() -> None:
                     created_at=row["created_at"],
                 )
             )
+        session.flush()
 
         session.commit()
 
