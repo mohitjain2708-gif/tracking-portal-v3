@@ -177,8 +177,29 @@ select:focus {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow);
+  box-shadow:
+    0 18px 48px rgba(15, 23, 42, 0.08),
+    0 2px 8px rgba(15, 23, 42, 0.03);
   backdrop-filter: blur(22px);
+  isolation: isolate;
+}
+
+.surface::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: calc(var(--radius-xl) - 1px);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.26), transparent 44%);
+  opacity: 0.72;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.surface > * {
+  position: relative;
+  z-index: 1;
 }
 
 .hero-panel,
@@ -672,6 +693,8 @@ select:focus {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+  transform: translateY(0);
+  box-shadow: 0 0 0 rgba(15, 23, 42, 0);
 }
 
 .button-compact {
@@ -708,6 +731,8 @@ select:focus {
 
 .button:hover:not(:disabled) {
   border-color: rgba(19, 58, 99, 0.12);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
 }
 
 .button:focus-visible,
@@ -794,9 +819,16 @@ select:focus {
   overflow: visible;
   content-visibility: auto;
   contain-intrinsic-size: 58px 220px;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    background-color var(--motion-duration-fast) var(--motion-ease);
 }
 
 .dashboard-metric:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
   z-index: 16;
 }
 
@@ -810,6 +842,20 @@ select:focus {
   background: #eef4fa;
   color: var(--primary);
   flex: 0 0 auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 8px 18px rgba(15, 23, 42, 0.08);
+  transform: perspective(500px) rotateX(0deg) translateY(0);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease);
+}
+
+.dashboard-metric:hover .dashboard-metric-icon {
+  transform: perspective(500px) rotateX(10deg) translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 12px 22px rgba(15, 23, 42, 0.1);
 }
 
 .dashboard-metric-icon svg {
@@ -1016,6 +1062,21 @@ select:focus {
   background: #eef4fa;
   color: var(--primary);
   flex: 0 0 auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 8px 18px rgba(15, 23, 42, 0.08);
+  transform: perspective(500px) rotateX(0deg) translateY(0);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease);
+}
+
+.movement-identifier:hover .movement-identifier-icon,
+.movement-identifier.is-active .movement-identifier-icon {
+  transform: perspective(500px) rotateX(10deg) translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 12px 24px rgba(15, 23, 42, 0.1);
 }
 
 .movement-identifier-icon svg {
@@ -1579,20 +1640,42 @@ select:focus {
 .modal-card {
   width: min(900px, 100%);
   max-height: calc(100vh - 48px);
-  background: rgba(255, 255, 255, 0.9);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 251, 255, 0.9));
   border-radius: 16px;
   border: 1px solid var(--border);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+  box-shadow:
+    0 26px 72px rgba(15, 23, 42, 0.16),
+    0 4px 18px rgba(15, 23, 42, 0.05);
   backdrop-filter: blur(18px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transform-origin: center top;
   animation: modal-float-in var(--motion-duration-base) var(--motion-ease) both;
+  isolation: isolate;
 }
 
 .modal-card-wide {
   width: min(1120px, 100%);
+}
+
+.modal-card::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.26), transparent 38%);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.modal-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .context-menu {
@@ -1609,9 +1692,22 @@ select:focus {
   backdrop-filter: blur(18px);
   transform-origin: top left;
   animation: menu-pop-in 0.2s var(--motion-ease) both;
+  overflow: hidden;
+}
+
+.context-menu::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 42%);
+  pointer-events: none;
 }
 
 .context-menu button {
+  position: relative;
+  z-index: 1;
   min-height: 38px;
   padding: 0 12px;
   border: 0;
@@ -2594,6 +2690,11 @@ select:focus {
   background: rgba(255, 255, 255, 0.74);
   text-align: left;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.05),
+    0 2px 8px rgba(15, 23, 42, 0.025);
   transition:
     border-color 0.18s ease,
     background-color 0.18s ease,
@@ -2601,13 +2702,29 @@ select:focus {
     box-shadow 0.18s ease;
 }
 
+.intake-launcher-card::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 19px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.2), transparent 42%);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 .intake-launcher-card strong {
+  position: relative;
+  z-index: 1;
   font-size: 18px;
   letter-spacing: -0.02em;
   color: var(--text);
 }
 
 .intake-launcher-card p {
+  position: relative;
+  z-index: 1;
   margin: 0;
   max-width: 30ch;
   font-size: 13px;
@@ -2618,7 +2735,10 @@ select:focus {
 .intake-launcher-card:hover {
   border-color: rgba(19, 58, 99, 0.18);
   background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow:
+    0 20px 42px rgba(15, 23, 42, 0.08),
+    0 4px 12px rgba(15, 23, 42, 0.035);
 }
 
 .intake-launcher-card:focus-visible {

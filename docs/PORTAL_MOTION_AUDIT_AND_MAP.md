@@ -9,12 +9,15 @@ The portal should move with the same tone as the rest of the product: calm, prec
 3. Use one easing system across the portal.
 4. Make success feedback reassuring, not loud.
 5. Respect reduced-motion preferences.
+6. Use depth sparingly through layered highlights, soft shadow shifts, and slight perspective on icon surfaces.
+7. Treat hover as a quiet cue, not an effect showcase.
 
 ## Motion Map
 ### Dashboard Load
 - Top shipment summary cards: soft staggered reveal.
 - Overview metrics: soft staggered reveal.
 - Movement filter cards: soft staggered reveal.
+- Card icons: tiny hover lift with subtle depth.
 
 ### Shipment Workflows
 - Shipment detail: smooth modal entrance.
@@ -25,6 +28,7 @@ The portal should move with the same tone as the rest of the product: calm, prec
 ### Menus
 - Right-click menu: tiny scale + fade entrance.
 - Context surfaces should feel deliberate, not abrupt.
+- Menus and sheets: light glass sheen so they feel layered rather than flat.
 
 ### Save Feedback
 - Success banners: quiet pulse.
@@ -34,6 +38,7 @@ The portal should move with the same tone as the rest of the product: calm, prec
 - Intake panels: reveal from the top with fade + rise.
 - Activity section: smoother reveal when expanded or collapsed.
 - Bulk action bar: fade/slide in when rows are selected.
+- Intake launchers: subtle hover elevation and layered highlight.
 
 ## Intentionally Avoided
 1. Constant row animation during refresh.
