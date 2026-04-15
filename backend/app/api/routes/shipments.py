@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +15,7 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+import boto3
 import requests
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -144,6 +146,7 @@ _refresh_jobs: dict[str, dict[str, Any]] = {}
 _refresh_jobs_lock = Lock()
 _documents_index_cache: dict[str, dict[str, Any]] | None = None
 _documents_index_mtime: float | None = None
+_r2_client = None
 
 
 def _now_datetime() -> str:
@@ -1285,6 +1288,72 @@ def _save_documents_index(data: dict[str, dict[str, Any]]) -> None:
         _documents_index_mtime = None
 
 
+def _r2_bucket_name() -> str:
+    return _clean_text(os.getenv("R2_BUCKET_NAME"))
+
+
+def _r2_endpoint_url() -> str:
+    return _clean_text(os.getenv("R2_ENDPOINT_URL"))
+
+
+def _r2_access_key_id() -> str:
+    return _clean_text(os.getenv("R2_ACCESS_KEY_ID"))
+
+
+def _r2_secret_access_key() -> str:
+    return _clean_text(os.getenv("R2_SECRET_ACCESS_KEY"))
+
+
+def _r2_enabled() -> bool:
+    return all(
+        [
+            _r2_bucket_name(),
+            _r2_endpoint_url(),
+            _r2_access_key_id(),
+            _r2_secret_access_key(),
+        ]
+    )
+
+
+def _get_r2_client():
+    global _r2_client
+    if not _r2_enabled():
+        return None
+    if _r2_client is None:
+        _r2_client = boto3.client(
+            "s3",
+            endpoint_url=_r2_endpoint_url(),
+            aws_access_key_id=_r2_access_key_id(),
+            aws_secret_access_key=_r2_secret_access_key(),
+            region_name="auto",
+        )
+    return _r2_client
+
+
+def _r2_object_key(stored_name: str) -> str:
+    return f"bl_documents/{stored_name}"
+
+
+def _delete_document_object(metadata: dict[str, Any] | None) -> None:
+    if not isinstance(metadata, dict):
+        return
+    storage_backend = _clean_text(metadata.get("storage_backend") or "local").lower()
+    if storage_backend == "r2":
+        object_key = _clean_text(metadata.get("object_key"))
+        client = _get_r2_client()
+        bucket_name = _r2_bucket_name()
+        if client and object_key:
+            try:
+                client.delete_object(Bucket=bucket_name, Key=object_key)
+            except Exception:
+                pass
+        return
+
+    target_path = Path(metadata.get("path", ""))
+    if target_path.exists() and target_path.is_file():
+        target_path.unlink(missing_ok=True)
+
+
 def _log_audit_event(
     db: Session,
     user_id: int,
@@ -1355,9 +1424,7 @@ def _save_document(bl_number: str, document_type: str, upload: UploadFile) -> di
         raise HTTPException(status_code=400, detail="Invalid document_type")
     suffix = Path(upload.filename or "").suffix or ".bin"
     stored_name = f"{normalized_bl}_{normalized_type}_{uuid4().hex}{suffix}"
-    target_path = BL_DOCUMENTS_DIR / stored_name
     content = upload.file.read()
-    target_path.write_bytes(content)
     metadata = {
         "document_type": normalized_type,
         "original_name": upload.filename or stored_name,
@@ -1365,14 +1432,39 @@ def _save_document(bl_number: str, document_type: str, upload: UploadFile) -> di
         "content_type": upload.content_type or "application/octet-stream",
         "size": len(content),
         "uploaded_at": _now_datetime(),
-        "path": str(target_path),
     }
+    if _r2_enabled():
+        object_key = _r2_object_key(stored_name)
+        client = _get_r2_client()
+        bucket_name = _r2_bucket_name()
+        if client is None:
+            raise HTTPException(status_code=500, detail="Document storage is not available")
+        client.put_object(
+            Bucket=bucket_name,
+            Key=object_key,
+            Body=content,
+            ContentType=metadata["content_type"],
+        )
+        metadata.update(
+            {
+                "storage_backend": "r2",
+                "bucket": bucket_name,
+                "object_key": object_key,
+            }
+        )
+    else:
+        target_path = BL_DOCUMENTS_DIR / stored_name
+        target_path.write_bytes(content)
+        metadata.update(
+            {
+                "storage_backend": "local",
+                "path": str(target_path),
+            }
+        )
     index = _load_documents_index()
     bucket = index.setdefault(normalized_bl, {})
     previous = bucket.get(normalized_type)
-    previous_path = Path(previous.get("path", "")) if isinstance(previous, dict) else None
-    if previous_path and previous_path.exists() and previous_path.is_file():
-        previous_path.unlink(missing_ok=True)
+    _delete_document_object(previous)
     bucket[normalized_type] = metadata
     _save_documents_index(index)
     return _serialize_document_metadata(normalized_bl, normalized_type, metadata)
@@ -4339,6 +4431,25 @@ def get_bl_document_file(
     metadata = (_load_documents_index().get(normalized_bl) or {}).get(normalized_type)
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=404, detail="Document not found")
+    storage_backend = _clean_text(metadata.get("storage_backend") or "local").lower()
+    if storage_backend == "r2":
+        object_key = _clean_text(metadata.get("object_key"))
+        client = _get_r2_client()
+        bucket_name = _r2_bucket_name()
+        if client is None or not object_key:
+            raise HTTPException(status_code=404, detail="Stored document file not found")
+        try:
+            response = client.get_object(Bucket=bucket_name, Key=object_key)
+            content = response["Body"].read()
+        except Exception as exc:
+            raise HTTPException(status_code=404, detail="Stored document file not found") from exc
+        filename = metadata.get("original_name") or Path(object_key).name
+        return StreamingResponse(
+            BytesIO(content),
+            media_type=metadata.get("content_type") or "application/octet-stream",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
     target_path = Path(metadata.get("path") or "")
     if not target_path.exists() or not target_path.is_file():
         raise HTTPException(status_code=404, detail="Stored document file not found")
