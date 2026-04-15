@@ -24,6 +24,10 @@
   --shadow: 0 18px 48px rgba(15, 23, 42, 0.09);
   --radius-xl: 22px;
   --radius-lg: 16px;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-duration-fast: 0.22s;
+  --motion-duration-base: 0.34s;
+  --motion-duration-slow: 0.5s;
 }
 
 html,
@@ -455,6 +459,10 @@ select:focus {
   border-radius: 12px;
   padding: 12px 14px;
   text-align: left;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease);
 }
 
 .stat-card-interactive {
@@ -501,6 +509,12 @@ select:focus {
   font-size: 12px;
   font-weight: 600;
   border-radius: 14px;
+}
+
+.motion-stagger-item {
+  animation: stagger-fade-up var(--motion-duration-slow) var(--motion-ease) both;
+  animation-delay: calc(var(--motion-index, 0) * 45ms);
+  will-change: transform, opacity;
 }
 
 .progress-banner {
@@ -569,6 +583,9 @@ select:focus {
   border-color: rgba(6, 118, 71, 0.18);
   background: var(--success-soft);
   color: var(--success);
+  animation:
+    rise-in 0.24s var(--motion-ease) both,
+    success-pulse 0.52s var(--motion-ease) 0.08s both;
 }
 
 .banner-error {
@@ -920,6 +937,8 @@ select:focus {
   border: 1px solid rgba(19, 58, 99, 0.12);
   border-radius: 14px;
   background: rgba(248, 251, 254, 0.88);
+  animation: bulk-bar-in 0.28s var(--motion-ease) both;
+  transform-origin: top center;
 }
 
 .bulk-toolbar-hint {
@@ -969,6 +988,16 @@ select:focus {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
   cursor: pointer;
   text-align: left;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    background-color var(--motion-duration-fast) var(--motion-ease);
+}
+
+.movement-identifier:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
 }
 
 .movement-identifier.is-active {
@@ -1544,6 +1573,7 @@ select:focus {
   padding: 24px;
   overflow: auto;
   z-index: 50;
+  animation: overlay-fade-in var(--motion-duration-base) ease both;
 }
 
 .modal-card {
@@ -1557,6 +1587,8 @@ select:focus {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transform-origin: center top;
+  animation: modal-float-in var(--motion-duration-base) var(--motion-ease) both;
 }
 
 .modal-card-wide {
@@ -1575,6 +1607,8 @@ select:focus {
   border: 1px solid rgba(214, 223, 234, 0.94);
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
   backdrop-filter: blur(18px);
+  transform-origin: top left;
+  animation: menu-pop-in 0.2s var(--motion-ease) both;
 }
 
 .context-menu button {
@@ -2159,6 +2193,15 @@ select:focus {
   gap: 14px;
 }
 
+.audit-journal-body {
+  display: grid;
+}
+
+.audit-journal-body.is-expanded,
+.audit-journal-body.is-collapsed {
+  animation: fade-section-in 0.24s var(--motion-ease) both;
+}
+
 .preview-actions {
   display: flex;
   align-items: center;
@@ -2317,6 +2360,10 @@ select:focus {
 .audit-journal-collapsed {
   display: grid;
   gap: 10px;
+}
+
+.motion-detail-list {
+  transform-origin: top center;
 }
 
 .audit-journal-summary {
@@ -2592,9 +2639,10 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.84);
-  animation: rise-in 0.22s ease both;
+  animation: panel-reveal 0.28s var(--motion-ease) both;
   content-visibility: auto;
   contain-intrinsic-size: 420px;
+  transform-origin: top center;
 }
 
 .stack-form textarea {
@@ -2620,6 +2668,10 @@ select:focus {
   margin-top: 4px;
 }
 
+.interactive-row.is-freshly-updated td {
+  animation: row-success-wash 0.92s var(--motion-ease) both;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -2637,6 +2689,102 @@ select:focus {
   }
   to {
     transform: translateX(320px);
+  }
+}
+
+@keyframes stagger-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-float-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes menu-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes success-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(6, 118, 71, 0);
+  }
+  45% {
+    box-shadow: 0 0 0 6px rgba(6, 118, 71, 0.08);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(6, 118, 71, 0);
+  }
+}
+
+@keyframes bulk-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-section-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes row-success-wash {
+  0% {
+    background: rgba(6, 118, 71, 0.08);
+  }
+  100% {
+    background: transparent;
   }
 }
 
@@ -2789,6 +2937,8 @@ select:focus {
     border-left: 0;
     border-right: 0;
     border-bottom: 0;
+    transform-origin: center bottom;
+    animation: mobile-sheet-in 0.34s var(--motion-ease) both;
   }
 
   .modal-header,
@@ -2832,6 +2982,28 @@ select:focus {
 
   .button {
     min-height: 40px;
+  }
+}
+
+@keyframes mobile-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

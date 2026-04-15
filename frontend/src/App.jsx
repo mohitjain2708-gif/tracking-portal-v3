@@ -623,10 +623,15 @@ function exportRowsAsCsv(fileName, rows, columns) {
   window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60000);
 }
 
-function StatCard({ label, value, onClick, helperText }) {
+function StatCard({ label, value, onClick, helperText, motionIndex = 0 }) {
   const Element = onClick ? "button" : "article";
   return (
-    <Element className={`stat-card ${onClick ? "stat-card-interactive" : ""}`} onClick={onClick} type={onClick ? "button" : undefined}>
+    <Element
+      className={`stat-card motion-stagger-item ${onClick ? "stat-card-interactive" : ""}`}
+      onClick={onClick}
+      type={onClick ? "button" : undefined}
+      style={{ "--motion-index": motionIndex }}
+    >
       <p className="stat-label">{label}</p>
       <strong className="stat-value">{value}</strong>
       {helperText ? <span className="stat-helper">{helperText}</span> : null}
@@ -634,12 +639,13 @@ function StatCard({ label, value, onClick, helperText }) {
   );
 }
 
-function IntakeLauncherCard({ eyebrow, title, description, isActive, onClick }) {
+function IntakeLauncherCard({ eyebrow, title, description, isActive, onClick, motionIndex = 0 }) {
   return (
     <button
       type="button"
-      className={`intake-launcher-card${isActive ? " is-active" : ""}`}
+      className={`intake-launcher-card motion-stagger-item${isActive ? " is-active" : ""}`}
       onClick={onClick}
+      style={{ "--motion-index": motionIndex }}
     >
       <span className="eyebrow">{eyebrow}</span>
       <strong>{title}</strong>
@@ -705,12 +711,13 @@ function MovementIcon({ type }) {
   );
 }
 
-function MovementIdentifier({ filter, isActive, count, onClick }) {
+function MovementIdentifier({ filter, isActive, count, onClick, motionIndex = 0 }) {
   return (
     <button
       type="button"
-      className={`movement-identifier ${isActive ? "is-active" : ""}`}
+      className={`movement-identifier motion-stagger-item ${isActive ? "is-active" : ""}`}
       onClick={onClick}
+      style={{ "--motion-index": motionIndex }}
     >
       <span className="movement-identifier-icon">
         <MovementIcon type={filter.value} />
@@ -723,11 +730,12 @@ function MovementIdentifier({ filter, isActive, count, onClick }) {
   );
 }
 
-function DashboardMetric({ label, value, tone = "default", icon, customers = [] }) {
+function DashboardMetric({ label, value, tone = "default", icon, customers = [], motionIndex = 0 }) {
   const getCount = (item) => item?.shipment_count ?? item?.container_count ?? 0;
   return (
     <article
-      className={`dashboard-metric dashboard-metric-${tone}`}
+      className={`dashboard-metric motion-stagger-item dashboard-metric-${tone}`}
+      style={{ "--motion-index": motionIndex }}
       title={
         customers.length
           ? customers.map((item) => `${item.customer_name} - ${getCount(item)}`).join(", ")
@@ -934,6 +942,7 @@ function App() {
   const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
+  const rowHighlightTimeoutRef = useRef(null);
   const locationDistanceCacheRef = useRef({});
   const [documentRow, setDocumentRow] = useState(null);
   const [recordsView, setRecordsView] = useState(null);
@@ -954,6 +963,7 @@ function App() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editForm, setEditForm] = useState(INITIAL_FORM);
   const [fieldSavingKeys, setFieldSavingKeys] = useState({});
+  const [highlightedGroupKey, setHighlightedGroupKey] = useState("");
   const [operationalDrafts, setOperationalDrafts] = useState({});
   const [documentFiles, setDocumentFiles] = useState({
     invoice: null,
@@ -1560,6 +1570,14 @@ function App() {
     sourceBatchDetail,
   ]);
 
+  useEffect(() => {
+    return () => {
+      if (rowHighlightTimeoutRef.current) {
+        window.clearTimeout(rowHighlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const toggleGroupSelection = useCallback((row) => {
     const key = cleanText(row.group_key || row.id);
     setSelectedGroupKeys((current) =>
@@ -1585,6 +1603,20 @@ function App() {
     setSelectedGroupKeys([]);
     setBulkConfirmAction(null);
     setBulkClearanceMap({});
+  }, []);
+
+  const triggerRowHighlight = useCallback((groupKey) => {
+    if (!cleanText(groupKey)) {
+      return;
+    }
+    if (rowHighlightTimeoutRef.current) {
+      window.clearTimeout(rowHighlightTimeoutRef.current);
+    }
+    setHighlightedGroupKey(groupKey);
+    rowHighlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedGroupKey("");
+      rowHighlightTimeoutRef.current = null;
+    }, 1200);
   }, []);
 
   const handleFieldChange = useCallback((field, value) => {
@@ -1803,6 +1835,7 @@ function App() {
           setQuickEditRow((current) =>
             current?.group_key === row.group_key ? applyOperationalFieldUpdate(current, appliedUpdates) : current
           );
+          triggerRowHighlight(row.group_key);
           setFeedback({ tone: "success", text: "Saved." });
           void loadDashboard({ silent: true });
           return true;
@@ -1817,7 +1850,7 @@ function App() {
         });
       }
       },
-      [loadDashboard]
+      [loadDashboard, triggerRowHighlight]
     );
 
   const saveDoDateDraft = useCallback(
@@ -2863,19 +2896,21 @@ function App() {
       ) : null}
 
       <section className="stats-grid">
-        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment groups" />
-        <StatCard label="Active" value={shipmentCounts.active} helperText="Currently on the live board" />
+        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment groups" motionIndex={0} />
+        <StatCard label="Active" value={shipmentCounts.active} helperText="Currently on the live board" motionIndex={1} />
         <StatCard
           label="Completed"
           value={shipmentCounts.completed}
           helperText="Open completion history"
           onClick={() => setRecordsView("completed")}
+          motionIndex={2}
         />
         <StatCard
           label="Archived"
           value={shipmentCounts.archived}
           helperText="Open archive register"
           onClick={() => setRecordsView("archived")}
+          motionIndex={3}
         />
       </section>
 
@@ -2913,6 +2948,7 @@ function App() {
             description="Enter a shipment by hand."
             isActive={activeIntakePanel === "manual"}
             onClick={() => setActiveIntakePanel((current) => (current === "manual" ? null : "manual"))}
+            motionIndex={0}
           />
           <IntakeLauncherCard
             eyebrow="Workbook"
@@ -2920,6 +2956,7 @@ function App() {
             description="Bring in an Excel sheet."
             isActive={activeIntakePanel === "excel"}
             onClick={() => setActiveIntakePanel((current) => (current === "excel" ? null : "excel"))}
+            motionIndex={1}
           />
           <IntakeLauncherCard
             eyebrow="Google"
@@ -2927,6 +2964,7 @@ function App() {
             description="Bring in a Google Sheet."
             isActive={activeIntakePanel === "google"}
             onClick={() => setActiveIntakePanel((current) => (current === "google" ? null : "google"))}
+            motionIndex={2}
           />
         </div>
 
@@ -3208,12 +3246,14 @@ function App() {
             label="At Birgunj"
             value={dashboardIdentifiers.total_at_icd_birgunj || 0}
             tone="primary"
+            motionIndex={0}
             icon={<MovementIcon type="Arrived Birgunj" />}
           />
           <DashboardMetric
             label="Arrived Today"
             value={dashboardIdentifiers.today_arrivals || 0}
             tone="success"
+            motionIndex={1}
             icon={<MovementIcon type="On Rail" />}
             customers={dashboardIdentifiers.today_arrival_customers || []}
           />
@@ -3221,6 +3261,7 @@ function App() {
             label="Near Birgunj"
             value={dashboardIdentifiers.approaching_birgunj || 0}
             tone="warning"
+            motionIndex={2}
             icon={
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 4v10" />
@@ -3235,6 +3276,7 @@ function App() {
             label="Started Rail This Week"
             value={dashboardIdentifiers.railed_out_this_week || 0}
             tone="primary"
+            motionIndex={3}
             icon={
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M7 4h10c1.7 0 3 1.3 3 3v7c0 1.7-1.3 3-3 3H7c-1.7 0-3-1.3-3-3V7c0-1.7 1.3-3 3-3Z" />
@@ -3263,13 +3305,14 @@ function App() {
 
         <div className="filter-bar">
           <div className="movement-identifiers">
-            {MOVEMENT_FILTERS.map((filter) => (
+            {MOVEMENT_FILTERS.map((filter, index) => (
               <MovementIdentifier
                 key={filter.value}
                 filter={filter}
                 isActive={movementFilter === filter.value}
                 count={movementCounts[filter.value] || 0}
                 onClick={() => setMovementFilter(filter.value)}
+                motionIndex={index}
               />
             ))}
           </div>
@@ -3404,7 +3447,7 @@ function App() {
                   return (
                     <tr
                       key={row.group_key || row.id}
-                      className={`interactive-row ${isSelected ? "is-selected" : ""}`}
+                      className={`interactive-row ${isSelected ? "is-selected" : ""} ${highlightedGroupKey === row.group_key ? "is-freshly-updated" : ""}`}
                       onClick={() => setAuditRow(row)}
                       onContextMenu={(event) => {
                         event.preventDefault();
@@ -4631,34 +4674,44 @@ function App() {
                   ) : null}
                 </div>
               </div>
-              {auditEntries.length === 0 ? (
-                <div className="history-table-wrap empty-state-panel">No activity yet.</div>
-              ) : auditJournalExpanded ? (
-                <div className="audit-timeline">
-                  {auditEntries.map((entry) => (
-                    <article key={entry.id} className="audit-timeline-item">
-                      <div className="audit-timeline-meta">
-                        <span>{entry.created_at || "-"}</span>
-                        <span>{formatShipmentStatusLabel(entry.shipment_status)}</span>
-                      </div>
-                      <h4>{formatAuditActionLabel(entry.action)}</h4>
-                      <p>{formatAuditDetails(entry.details)}</p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <div className="audit-journal-collapsed">
-                  {auditEntries.slice(0, 3).map((entry) => (
-                    <article key={entry.id} className="audit-journal-summary">
-                      <div>
-                        <strong>{formatAuditActionLabel(entry.action)}</strong>
+              <div className={`audit-journal-body ${auditJournalExpanded ? "is-expanded" : "is-collapsed"}`}>
+                {auditEntries.length === 0 ? (
+                  <div className="history-table-wrap empty-state-panel">No activity yet.</div>
+                ) : auditJournalExpanded ? (
+                  <div className="audit-timeline motion-detail-list">
+                    {auditEntries.map((entry, index) => (
+                      <article
+                        key={entry.id}
+                        className="audit-timeline-item motion-stagger-item"
+                        style={{ "--motion-index": index }}
+                      >
+                        <div className="audit-timeline-meta">
+                          <span>{entry.created_at || "-"}</span>
+                          <span>{formatShipmentStatusLabel(entry.shipment_status)}</span>
+                        </div>
+                        <h4>{formatAuditActionLabel(entry.action)}</h4>
                         <p>{formatAuditDetails(entry.details)}</p>
-                      </div>
-                      <span>{entry.created_at || "-"}</span>
-                    </article>
-                  ))}
-                </div>
-              )}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="audit-journal-collapsed motion-detail-list">
+                    {auditEntries.slice(0, 3).map((entry, index) => (
+                      <article
+                        key={entry.id}
+                        className="audit-journal-summary motion-stagger-item"
+                        style={{ "--motion-index": index }}
+                      >
+                        <div>
+                          <strong>{formatAuditActionLabel(entry.action)}</strong>
+                          <p>{formatAuditDetails(entry.details)}</p>
+                        </div>
+                        <span>{entry.created_at || "-"}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </Modal>
