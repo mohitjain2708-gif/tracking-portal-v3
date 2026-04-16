@@ -942,6 +942,7 @@ function App() {
   const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
+  const dashboardLoadPromiseRef = useRef(null);
   const rowHighlightTimeoutRef = useRef(null);
   const locationDistanceCacheRef = useRef({});
   const [documentRow, setDocumentRow] = useState(null);
@@ -1061,12 +1062,16 @@ function App() {
   }, [currentUser, isAuthenticated]);
 
   const loadDashboard = useCallback(async (options = {}) => {
-    const { silent = false } = options;
+    const { silent = false, includeSources = !silent } = options;
 
     if (!demoSessionEnabled && (!authChecked || !isAuthenticated)) {
       setLoading(false);
       setRefreshing(false);
       return;
+    }
+
+    if (dashboardLoadPromiseRef.current) {
+      return dashboardLoadPromiseRef.current;
     }
 
     if (silent) {
@@ -1075,42 +1080,47 @@ function App() {
       setLoading(true);
     }
 
-    try {
-      const bootstrap = await api.getPortalBootstrap();
-      const nextShipments = Array.isArray(bootstrap?.shipments) ? bootstrap.shipments : [];
-      const nextDashboardRows = Array.isArray(bootstrap?.dashboard?.rows) ? bootstrap.dashboard.rows : [];
-      const nextSourceBatches = Array.isArray(bootstrap?.source_batches) ? bootstrap.source_batches : [];
-      const nextSourceMappings = Array.isArray(bootstrap?.source_mappings) ? bootstrap.source_mappings : [];
-      const nextSourceConnections = Array.isArray(bootstrap?.source_connections) ? bootstrap.source_connections : [];
-      const nextDashboardIdentifiers = bootstrap?.dashboard?.identifiers || {
-        total_at_icd_birgunj: 0,
-        today_arrivals: 0,
-        approaching_birgunj: 0,
-        railed_out_this_week: 0,
-        today_arrival_customers: [],
-        approaching_birgunj_customers: [],
-        railed_out_this_week_customers: [],
-      };
+    const requestPromise = (async () => {
+      try {
+        const bootstrap = await api.getPortalBootstrap({ includeSources });
+        const nextShipments = Array.isArray(bootstrap?.shipments) ? bootstrap.shipments : [];
+        const nextDashboardRows = Array.isArray(bootstrap?.dashboard?.rows) ? bootstrap.dashboard.rows : [];
+        const nextDashboardIdentifiers = bootstrap?.dashboard?.identifiers || {
+          total_at_icd_birgunj: 0,
+          today_arrivals: 0,
+          approaching_birgunj: 0,
+          railed_out_this_week: 0,
+          today_arrival_customers: [],
+          approaching_birgunj_customers: [],
+          railed_out_this_week_customers: [],
+        };
 
-      startTransition(() => {
-        setShipments(nextShipments);
-        setDashboardRows(nextDashboardRows);
-        setSourceBatches(nextSourceBatches);
-        setSourceMappings(nextSourceMappings);
-        setSourceConnections(nextSourceConnections);
-        setDashboardIdentifiers(nextDashboardIdentifiers);
-      });
-    } catch (error) {
-      if (!demoSessionEnabled && /authentication|unauthorized|missing authentication token/i.test(error.message || "")) {
-        api.logout();
-        setCurrentUser(null);
-        setIsAuthenticated(false);
+        startTransition(() => {
+          setShipments(nextShipments);
+          setDashboardRows(nextDashboardRows);
+          setDashboardIdentifiers(nextDashboardIdentifiers);
+          if (includeSources) {
+            setSourceBatches(Array.isArray(bootstrap?.source_batches) ? bootstrap.source_batches : []);
+            setSourceMappings(Array.isArray(bootstrap?.source_mappings) ? bootstrap.source_mappings : []);
+            setSourceConnections(Array.isArray(bootstrap?.source_connections) ? bootstrap.source_connections : []);
+          }
+        });
+      } catch (error) {
+        if (!demoSessionEnabled && /authentication|unauthorized|missing authentication token/i.test(error.message || "")) {
+          api.logout();
+          setCurrentUser(null);
+          setIsAuthenticated(false);
+        }
+        setFeedback({ tone: "error", text: error.message || "Failed to load shipments" });
+      } finally {
+        dashboardLoadPromiseRef.current = null;
+        setLoading(false);
+        setRefreshing(false);
       }
-      setFeedback({ tone: "error", text: error.message || "Failed to load shipments" });
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+    })();
+
+    dashboardLoadPromiseRef.current = requestPromise;
+    return requestPromise;
   }, [authChecked, demoSessionEnabled, isAuthenticated]);
 
   useEffect(() => {
@@ -1128,7 +1138,7 @@ function App() {
     const timer = window.setInterval(async () => {
       try {
         await api.refreshAllTracking();
-        await loadDashboard({ silent: true });
+        await loadDashboard({ silent: true, includeSources: false });
       } catch {
         // Keep visible state if auto-refresh fails.
       }
@@ -2156,7 +2166,7 @@ function App() {
         void pollStatus();
       });
 
-      await loadDashboard({ silent: true });
+      await loadDashboard({ silent: true, includeSources: false });
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
     } finally {

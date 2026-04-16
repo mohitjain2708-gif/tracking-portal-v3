@@ -3365,21 +3365,28 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_po
 
 @router.get("/bootstrap")
 def dashboard_bootstrap(
+    include_sources: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_portal_user),
 ):
     _ensure_user_scope_ready(db, current_user)
     shipments = _get_shipments(db, current_user)
-    return {
+    response = {
         "shipments": [_shipment_to_dict(shipment) for shipment in shipments],
         "dashboard": {
             "rows": _group_dashboard_rows(shipments),
             "identifiers": _dashboard_identifiers(shipments),
         },
-        "source_batches": _serialize_source_batches(db, current_user, limit=8),
-        "source_mappings": _serialize_source_mappings(db, current_user),
-        "source_connections": _serialize_source_connections(db, current_user),
     }
+    if include_sources:
+        response.update(
+            {
+                "source_batches": _serialize_source_batches(db, current_user, limit=8),
+                "source_mappings": _serialize_source_mappings(db, current_user),
+                "source_connections": _serialize_source_connections(db, current_user),
+            }
+        )
+    return response
 
 
 @router.get("/dashboard-export")
@@ -4234,6 +4241,7 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
     )
     if not shipments:
         raise HTTPException(status_code=404, detail="Shipment group not found")
+    refreshed_group_count = len(_group_dashboard_rows(shipments))
     unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
     payloads: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, len(unique_containers)))) as executor:
@@ -4261,16 +4269,24 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
         bl_number=_first_non_empty([shipment.bl_number for shipment in shipments]),
         container_number=_first_non_empty([shipment.container_number for shipment in shipments]),
         shipment_status="active",
-        details={"refreshed_count": len(unique_containers), "container_numbers": unique_containers},
+        details={
+            "refreshed_count": refreshed_group_count,
+            "refreshed_container_count": len(unique_containers),
+            "container_numbers": unique_containers,
+        },
     )
     db.commit()
-    return {"refreshed_count": len(unique_containers)}
+    return {
+        "refreshed_count": refreshed_group_count,
+        "refreshed_container_count": len(unique_containers),
+    }
 
 
 @router.post("/refresh-all")
 def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     shipments = list(db.execute(_user_shipment_select(current_user).where(Shipment.shipment_status == "active")).scalars())
+    refreshed_group_count = len(_group_dashboard_rows(shipments))
     unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
     payloads: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, len(unique_containers)))) as executor:
@@ -4296,10 +4312,17 @@ def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_
         current_user.id,
         "shipment_all_refreshed",
         shipment_status="active",
-        details={"refreshed_count": len(unique_containers)},
+        details={
+            "refreshed_count": refreshed_group_count,
+            "refreshed_container_count": len(unique_containers),
+        },
     )
     db.commit()
-    return {"refreshed_count": len(unique_containers), "message": f"Refreshed {len(unique_containers)} active shipments"}
+    return {
+        "refreshed_count": refreshed_group_count,
+        "refreshed_container_count": len(unique_containers),
+        "message": f"Refreshed {refreshed_group_count} active shipment{'' if refreshed_group_count == 1 else 's'}",
+    }
 
 
 @router.post("/refresh-all/start")
@@ -4519,8 +4542,9 @@ def system_status(db: Session = Depends(get_db)):
 @router.get("/stats")
 def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    shipments = [_shipment_to_dict(shipment) for shipment in _get_shipments(db, current_user)]
-    grouped_rows = _group_dashboard_rows(_get_shipments(db, current_user))
+    shipment_models = _get_shipments(db, current_user)
+    shipments = [_shipment_to_dict(shipment) for shipment in shipment_models]
+    grouped_rows = _group_dashboard_rows(shipment_models)
     movement_counts: dict[str, int] = {}
     refresh_status_counts: dict[str, int] = {}
     for shipment in grouped_rows:
