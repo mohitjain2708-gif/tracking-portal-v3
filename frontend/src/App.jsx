@@ -402,16 +402,33 @@ function formatDateTimeLabel(value) {
   if (!text) {
     return "-";
   }
-  const parsed = new Date(text);
+
+  const legacyMatch = text.match(
+    /^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  let parsed = legacyMatch
+    ? new Date(
+        Number(legacyMatch[3]),
+        Number(legacyMatch[2]) - 1,
+        Number(legacyMatch[1]),
+        Number(legacyMatch[4] || 0),
+        Number(legacyMatch[5] || 0),
+        Number(legacyMatch[6] || 0)
+      )
+    : new Date(text);
   if (Number.isNaN(parsed.getTime())) {
     return text;
   }
+
   return new Intl.DateTimeFormat(undefined, {
+    timeZone: "Asia/Kolkata",
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
   }).format(parsed);
 }
 
@@ -2120,52 +2137,68 @@ function App() {
         tone: "info",
         text: "Refreshing live tracking.",
       });
-      const { task_id: taskId } = await api.startRefreshAllTracking();
+      let refreshMessage = "Live tracking updated.";
+      try {
+        const { task_id: taskId } = await api.startRefreshAllTracking();
 
-      await new Promise((resolve, reject) => {
-        const pollStatus = async () => {
-          try {
-            const status = await api.getRefreshAllTrackingStatus(taskId);
-            const nextProgress = Number.isFinite(Number(status.progress))
-              ? Math.max(0, Math.min(100, Number(status.progress)))
-              : 0;
-            setTrackingRefreshProgress(nextProgress);
-            setFeedback({
-              tone: status.state === "failed" ? "error" : status.state === "completed" ? "success" : "info",
-              text:
-                status.message ||
-                "Refreshing live tracking.",
-            });
+        const finalStatus = await new Promise((resolve, reject) => {
+          const pollStatus = async () => {
+            try {
+              const status = await api.getRefreshAllTrackingStatus(taskId);
+              const nextProgress = Number.isFinite(Number(status.progress))
+                ? Math.max(0, Math.min(100, Number(status.progress)))
+                : 0;
+              setTrackingRefreshProgress(nextProgress);
+              setFeedback({
+                tone: status.state === "failed" ? "error" : status.state === "completed" ? "success" : "info",
+                text:
+                  status.message ||
+                  "Refreshing live tracking.",
+              });
 
-            if (status.state === "completed") {
+              if (status.state === "completed") {
+                if (trackingRefreshPollRef.current) {
+                  window.clearInterval(trackingRefreshPollRef.current);
+                  trackingRefreshPollRef.current = null;
+                }
+                resolve(status);
+                return;
+              }
+
+              if (status.state === "failed") {
+                if (trackingRefreshPollRef.current) {
+                  window.clearInterval(trackingRefreshPollRef.current);
+                  trackingRefreshPollRef.current = null;
+                }
+                reject(new Error(status.message || "Refresh all failed"));
+              }
+            } catch (error) {
               if (trackingRefreshPollRef.current) {
                 window.clearInterval(trackingRefreshPollRef.current);
                 trackingRefreshPollRef.current = null;
               }
-              resolve(status);
-              return;
+              reject(error);
             }
+          };
 
-            if (status.state === "failed") {
-              if (trackingRefreshPollRef.current) {
-                window.clearInterval(trackingRefreshPollRef.current);
-                trackingRefreshPollRef.current = null;
-              }
-              reject(new Error(status.message || "Refresh all failed"));
-            }
-          } catch (error) {
-            if (trackingRefreshPollRef.current) {
-              window.clearInterval(trackingRefreshPollRef.current);
-              trackingRefreshPollRef.current = null;
-            }
-            reject(error);
-          }
-        };
+          trackingRefreshPollRef.current = window.setInterval(pollStatus, 700);
+          void pollStatus();
+        });
 
-        trackingRefreshPollRef.current = window.setInterval(pollStatus, 700);
-        void pollStatus();
+        refreshMessage = finalStatus?.message || refreshMessage;
+      } catch (backgroundError) {
+        const directRefresh = await api.refreshAllTracking();
+        setTrackingRefreshProgress(100);
+        refreshMessage =
+          directRefresh?.message
+          || backgroundError?.message
+          || "Live tracking updated.";
+      }
+
+      setFeedback({
+        tone: "success",
+        text: refreshMessage,
       });
-
       await loadDashboard({ silent: true, includeSources: false });
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
@@ -4374,7 +4407,7 @@ function App() {
               <section className="audit-summary-card">
                 <div className="audit-summary-row">
                   <span>Last Updated</span>
-                  <strong>{auditRow.last_refresh_at || "No refresh yet"}</strong>
+                  <strong>{auditRow.last_refresh_at ? formatDateTimeLabel(auditRow.last_refresh_at) : "No refresh yet"}</strong>
                 </div>
                 <div className="audit-summary-row">
                   <span>Sources</span>

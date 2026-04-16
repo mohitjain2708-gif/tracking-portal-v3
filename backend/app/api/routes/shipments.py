@@ -14,6 +14,7 @@ from threading import Lock, Thread
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import boto3
 import requests
@@ -49,6 +50,7 @@ BL_DOCUMENTS_DIR = RUNTIME_DIR / "bl_documents"
 BL_DOCUMENTS_INDEX_FILE = RUNTIME_DIR / "bl_documents_index.json"
 LOCATION_DISTANCE_CACHE_FILE = RUNTIME_DIR / "location_distance_cache.json"
 DEFAULT_LOCAL_USER_EMAIL = settings.demo_email
+APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,11 +152,19 @@ _r2_client = None
 
 
 def _now_datetime() -> str:
-    return datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    return datetime.now(APP_TIMEZONE).strftime("%d-%m-%Y %H:%M:%S")
 
 
 def _now_iso_for_cache() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _format_app_timestamp(value: datetime | None) -> str:
+    if not value:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=ZoneInfo("UTC"))
+    return value.astimezone(APP_TIMEZONE).strftime("%d-%m-%Y %H:%M:%S")
 
 
 def _load_state() -> dict[str, Any]:
@@ -1390,7 +1400,7 @@ def _serialize_audit_log(entry: AuditLog) -> dict[str, Any]:
         "container_number": entry.container_number,
         "shipment_status": entry.shipment_status,
         "details": details,
-        "created_at": entry.created_at.strftime("%d-%m-%Y %H:%M:%S") if entry.created_at else "",
+        "created_at": _format_app_timestamp(entry.created_at),
     }
 
 
