@@ -735,10 +735,17 @@ def _effective_shipment_location(shipment: Shipment) -> str:
 
 def _shipment_needs_action(shipment: Shipment) -> bool:
     tracking_source = _clean_text(getattr(shipment, "tracking_source", "")).lower()
-    booking_date = _clean_text(getattr(shipment, "pristine_booking_date", ""))
+    booking_date = _parse_date(_clean_text(getattr(shipment, "pristine_booking_date", "")))
     if "pristine" not in tracking_source or not booking_date:
         return False
-    return _has_reached_birgunj(shipment)
+    if not _has_reached_birgunj(shipment):
+        return False
+    arrival_date = _parse_date(_clean_text(getattr(shipment, "birgunj_arrival_date", "")))
+    if arrival_date is None and _effective_shipment_movement(shipment) == "Arrived Birgunj":
+        arrival_date = _parse_date(_clean_text(getattr(shipment, "latest_time", "")))
+    if arrival_date is None:
+        return False
+    return booking_date > arrival_date
 
 
 def _movement_since_date(
@@ -1851,7 +1858,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "document_status": getattr(shipment, "document_status", ""),
         "original_docs_received_date": getattr(shipment, "original_docs_received_date", ""),
         "action_required": action_required,
-        "action_required_reason": "Pristine booking date detected for an arrived Birgunj shipment" if action_required else "",
+        "action_required_reason": "Pristine booking date is after Birgunj arrival" if action_required else "",
         "source_type": source_type,
         "source_label": source_label,
         "source_batch_id": int(getattr(shipment, "source_batch_id", 0) or 0),
