@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 import app.api.routes.shipments as shipments_module
 from app.api.routes.shipments import (
+    _group_dashboard_rows,
     _get_refresh_job,
     _run_refresh_all_job,
     _apply_group_status_transition,
@@ -232,6 +233,52 @@ class ShipmentMilestoneTests(unittest.TestCase):
         )
 
         self.assertTrue(_shipment_needs_action(shipment))
+
+    def test_pristine_booking_date_before_birgunj_arrival_does_not_mark_action(self) -> None:
+        shipment = Shipment(
+            customer_name="A & A International",
+            container_number="NYKU9734848",
+            bl_number="ONEYTPEF98416400",
+            latest_location="ICD BIRGANJ, Samastipur",
+            movement_category="Arrived Birgunj",
+            tracking_source="ldb+pristine",
+            birgunj_arrival_date="30-03-2026",
+            pristine_booking_date="26-03-2026",
+        )
+
+        self.assertFalse(_shipment_needs_action(shipment))
+
+    def test_group_dashboard_rows_preserve_action_needed_when_one_container_qualifies(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="A & A International",
+                container_number="NYKU9734848",
+                bl_number="ONEYTPEF98416400",
+                shipment_status="active",
+                latest_location="ICD BIRGANJ, Samastipur",
+                movement_category="Arrived Birgunj",
+                tracking_source="ldb+pristine",
+                birgunj_arrival_date="26-03-2026",
+                pristine_booking_date="30-03-2026",
+            ),
+            Shipment(
+                customer_name="A & A International",
+                container_number="NYKU9734849",
+                bl_number="ONEYTPEF98416400",
+                shipment_status="active",
+                latest_location="ICD BIRGANJ, Samastipur",
+                movement_category="Arrived Birgunj",
+                tracking_source="ldb",
+                birgunj_arrival_date="26-03-2026",
+                pristine_booking_date="",
+            ),
+        ]
+
+        rows = _group_dashboard_rows(shipments)
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["action_required"])
+        self.assertEqual(rows[0]["action_required_reason"], "Pristine booking date is after Birgunj arrival")
 
     def test_concor_wgn_signal_marks_shipment_as_on_rail(self) -> None:
         movement = _movement_category(
