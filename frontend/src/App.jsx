@@ -1140,6 +1140,11 @@ function App() {
     return requestPromise;
   }, [authChecked, demoSessionEnabled, isAuthenticated]);
 
+  const refreshDashboardLight = useCallback(
+    () => loadDashboard({ silent: true, includeSources: false }),
+    [loadDashboard]
+  );
+
   useEffect(() => {
     if (!authChecked) {
       return;
@@ -1684,12 +1689,12 @@ function App() {
           tone: "success",
           text: `${data.created_count ?? containerNumbers.length} shipment row(s) added successfully.`,
         });
-        await loadDashboard({ silent: true });
+        await refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Failed to add shipment" });
       }
     },
-    [loadDashboard, manualForm]
+    [manualForm, refreshDashboardLight]
   );
 
   const openEditShipment = useCallback((row) => {
@@ -1812,14 +1817,14 @@ function App() {
           setEditReturnRow(null);
         }
         setFeedback({ tone: "success", text: "Shipment details updated successfully." });
-        await loadDashboard({ silent: true });
+        await refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Failed to update shipment details" });
       } finally {
         setEditSubmitting(false);
       }
     },
-    [editForm, editReturnRow, editRow, loadDashboard]
+    [editForm, editReturnRow, editRow, refreshDashboardLight]
   );
 
   const handleOperationalFieldSave = useCallback(
@@ -1864,7 +1869,7 @@ function App() {
           );
           triggerRowHighlight(row.group_key);
           setFeedback({ tone: "success", text: "Saved." });
-          void loadDashboard({ silent: true });
+          void refreshDashboardLight();
           return true;
         } catch (error) {
           setFeedback({ tone: "error", text: error.message || "Could not save the shipment fields." });
@@ -1877,7 +1882,7 @@ function App() {
         });
       }
       },
-      [loadDashboard, triggerRowHighlight]
+      [refreshDashboardLight, triggerRowHighlight]
     );
 
   const saveDoDateDraft = useCallback(
@@ -2330,14 +2335,14 @@ function App() {
           tone: "success",
           text: `Live tracking updated for ${data.refreshed_count ?? 1} shipment${(data.refreshed_count ?? 1) === 1 ? "" : "s"}.`,
         });
-        await loadDashboard({ silent: true });
+        await refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Refresh failed" });
       } finally {
         setRefreshing(false);
       }
     },
-    [loadDashboard]
+    [refreshDashboardLight]
   );
 
   const handleDocumentUpload = useCallback(
@@ -2349,7 +2354,7 @@ function App() {
       try {
         await api.uploadBLDocument(blNumber, documentType, file);
         setFeedback({ tone: "success", text: `${documentType.replace("_", " ")} uploaded for ${blNumber}.` });
-        void loadDashboard({ silent: true });
+        void refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Document upload failed" });
       } finally {
@@ -2360,7 +2365,7 @@ function App() {
         });
       }
     },
-    [loadDashboard]
+    [refreshDashboardLight]
   );
 
   const handleGroupStatusChange = useCallback(
@@ -2412,12 +2417,12 @@ function App() {
                   ? `${data.count ?? 0} shipment record(s) marked complete.`
                   : `${data.count ?? 0} shipment record(s) moved to archive.`,
           });
-        void loadDashboard({ silent: true });
+        void refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Status update failed" });
       }
     },
-    [loadDashboard]
+    [refreshDashboardLight]
   );
 
   const handleGroupDelete = useCallback(
@@ -2436,12 +2441,12 @@ function App() {
           tone: "success",
           text: `${data.count ?? 0} shipment record(s) removed.`,
         });
-        await loadDashboard({ silent: true });
+        await refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Delete failed" });
       }
     },
-    [loadDashboard]
+    [refreshDashboardLight]
   );
 
   const handleDashboardExport = useCallback(async () => {
@@ -2482,12 +2487,12 @@ function App() {
           tone: "success",
           text: `${data.group_count ?? selectedRows.length} shipment group${(data.group_count ?? selectedRows.length) === 1 ? "" : "s"} updated.`,
         });
-        void loadDashboard({ silent: true });
+        void refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Bulk update failed" });
       }
     },
-    [clearSelection, loadDashboard, selectedRows]
+    [clearSelection, refreshDashboardLight, selectedRows]
   );
 
   const handleBulkDelete = useCallback(async () => {
@@ -2508,11 +2513,11 @@ function App() {
         tone: "success",
         text: `${data.group_count ?? selectedRows.length} shipment group${(data.group_count ?? selectedRows.length) === 1 ? "" : "s"} removed.`,
       });
-      await loadDashboard({ silent: true });
+      await refreshDashboardLight();
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Bulk delete failed" });
     }
-  }, [clearSelection, loadDashboard, selectedRows]);
+  }, [clearSelection, refreshDashboardLight, selectedRows]);
 
   const handleDocumentSubmit = useCallback(async () => {
     if (!documentRow?.bl_number) {
@@ -2571,7 +2576,7 @@ function App() {
         setIsAuthenticated(true);
         setAuthChecked(true);
         setAuthForm({ email: "", password: "", confirmPassword: "" });
-        await loadDashboard({ silent: true });
+        await refreshDashboardLight();
       } catch (error) {
         setFeedback({ tone: "error", text: error.message || "Authentication failed" });
       } finally {

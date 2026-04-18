@@ -46,11 +46,14 @@ if not RUNTIME_DIR.is_absolute():
 TEMP_IMPORT_DIR = RUNTIME_DIR / "temp_imports"
 STATE_FILE = RUNTIME_DIR / "shipment_state.json"
 CACHE_FILE = RUNTIME_DIR / "tracking_cache.json"
+REFRESH_JOBS_FILE = RUNTIME_DIR / "refresh_jobs.json"
 BL_DOCUMENTS_DIR = RUNTIME_DIR / "bl_documents"
 BL_DOCUMENTS_INDEX_FILE = RUNTIME_DIR / "bl_documents_index.json"
 LOCATION_DISTANCE_CACHE_FILE = RUNTIME_DIR / "location_distance_cache.json"
 DEFAULT_LOCAL_USER_EMAIL = settings.demo_email
 APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
+REFRESH_JOB_RETENTION_HOURS = 12
+REFRESH_JOB_STALE_SECONDS = 600
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -177,6 +180,62 @@ def _load_state() -> dict[str, Any]:
     data.setdefault("shipments", [])
     data.setdefault("shipment_id_counter", 1)
     return data
+
+
+def _parse_refresh_job_timestamp(value: Any) -> datetime | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=APP_TIMEZONE)
+    return parsed
+
+
+def _load_refresh_jobs() -> dict[str, dict[str, Any]]:
+    if not REFRESH_JOBS_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(REFRESH_JOBS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_refresh_jobs(jobs: dict[str, dict[str, Any]]) -> None:
+    REFRESH_JOBS_FILE.write_text(json.dumps(jobs, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def _cleanup_refresh_jobs(jobs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    cutoff = datetime.now(APP_TIMEZONE) - timedelta(hours=REFRESH_JOB_RETENTION_HOURS)
+    cleaned: dict[str, dict[str, Any]] = {}
+    for task_id, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        updated_at = _parse_refresh_job_timestamp(job.get("updated_at"))
+        if updated_at and updated_at < cutoff:
+            continue
+        cleaned[task_id] = job
+    return cleaned
+
+
+def _normalize_refresh_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(job, dict):
+        return None
+    normalized = dict(job)
+    updated_at = _parse_refresh_job_timestamp(normalized.get("updated_at"))
+    state = _clean_text(normalized.get("state")).lower()
+    if updated_at and state in {"queued", "running"}:
+        age_seconds = (datetime.now(APP_TIMEZONE) - updated_at).total_seconds()
+        if age_seconds > REFRESH_JOB_STALE_SECONDS:
+            normalized["state"] = "failed"
+            normalized["progress"] = 100
+            normalized["message"] = "Live tracking refresh took too long and was stopped. Please try again."
+            normalized["updated_at"] = datetime.now(APP_TIMEZONE).isoformat()
+    return normalized
 
 
 def _clean_text(value: Any) -> str:
@@ -2446,15 +2505,28 @@ def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
 
 def _set_refresh_job(task_id: str, **updates: Any) -> dict[str, Any]:
     with _refresh_jobs_lock:
+        jobs = _cleanup_refresh_jobs(_load_refresh_jobs())
+        _refresh_jobs.clear()
+        _refresh_jobs.update(jobs)
         job = _refresh_jobs.setdefault(task_id, {})
         job.update(updates)
+        job["updated_at"] = datetime.now(APP_TIMEZONE).isoformat()
+        _refresh_jobs[task_id] = job
+        _save_refresh_jobs(_refresh_jobs)
         return dict(job)
 
 
 def _get_refresh_job(task_id: str) -> dict[str, Any] | None:
     with _refresh_jobs_lock:
-        job = _refresh_jobs.get(task_id)
-        return dict(job) if job else None
+        jobs = _cleanup_refresh_jobs(_load_refresh_jobs())
+        _refresh_jobs.clear()
+        _refresh_jobs.update(jobs)
+        job = _normalize_refresh_job(_refresh_jobs.get(task_id))
+        if job:
+            _refresh_jobs[task_id] = job
+            _save_refresh_jobs(_refresh_jobs)
+            return dict(job)
+        return None
 
 
 def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
