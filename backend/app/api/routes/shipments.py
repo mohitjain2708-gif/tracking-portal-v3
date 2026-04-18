@@ -55,8 +55,6 @@ DEFAULT_LOCAL_USER_EMAIL = settings.demo_email
 APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REFRESH_JOB_RETENTION_HOURS = 12
 REFRESH_JOB_STALE_SECONDS = 600
-BACKGROUND_REFRESH_INTERVAL_SECONDS = 300
-BACKGROUND_REFRESH_STALE_MINUTES = 10
 BACKGROUND_REFRESH_LEASE_SECONDS = 900
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,8 +151,6 @@ PORT_PATTERNS = [
 _storage_ready = False
 _refresh_jobs: dict[str, dict[str, Any]] = {}
 _refresh_jobs_lock = Lock()
-_background_refresh_boot_lock = Lock()
-_background_refresh_started = False
 _background_refresh_instance_id = uuid4().hex
 _documents_index_cache: dict[str, dict[str, Any]] | None = None
 _documents_index_mtime: float | None = None
@@ -200,24 +196,6 @@ def _parse_refresh_job_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=APP_TIMEZONE)
     return parsed
-
-
-def _parse_display_timestamp(value: Any) -> datetime | None:
-    text = _clean_text(value)
-    if not text:
-        return None
-    for parser in (
-        lambda candidate: datetime.strptime(candidate, "%d-%m-%Y %H:%M:%S").replace(tzinfo=APP_TIMEZONE),
-        lambda candidate: datetime.fromisoformat(candidate),
-    ):
-        try:
-            parsed = parser(text)
-        except ValueError:
-            continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=APP_TIMEZONE)
-        return parsed.astimezone(APP_TIMEZONE)
-    return None
 
 
 def _load_refresh_jobs() -> dict[str, dict[str, Any]]:
@@ -2726,17 +2704,6 @@ def _get_refresh_job(task_id: str) -> dict[str, Any] | None:
         return None
 
 
-def _shipments_need_background_refresh(shipments: list[Shipment]) -> bool:
-    if not shipments:
-        return False
-    threshold = datetime.now(APP_TIMEZONE) - timedelta(minutes=BACKGROUND_REFRESH_STALE_MINUTES)
-    for shipment in shipments:
-        refreshed_at = _parse_display_timestamp(getattr(shipment, "last_refresh_at", ""))
-        if refreshed_at is None or refreshed_at <= threshold:
-            return True
-    return False
-
-
 def _run_background_refresh_cycle() -> None:
     connect_args = {"check_same_thread": False} if normalized_database_url.startswith("sqlite") else {}
     job_engine = create_engine(normalized_database_url, future=True, connect_args=connect_args)
@@ -2758,16 +2725,6 @@ def _run_background_refresh_cycle() -> None:
         refreshed_shipments = 0
         for user_id in user_ids:
             _update_background_refresh_lease(state="running", current_user_id=user_id)
-            shipments = list(
-                db.execute(
-                    select(Shipment).where(
-                        Shipment.user_id == user_id,
-                        Shipment.shipment_status == "active",
-                    )
-                ).scalars()
-            )
-            if not _shipments_need_background_refresh(shipments):
-                continue
             try:
                 result = _refresh_active_shipments_for_user(db, user_id, audit_action=None)
             except Exception:
@@ -2785,27 +2742,6 @@ def _run_background_refresh_cycle() -> None:
     finally:
         db.close()
         job_engine.dispose()
-
-
-def _background_refresh_loop() -> None:
-    while True:
-        try:
-            if _try_acquire_background_refresh_lease():
-                _run_background_refresh_cycle()
-        except Exception:
-            _update_background_refresh_lease(state="error")
-        time.sleep(BACKGROUND_REFRESH_INTERVAL_SECONDS)
-
-
-@router.on_event("startup")
-def _start_background_refresh_worker() -> None:
-    global _background_refresh_started
-    with _background_refresh_boot_lock:
-        if _background_refresh_started:
-            return
-        worker = Thread(target=_background_refresh_loop, daemon=True, name="background-live-refresh")
-        worker.start()
-        _background_refresh_started = True
 
 
 def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
