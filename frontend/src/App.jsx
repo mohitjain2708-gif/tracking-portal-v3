@@ -912,6 +912,8 @@ function App() {
   const [ownerDeleteUser, setOwnerDeleteUser] = useState(null);
   const [ownerDeletingUser, setOwnerDeletingUser] = useState(false);
   const [shipments, setShipments] = useState([]);
+  const [shipmentListLoading, setShipmentListLoading] = useState(false);
+  const [shipmentsHydrated, setShipmentsHydrated] = useState(false);
   const [dashboardRows, setDashboardRows] = useState([]);
   const [dashboardIdentifiers, setDashboardIdentifiers] = useState({
     total_at_icd_birgunj: 0,
@@ -921,6 +923,12 @@ function App() {
     today_arrival_customers: [],
     approaching_birgunj_customers: [],
     railed_out_this_week_customers: [],
+  });
+  const [shipmentCountSummary, setShipmentCountSummary] = useState({
+    active: 0,
+    completed: 0,
+    archived: 0,
+    total: 0,
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -960,6 +968,7 @@ function App() {
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
   const dashboardLoadPromiseRef = useRef(null);
+  const shipmentListLoadPromiseRef = useRef(null);
   const rowHighlightTimeoutRef = useRef(null);
   const locationDistanceCacheRef = useRef({});
   const [documentRow, setDocumentRow] = useState(null);
@@ -1078,8 +1087,48 @@ function App() {
     };
   }, [currentUser, isAuthenticated]);
 
+  const loadShipmentList = useCallback(async (options = {}) => {
+    const { silent = false, force = false } = options;
+
+    if (!demoSessionEnabled && (!authChecked || !isAuthenticated)) {
+      setShipmentListLoading(false);
+      return [];
+    }
+
+    if (!force && shipmentListLoadPromiseRef.current) {
+      return shipmentListLoadPromiseRef.current;
+    }
+
+    if (!silent) {
+      setShipmentListLoading(true);
+    }
+
+    const requestPromise = (async () => {
+      try {
+        const items = await api.listShipments();
+        const nextShipments = Array.isArray(items) ? items : [];
+        startTransition(() => {
+          setShipments(nextShipments);
+          setShipmentsHydrated(true);
+        });
+        return nextShipments;
+      } catch (error) {
+        if (!silent) {
+          setFeedback({ tone: "error", text: error.message || "Failed to load shipment details" });
+        }
+        return [];
+      } finally {
+        shipmentListLoadPromiseRef.current = null;
+        setShipmentListLoading(false);
+      }
+    })();
+
+    shipmentListLoadPromiseRef.current = requestPromise;
+    return requestPromise;
+  }, [authChecked, demoSessionEnabled, isAuthenticated]);
+
   const loadDashboard = useCallback(async (options = {}) => {
-    const { silent = false, includeSources = !silent } = options;
+    const { silent = false, includeSources = !silent, includeShipments = false } = options;
 
     if (!demoSessionEnabled && (!authChecked || !isAuthenticated)) {
       setLoading(false);
@@ -1099,7 +1148,7 @@ function App() {
 
     const requestPromise = (async () => {
       try {
-        const bootstrap = await api.getPortalBootstrap({ includeSources });
+        const bootstrap = await api.getPortalBootstrap({ includeSources, includeShipments });
         const nextShipments = Array.isArray(bootstrap?.shipments) ? bootstrap.shipments : [];
         const nextDashboardRows = Array.isArray(bootstrap?.dashboard?.rows) ? bootstrap.dashboard.rows : [];
         const nextDashboardIdentifiers = bootstrap?.dashboard?.identifiers || {
@@ -1111,11 +1160,21 @@ function App() {
           approaching_birgunj_customers: [],
           railed_out_this_week_customers: [],
         };
+        const nextShipmentCountSummary = bootstrap?.dashboard?.shipment_counts || {
+          active: nextDashboardRows.length,
+          completed: 0,
+          archived: 0,
+          total: nextDashboardRows.length,
+        };
 
         startTransition(() => {
-          setShipments(nextShipments);
           setDashboardRows(nextDashboardRows);
           setDashboardIdentifiers(nextDashboardIdentifiers);
+          setShipmentCountSummary(nextShipmentCountSummary);
+          if (includeShipments) {
+            setShipments(nextShipments);
+            setShipmentsHydrated(true);
+          }
           if (includeSources) {
             setSourceBatches(Array.isArray(bootstrap?.source_batches) ? bootstrap.source_batches : []);
             setSourceMappings(Array.isArray(bootstrap?.source_mappings) ? bootstrap.source_mappings : []);
@@ -1149,8 +1208,30 @@ function App() {
     if (!authChecked) {
       return;
     }
-    loadDashboard();
+    void loadDashboard({ includeShipments: false });
   }, [authChecked, loadDashboard]);
+
+  useEffect(() => {
+    if (!authChecked || (!demoSessionEnabled && !isAuthenticated) || shipmentsHydrated) {
+      return undefined;
+    }
+
+    const schedule = window.requestIdleCallback
+      ? window.requestIdleCallback(() => {
+          void loadShipmentList({ silent: true });
+        }, { timeout: 1200 })
+      : window.setTimeout(() => {
+          void loadShipmentList({ silent: true });
+        }, 250);
+
+    return () => {
+      if (window.cancelIdleCallback && typeof schedule === "number" && "requestIdleCallback" in window) {
+        window.cancelIdleCallback(schedule);
+        return;
+      }
+      window.clearTimeout(schedule);
+    };
+  }, [authChecked, demoSessionEnabled, isAuthenticated, loadShipmentList, shipmentsHydrated]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -1159,15 +1240,17 @@ function App() {
 
     const timer = window.setInterval(async () => {
       try {
-        await api.refreshAllTracking();
         await loadDashboard({ silent: true, includeSources: false });
+        if (shipmentsHydrated && (recordsView || auditRow)) {
+          void loadShipmentList({ silent: true, force: true });
+        }
       } catch {
         // Keep visible state if auto-refresh fails.
       }
     }, 300000);
 
     return () => window.clearInterval(timer);
-  }, [autoRefresh, loadDashboard]);
+  }, [auditRow, autoRefresh, loadDashboard, loadShipmentList, recordsView, shipmentsHydrated]);
 
   useEffect(() => {
     const query = cleanText(manualForm.customer_name);
@@ -1322,15 +1405,28 @@ function App() {
     [shipments]
   );
 
-  const shipmentCounts = useMemo(
-    () => ({
-      active: normalizedRows.length,
-      completed: completedHistoryRows.length,
-      archived: archivedHistoryRows.length,
-      total: normalizedRows.length + completedHistoryRows.length + archivedHistoryRows.length,
-    }),
-    [archivedHistoryRows.length, completedHistoryRows.length, normalizedRows.length]
-  );
+  const shipmentCounts = useMemo(() => {
+    return {
+      active: Number(shipmentCountSummary.active || normalizedRows.length),
+      completed: Number(shipmentCountSummary.completed || completedHistoryRows.length),
+      archived: Number(shipmentCountSummary.archived || archivedHistoryRows.length),
+      total:
+        Number(shipmentCountSummary.total)
+        || (
+          Number(shipmentCountSummary.active || normalizedRows.length)
+          + Number(shipmentCountSummary.completed || completedHistoryRows.length)
+          + Number(shipmentCountSummary.archived || archivedHistoryRows.length)
+        ),
+    };
+  }, [
+    archivedHistoryRows.length,
+    completedHistoryRows.length,
+    normalizedRows.length,
+    shipmentCountSummary.active,
+    shipmentCountSummary.archived,
+    shipmentCountSummary.completed,
+    shipmentCountSummary.total,
+  ]);
 
   const auditShipments = useMemo(() => {
     if (!auditRow) {
@@ -1377,6 +1473,12 @@ function App() {
         )
       );
   }, [auditRow, shipments]);
+
+  useEffect(() => {
+    if ((recordsView || auditRow) && !shipmentListLoading) {
+      void loadShipmentList({ silent: true, force: shipmentsHydrated });
+    }
+  }, [auditRow, loadShipmentList, recordsView, shipmentsHydrated]);
 
   useEffect(() => {
     if (!auditRow) {
@@ -2186,7 +2288,7 @@ function App() {
             }
           };
 
-          trackingRefreshPollRef.current = window.setInterval(pollStatus, 700);
+          trackingRefreshPollRef.current = window.setInterval(pollStatus, 1200);
           void pollStatus();
         });
 
@@ -2205,6 +2307,9 @@ function App() {
         text: refreshMessage,
       });
       await loadDashboard({ silent: true, includeSources: false });
+      if (shipmentsHydrated || recordsView || auditRow) {
+        void loadShipmentList({ silent: true, force: true });
+      }
     } catch (error) {
       setFeedback({ tone: "error", text: error.message || "Refresh all failed" });
     } finally {
@@ -2218,7 +2323,7 @@ function App() {
       }, 350);
       setRefreshing(false);
     }
-  }, [loadDashboard]);
+  }, [auditRow, loadDashboard, loadShipmentList, recordsView, shipmentsHydrated]);
 
   const openSourceBatchDetail = useCallback(async (batchId) => {
     try {
@@ -2592,6 +2697,8 @@ function App() {
     setAdminOverview(null);
     setIsAuthenticated(false);
     setShipments([]);
+    setShipmentsHydrated(false);
+    setShipmentCountSummary({ active: 0, completed: 0, archived: 0, total: 0 });
     setDashboardRows([]);
     setDashboardIdentifiers({
       total_at_icd_birgunj: 0,

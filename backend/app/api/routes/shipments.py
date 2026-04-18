@@ -3264,8 +3264,7 @@ def _format_customer_count_items(counter: dict[str, int]) -> list[dict[str, Any]
     ]
 
 
-def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
-    rows = _group_dashboard_rows(shipments)
+def _dashboard_identifiers_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     today_text = datetime.now().strftime("%d-%m-%Y")
     rolling_week_cutoff = (datetime.now() - timedelta(days=7)).date()
     total_at_icd_birgunj = 0
@@ -3317,6 +3316,34 @@ def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
         "today_arrival_customers": _format_customer_count_items(today_arrival_customers),
         "approaching_birgunj_customers": _format_customer_count_items(approaching_birgunj_customers),
         "railed_out_this_week_customers": _format_customer_count_items(railed_out_this_week_customers),
+    }
+
+
+def _dashboard_identifiers(shipments: list[Shipment]) -> dict[str, Any]:
+    return _dashboard_identifiers_from_rows(_group_dashboard_rows(shipments))
+
+
+def _shipment_count_summary(shipments: list[Shipment], dashboard_rows: list[dict[str, Any]] | None = None) -> dict[str, int]:
+    rows = dashboard_rows if dashboard_rows is not None else _group_dashboard_rows(shipments)
+    completed_groups = {
+        f"BL:{_normalize_bl_number(shipment.bl_number)}"
+        if _normalize_bl_number(shipment.bl_number)
+        else f"SHIP:{shipment.id}"
+        for shipment in shipments
+        if shipment.shipment_status == "completed"
+    }
+    archived_groups = {
+        f"BL:{_normalize_bl_number(shipment.bl_number)}"
+        if _normalize_bl_number(shipment.bl_number)
+        else f"SHIP:{shipment.id}"
+        for shipment in shipments
+        if shipment.shipment_status == "archived"
+    }
+    return {
+        "active": len(rows),
+        "completed": len(completed_groups),
+        "archived": len(archived_groups),
+        "total": len(rows) + len(completed_groups) + len(archived_groups),
     }
 
 
@@ -3578,27 +3605,32 @@ def get_source_batch_detail(
 def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     shipments = _get_shipments(db, current_user)
+    rows = _group_dashboard_rows(shipments)
     return {
-        "rows": _group_dashboard_rows(shipments),
-        "identifiers": _dashboard_identifiers(shipments),
+        "rows": rows,
+        "identifiers": _dashboard_identifiers_from_rows(rows),
     }
 
 
 @router.get("/bootstrap")
 def dashboard_bootstrap(
     include_sources: bool = True,
+    include_shipments: bool = True,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_portal_user),
 ):
     _ensure_user_scope_ready(db, current_user)
     shipments = _get_shipments(db, current_user)
+    dashboard_rows = _group_dashboard_rows(shipments)
     response = {
-        "shipments": [_shipment_to_dict(shipment) for shipment in shipments],
         "dashboard": {
-            "rows": _group_dashboard_rows(shipments),
-            "identifiers": _dashboard_identifiers(shipments),
+            "rows": dashboard_rows,
+            "identifiers": _dashboard_identifiers_from_rows(dashboard_rows),
+            "shipment_counts": _shipment_count_summary(shipments, dashboard_rows),
         },
     }
+    if include_shipments:
+        response["shipments"] = [_shipment_to_dict(shipment) for shipment in shipments]
     if include_sources:
         response.update(
             {
@@ -4524,14 +4556,33 @@ def start_refresh_all_tracking(
     current_user: User = Depends(get_portal_user),
 ):
     _ensure_user_scope_ready(db, current_user)
+    active_shipments = list(
+        db.execute(
+            select(Shipment).where(
+                Shipment.user_id == current_user.id,
+                Shipment.shipment_status == "active",
+            )
+        ).scalars()
+    )
+    active_group_count = len(_group_dashboard_rows(active_shipments))
+    unique_container_count = len(
+        {
+            _clean_container(shipment.container_number)
+            for shipment in active_shipments
+            if _clean_container(shipment.container_number)
+        }
+    )
     task_id = uuid4().hex
     _set_refresh_job(
         task_id,
         state="queued",
-        total=0,
+        total=unique_container_count,
         completed=0,
         progress=0,
-        message="Preparing live tracking refresh.",
+        message=(
+            f"Preparing live tracking refresh for {active_group_count} shipment"
+            f"{'s' if active_group_count != 1 else ''}."
+        ),
         user_id=current_user.id,
     )
     worker = Thread(
