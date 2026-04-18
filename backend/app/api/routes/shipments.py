@@ -23,11 +23,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import engine, get_db
+from app.core.database import database_url as normalized_database_url, engine, get_db
 from app.core.security import hash_password
 from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
@@ -47,6 +47,7 @@ TEMP_IMPORT_DIR = RUNTIME_DIR / "temp_imports"
 STATE_FILE = RUNTIME_DIR / "shipment_state.json"
 CACHE_FILE = RUNTIME_DIR / "tracking_cache.json"
 REFRESH_JOBS_FILE = RUNTIME_DIR / "refresh_jobs.json"
+BACKGROUND_REFRESH_LEASE_FILE = RUNTIME_DIR / "background_refresh_lease.json"
 BL_DOCUMENTS_DIR = RUNTIME_DIR / "bl_documents"
 BL_DOCUMENTS_INDEX_FILE = RUNTIME_DIR / "bl_documents_index.json"
 LOCATION_DISTANCE_CACHE_FILE = RUNTIME_DIR / "location_distance_cache.json"
@@ -54,6 +55,9 @@ DEFAULT_LOCAL_USER_EMAIL = settings.demo_email
 APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REFRESH_JOB_RETENTION_HOURS = 12
 REFRESH_JOB_STALE_SECONDS = 600
+BACKGROUND_REFRESH_INTERVAL_SECONDS = 300
+BACKGROUND_REFRESH_STALE_MINUTES = 10
+BACKGROUND_REFRESH_LEASE_SECONDS = 900
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,6 +153,9 @@ PORT_PATTERNS = [
 _storage_ready = False
 _refresh_jobs: dict[str, dict[str, Any]] = {}
 _refresh_jobs_lock = Lock()
+_background_refresh_boot_lock = Lock()
+_background_refresh_started = False
+_background_refresh_instance_id = uuid4().hex
 _documents_index_cache: dict[str, dict[str, Any]] | None = None
 _documents_index_mtime: float | None = None
 _r2_client = None
@@ -195,6 +202,24 @@ def _parse_refresh_job_timestamp(value: Any) -> datetime | None:
     return parsed
 
 
+def _parse_display_timestamp(value: Any) -> datetime | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    for parser in (
+        lambda candidate: datetime.strptime(candidate, "%d-%m-%Y %H:%M:%S").replace(tzinfo=APP_TIMEZONE),
+        lambda candidate: datetime.fromisoformat(candidate),
+    ):
+        try:
+            parsed = parser(text)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=APP_TIMEZONE)
+        return parsed.astimezone(APP_TIMEZONE)
+    return None
+
+
 def _load_refresh_jobs() -> dict[str, dict[str, Any]]:
     if not REFRESH_JOBS_FILE.exists():
         return {}
@@ -207,6 +232,47 @@ def _load_refresh_jobs() -> dict[str, dict[str, Any]]:
 
 def _save_refresh_jobs(jobs: dict[str, dict[str, Any]]) -> None:
     REFRESH_JOBS_FILE.write_text(json.dumps(jobs, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def _load_background_refresh_lease() -> dict[str, Any]:
+    if not BACKGROUND_REFRESH_LEASE_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(BACKGROUND_REFRESH_LEASE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_background_refresh_lease(payload: dict[str, Any]) -> None:
+    BACKGROUND_REFRESH_LEASE_FILE.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True),
+        encoding="utf-8",
+    )
+
+
+def _update_background_refresh_lease(**extra: Any) -> None:
+    payload = {
+        "instance_id": _background_refresh_instance_id,
+        "heartbeat_at": datetime.now(APP_TIMEZONE).isoformat(),
+    }
+    payload.update(extra)
+    _save_background_refresh_lease(payload)
+
+
+def _try_acquire_background_refresh_lease() -> bool:
+    lease = _load_background_refresh_lease()
+    heartbeat = _parse_refresh_job_timestamp(lease.get("heartbeat_at"))
+    now = datetime.now(APP_TIMEZONE)
+    if (
+        lease
+        and lease.get("instance_id") != _background_refresh_instance_id
+        and heartbeat
+        and (now - heartbeat).total_seconds() < BACKGROUND_REFRESH_LEASE_SECONDS
+    ):
+        return False
+    _update_background_refresh_lease(state="running")
+    return True
 
 
 def _cleanup_refresh_jobs(jobs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -2503,6 +2569,137 @@ def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
     )
 
 
+def _refresh_active_shipments_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    task_id: str | None = None,
+    audit_action: str | None = None,
+) -> dict[str, int]:
+    shipments = list(
+        db.execute(
+            select(Shipment).where(
+                Shipment.user_id == user_id,
+                Shipment.shipment_status == "active",
+            )
+        ).scalars()
+    )
+    refreshed_group_count = len(_group_dashboard_rows(shipments))
+    unique_containers = sorted(
+        {
+            _clean_container(shipment.container_number)
+            for shipment in shipments
+            if _clean_container(shipment.container_number)
+        }
+    )
+    total_containers = len(unique_containers)
+
+    if task_id:
+        _set_refresh_job(
+            task_id,
+            state="running",
+            total=total_containers,
+            completed=0,
+            progress=0,
+            message=(
+                f"Refreshing live tracking for {refreshed_group_count} shipment"
+                f"{'s' if refreshed_group_count != 1 else ''}."
+            ),
+        )
+
+    if not unique_containers:
+        if audit_action:
+            _log_audit_event(
+                db,
+                user_id,
+                audit_action,
+                shipment_status="active",
+                details={
+                    "refreshed_count": refreshed_group_count,
+                    "refreshed_container_count": 0,
+                },
+            )
+        db.commit()
+        if task_id:
+            _set_refresh_job(
+                task_id,
+                state="completed",
+                completed=0,
+                progress=100,
+                message="No active shipments needed refreshing.",
+                refreshed_count=refreshed_group_count,
+                refreshed_container_count=0,
+            )
+        return {
+            "refreshed_count": refreshed_group_count,
+            "refreshed_container_count": 0,
+        }
+
+    payloads: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total_containers))) as executor:
+        futures = {
+            executor.submit(_build_tracking_payload, container_number, False): container_number
+            for container_number in unique_containers
+        }
+        completed = 0
+        for future in as_completed(futures):
+            container_number = futures[future]
+            try:
+                payloads[container_number] = future.result()
+            except Exception:
+                payloads[container_number] = {
+                    "data": {},
+                    "status": "error",
+                    "error": "Tracking fetch failed",
+                    "cached": False,
+                    "has_data": False,
+                }
+            completed += 1
+            if task_id:
+                _set_refresh_job(
+                    task_id,
+                    completed=completed,
+                    progress=round((completed / total_containers) * 100),
+                    message="Refreshing live tracking.",
+                )
+
+    for shipment in shipments:
+        container_number = _clean_container(shipment.container_number)
+        if container_number in payloads:
+            _apply_tracking_payload(shipment, payloads[container_number])
+
+    if audit_action:
+        _log_audit_event(
+            db,
+            user_id,
+            audit_action,
+            shipment_status="active",
+            details={
+                "refreshed_count": refreshed_group_count,
+                "refreshed_container_count": total_containers,
+            },
+        )
+
+    db.commit()
+    if task_id:
+        _set_refresh_job(
+            task_id,
+            state="completed",
+            completed=total_containers,
+            progress=100,
+            message=(
+                f"Live tracking updated for {refreshed_group_count} shipment"
+                f"{'s' if refreshed_group_count != 1 else ''}."
+            ),
+            refreshed_count=refreshed_group_count,
+            refreshed_container_count=total_containers,
+        )
+    return {
+        "refreshed_count": refreshed_group_count,
+        "refreshed_container_count": total_containers,
+    }
+
+
 def _set_refresh_job(task_id: str, **updates: Any) -> dict[str, Any]:
     with _refresh_jobs_lock:
         jobs = _cleanup_refresh_jobs(_load_refresh_jobs())
@@ -2529,8 +2726,89 @@ def _get_refresh_job(task_id: str) -> dict[str, Any] | None:
         return None
 
 
+def _shipments_need_background_refresh(shipments: list[Shipment]) -> bool:
+    if not shipments:
+        return False
+    threshold = datetime.now(APP_TIMEZONE) - timedelta(minutes=BACKGROUND_REFRESH_STALE_MINUTES)
+    for shipment in shipments:
+        refreshed_at = _parse_display_timestamp(getattr(shipment, "last_refresh_at", ""))
+        if refreshed_at is None or refreshed_at <= threshold:
+            return True
+    return False
+
+
+def _run_background_refresh_cycle() -> None:
+    connect_args = {"check_same_thread": False} if normalized_database_url.startswith("sqlite") else {}
+    job_engine = create_engine(normalized_database_url, future=True, connect_args=connect_args)
+    from sqlalchemy.orm import sessionmaker
+
+    JobSessionLocal = sessionmaker(bind=job_engine, autoflush=False, autocommit=False, future=True)
+    db = JobSessionLocal()
+    try:
+        user_ids = [
+            row[0]
+            for row in db.execute(
+                select(Shipment.user_id)
+                .where(Shipment.shipment_status == "active")
+                .distinct()
+            ).all()
+            if row and row[0]
+        ]
+        refreshed_users = 0
+        refreshed_shipments = 0
+        for user_id in user_ids:
+            _update_background_refresh_lease(state="running", current_user_id=user_id)
+            shipments = list(
+                db.execute(
+                    select(Shipment).where(
+                        Shipment.user_id == user_id,
+                        Shipment.shipment_status == "active",
+                    )
+                ).scalars()
+            )
+            if not _shipments_need_background_refresh(shipments):
+                continue
+            try:
+                result = _refresh_active_shipments_for_user(db, user_id, audit_action=None)
+            except Exception:
+                db.rollback()
+                continue
+            if result["refreshed_count"] > 0:
+                refreshed_users += 1
+                refreshed_shipments += result["refreshed_count"]
+        _update_background_refresh_lease(
+            state="idle",
+            current_user_id=0,
+            refreshed_users=refreshed_users,
+            refreshed_shipments=refreshed_shipments,
+        )
+    finally:
+        db.close()
+        job_engine.dispose()
+
+
+def _background_refresh_loop() -> None:
+    while True:
+        try:
+            if _try_acquire_background_refresh_lease():
+                _run_background_refresh_cycle()
+        except Exception:
+            _update_background_refresh_lease(state="error")
+        time.sleep(BACKGROUND_REFRESH_INTERVAL_SECONDS)
+
+
+@router.on_event("startup")
+def _start_background_refresh_worker() -> None:
+    global _background_refresh_started
+    with _background_refresh_boot_lock:
+        if _background_refresh_started:
+            return
+        worker = Thread(target=_background_refresh_loop, daemon=True, name="background-live-refresh")
+        worker.start()
+        _background_refresh_started = True
+
+
 def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
@@ -2538,96 +2816,14 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
     JobSessionLocal = sessionmaker(bind=job_engine, autoflush=False, autocommit=False, future=True)
     db = JobSessionLocal()
     try:
-        shipments = list(
-            db.execute(
-                select(Shipment).where(
-                    Shipment.user_id == user_id,
-                    Shipment.shipment_status == "active",
-                )
-            ).scalars()
-        )
-        unique_containers = sorted(
-            {
-                _clean_container(shipment.container_number)
-                for shipment in shipments
-                if _clean_container(shipment.container_number)
-            }
-        )
-        shipment_groups = {
-            f"BL:{_normalize_bl_number(shipment.bl_number)}"
-            if _normalize_bl_number(shipment.bl_number)
-            else f"SHIP:{shipment.id}"
-            for shipment in shipments
-        }
-        total = len(shipment_groups)
-        total_containers = len(unique_containers)
-        _set_refresh_job(
-            task_id,
-            state="running",
-            total=total,
-            completed=0,
-            progress=0,
-            message=f"Refreshing live tracking for {total} shipment{'s' if total != 1 else ''}.",
-        )
-        if total_containers == 0:
-            _set_refresh_job(
-                task_id,
-                state="completed",
-                completed=0,
-                progress=100,
-                message="No live shipments need an update right now.",
-                refreshed_count=0,
-            )
-            return
-
-        payloads: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total_containers))) as executor:
-            futures = {
-                executor.submit(_build_tracking_payload, container_number, False): container_number
-                for container_number in unique_containers
-            }
-            completed = 0
-            for future in as_completed(futures):
-                container_number = futures[future]
-                try:
-                    payloads[container_number] = future.result()
-                except Exception:
-                    payloads[container_number] = {
-                        "data": {},
-                        "status": "error",
-                        "error": "Tracking fetch failed",
-                        "cached": False,
-                        "has_data": False,
-                    }
-                completed += 1
-                _set_refresh_job(
-                    task_id,
-                    completed=completed,
-                    progress=round((completed / total_containers) * 100),
-                    message="Refreshing live tracking.",
-                )
-
-        for shipment in shipments:
-            container_number = _clean_container(shipment.container_number)
-            if container_number in payloads:
-                _apply_tracking_payload(shipment, payloads[container_number])
-        _log_audit_event(
+        _refresh_active_shipments_for_user(
             db,
             user_id,
-            "shipment_all_refreshed",
-            shipment_status="active",
-            details={"refreshed_count": total},
-        )
-        db.commit()
-        _set_refresh_job(
-            task_id,
-            state="completed",
-            completed=total,
-            progress=100,
-            message=f"Live tracking updated for {total} shipment{'s' if total != 1 else ''}.",
-            refreshed_count=total,
+            task_id=task_id,
+            audit_action="shipment_all_refreshed",
         )
     except Exception as exc:
+        db.rollback()
         _set_refresh_job(
             task_id,
             state="failed",
@@ -4367,43 +4563,15 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
 @router.post("/refresh-all")
 def refresh_all(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    shipments = list(db.execute(_user_shipment_select(current_user).where(Shipment.shipment_status == "active")).scalars())
-    refreshed_group_count = len(_group_dashboard_rows(shipments))
-    unique_containers = sorted({_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)})
-    payloads: dict[str, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, len(unique_containers)))) as executor:
-        futures = {executor.submit(_build_tracking_payload, container_number, False): container_number for container_number in unique_containers}
-        for future in as_completed(futures):
-            container_number = futures[future]
-            try:
-                payloads[container_number] = future.result()
-            except Exception:
-                payloads[container_number] = {
-                    "data": {},
-                    "status": "error",
-                    "error": "Tracking fetch failed",
-                    "cached": False,
-                    "has_data": False,
-                }
-    for shipment in shipments:
-        container_number = _clean_container(shipment.container_number)
-        if container_number in payloads:
-            _apply_tracking_payload(shipment, payloads[container_number])
-    _log_audit_event(
+    result = _refresh_active_shipments_for_user(
         db,
         current_user.id,
-        "shipment_all_refreshed",
-        shipment_status="active",
-        details={
-            "refreshed_count": refreshed_group_count,
-            "refreshed_container_count": len(unique_containers),
-        },
+        audit_action="shipment_all_refreshed",
     )
-    db.commit()
     return {
-        "refreshed_count": refreshed_group_count,
-        "refreshed_container_count": len(unique_containers),
-        "message": f"Refreshed {refreshed_group_count} active shipment{'' if refreshed_group_count == 1 else 's'}",
+        "refreshed_count": result["refreshed_count"],
+        "refreshed_container_count": result["refreshed_container_count"],
+        "message": f"Refreshed {result['refreshed_count']} active shipment{'' if result['refreshed_count'] == 1 else 's'}",
     }
 
 
@@ -4425,7 +4593,7 @@ def start_refresh_all_tracking(
     )
     worker = Thread(
         target=_run_refresh_all_job,
-        args=(task_id, settings.database_url, current_user.id),
+        args=(task_id, normalized_database_url, current_user.id),
         daemon=True,
     )
     worker.start()
