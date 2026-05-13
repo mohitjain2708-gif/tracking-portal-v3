@@ -1846,65 +1846,60 @@ select:focus {
 .action-modal-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
-.action-modal-summary {
-  margin: 0;
-  max-width: 58ch;
-  color: #607086;
-  line-height: 1.6;
-}
-
-.action-modal-strip {
+.action-modal-facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px 18px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(19, 58, 99, 0.08);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
 }
 
-.action-inline-fact {
+.action-fact-card {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  padding: 18px;
+  min-height: 104px;
+  align-content: start;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: rgba(248, 251, 255, 0.72);
 }
 
-.action-inline-fact span {
+.action-fact-card-wide {
+  grid-column: span 2;
+}
+
+.action-fact-card span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
-.action-inline-fact strong {
-  font-size: 14px;
+.action-fact-card strong {
+  font-size: 18px;
   color: var(--text);
-  line-height: 1.45;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.action-modal-stack {
+.action-modal-grid {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
 }
 
 .action-modal-section {
   display: grid;
-  gap: 12px;
-  padding: 18px 0 0;
-  border-top: 1px solid rgba(19, 58, 99, 0.08);
-  background: transparent;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: rgba(248, 251, 255, 0.7);
   align-content: start;
-}
-
-.action-modal-section:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.action-modal-section-quiet {
-  border-radius: 0;
 }
 
 .action-modal-section-full {
@@ -1929,45 +1924,25 @@ select:focus {
   line-height: 1.45;
 }
 
-.action-choice-list {
+.action-modal-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-modal-buttons-stacked {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
-.action-choice {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 14px 0;
-  border-bottom: 1px solid rgba(19, 58, 99, 0.08);
-}
-
-.action-choice:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.action-choice-copy {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.action-choice-copy strong {
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1.3;
-}
-
-.action-choice-copy p {
-  margin: 0;
-  color: #607086;
-  line-height: 1.55;
+.action-modal-buttons-stacked .button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .action-modal-section-danger {
-  border-top-color: rgba(180, 35, 24, 0.16);
+  background: rgba(255, 241, 239, 0.48);
 }
 
 .action-modal-section-danger .action-modal-section-head span {
@@ -1994,9 +1969,20 @@ select:focus {
 }
 
 @media (max-width: 980px) {
-  .action-choice {
+  .action-modal-hero-balanced {
     grid-template-columns: 1fr;
-    align-items: stretch;
+  }
+
+  .action-modal-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .action-fact-card-wide {
+    grid-column: span 1;
+  }
+
+  .action-modal-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -2006,8 +1992,8 @@ select:focus {
     max-width: none;
   }
 
-  .action-modal-strip {
-    grid-template-columns: 1fr;
+  .action-fact-card {
+    min-height: auto;
   }
 }
 
@@ -2292,11 +2278,23 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.audit-card-head-stacked {
+  display: grid;
+  gap: 4px;
+}
+
 .audit-card-note {
   color: #7a8899;
   font-size: 12px;
   line-height: 1.5;
   max-width: 28ch;
+}
+
+.audit-card-subtle {
+  margin: 0;
+  color: #75849a;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .audit-diagnostic-stack {
@@ -2456,30 +2454,91 @@ select:focus {
   min-width: 0;
 }
 
+.audit-snapshot-facts-inline {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
 .audit-snapshot-facts div {
   display: grid;
   gap: 4px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(247, 250, 253, 0.88);
+  padding-top: 2px;
 }
 
-.audit-snapshot-facts span {
+.audit-snapshot-facts-inline div {
+  padding: 0 0 0 12px;
+  border-left: 1px solid rgba(19, 58, 99, 0.08);
+}
+
+.audit-snapshot-facts-inline div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.audit-snapshot-facts span,
+.audit-snapshot-facts dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.audit-snapshot-facts strong,
+.audit-snapshot-facts dd {
+  font-size: 13px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.audit-operations-summary {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.audit-operations-summary div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(19, 58, 99, 0.08);
+}
+
+.audit-operations-summary div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.audit-operations-summary dt {
+  margin: 0;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
 }
 
-.audit-snapshot-facts strong {
-  font-size: 13px;
+.audit-operations-summary dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
   color: var(--text);
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
 .audit-form-grid {
   display: grid;
   gap: 12px;
+}
+
+.audit-controls-editor {
+  display: grid;
+  gap: 14px;
+  padding-top: 4px;
 }
 
 .audit-field {
@@ -2499,6 +2558,19 @@ select:focus {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-start;
+}
+
+.audit-card-actions-split {
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+}
+
+.audit-controls-hint {
+  color: #7a8899;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 34ch;
 }
 
 .audit-journal-tools {
@@ -3245,6 +3317,35 @@ select:focus {
   .audit-card-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .audit-snapshot-facts-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-snapshot-facts-inline div {
+    padding-left: 0;
+    padding-top: 8px;
+    border-left: 0;
+    border-top: 1px solid rgba(19, 58, 99, 0.08);
+  }
+
+  .audit-snapshot-facts-inline div:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .audit-operations-summary div {
+    display: grid;
+    gap: 4px;
+  }
+
+  .audit-operations-summary dd {
+    text-align: left;
+  }
+
+  .audit-card-actions-split {
+    align-items: flex-start;
   }
 
   .audit-journal-tools {

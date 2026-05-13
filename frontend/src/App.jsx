@@ -749,20 +749,6 @@ function AuditDisclosure({ title, summary = "", open = false, onToggle, children
   );
 }
 
-function ActionChoice({ title, description, cta, tone = "ghost", onClick, disabled = false }) {
-  return (
-    <div className="action-choice">
-      <div className="action-choice-copy">
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
-      <ActionButton type="button" tone={tone} compact onClick={onClick} disabled={disabled}>
-        {cta}
-      </ActionButton>
-    </div>
-  );
-}
-
 function MovementIcon({ type }) {
   if (type === "Arrived Birgunj") {
     return (
@@ -1071,6 +1057,7 @@ function App() {
   const [auditDecisionExpanded, setAuditDecisionExpanded] = useState(false);
   const [auditRowsExpanded, setAuditRowsExpanded] = useState(false);
   const [auditRelatedCyclesExpanded, setAuditRelatedCyclesExpanded] = useState(false);
+  const [auditControlsExpanded, setAuditControlsExpanded] = useState(false);
   const [actionReturnRow, setActionReturnRow] = useState(null);
   const [editReturnRow, setEditReturnRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
@@ -2939,12 +2926,14 @@ function App() {
       setAuditDecisionExpanded(false);
       setAuditRowsExpanded(false);
       setAuditRelatedCyclesExpanded(false);
+      setAuditControlsExpanded(false);
       return undefined;
     }
     setAuditJournalExpanded(false);
     setAuditDecisionExpanded(false);
     setAuditRowsExpanded(false);
     setAuditRelatedCyclesExpanded(false);
+    setAuditControlsExpanded(false);
     let active = true;
     api
       .getGroupAuditTrail({
@@ -3903,11 +3892,10 @@ function App() {
             const reopenLabel = actionStatus === "archived" ? "Bring back to live" : "Reopen shipment";
             return (
           <div className="action-modal-shell">
-            <section className="action-modal-hero action-modal-hero-quiet">
+            <section className="action-modal-hero action-modal-hero-balanced">
               <div className="action-modal-copy">
                 <p className="action-modal-eyebrow">Manage this shipment cycle</p>
                 <h4>{actionRow.customer_name || "Shipment group"}</h4>
-                <p className="action-modal-summary">{formatShipmentDetailSummary(actionRow)}</p>
                 <div className="action-modal-chips">
                   <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
                     {actionRow.movement_category || "Hi Seas"}
@@ -3917,28 +3905,31 @@ function App() {
                       Action needed
                     </span>
                   ) : null}
+                  <span className="meta-pill">
+                    {actionRow.container_count || actionRow.container_numbers?.length || 1} container
+                    {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}
+                  </span>
+                  <span className="meta-pill">
+                    {actionRow.bl_number ? `BL ${actionRow.bl_number}` : "BL not linked"}
+                  </span>
                 </div>
               </div>
 
-              <div className="action-modal-strip">
-                <div className="action-inline-fact">
-                  <span>Shipment Status</span>
+              <div className="action-modal-facts">
+                <div className="action-fact-card">
+                  <span>State</span>
                   <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
                 </div>
-                <div className="action-inline-fact">
-                  <span>BL Number</span>
-                  <strong>{actionRow.bl_number || "Not linked"}</strong>
-                </div>
-                <div className="action-inline-fact">
-                  <span>Current Location</span>
-                  <strong>{actionRow.latest_location || "Not available"}</strong>
-                </div>
-                <div className="action-inline-fact">
+                <div className="action-fact-card">
                   <span>Movement Since</span>
                   <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
                 </div>
+                <div className="action-fact-card action-fact-card-wide">
+                  <span>Current Location</span>
+                  <strong>{actionRow.latest_location || "Not available"}</strong>
+                </div>
                 {["completed", "archived"].includes(actionStatus) ? (
-                  <div className="action-inline-fact">
+                  <div className="action-fact-card">
                     <span>Clearance Doc</span>
                     <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
                   </div>
@@ -3946,74 +3937,65 @@ function App() {
               </div>
             </section>
 
-            <div className="action-modal-stack">
-              <section className="action-modal-section action-modal-section-quiet">
+            <div className="action-modal-grid">
+              <section className="action-modal-section">
                 <div className="action-modal-section-head">
-                  <span>Review</span>
-                  <p>Use these when you want to inspect the shipment, refresh the live state, or correct the saved details.</p>
+                  <span>Inspect</span>
+                  <p>Refresh the tracking, open the detail view, or correct shipment information.</p>
                 </div>
-                <div className="action-choice-list">
-                  <ActionChoice
-                    title="Refresh shipment"
-                    description="Run a fresh live check before you make any operational decision."
-                    cta="Refresh"
-                    tone="secondary"
-                    onClick={async () => {
-                      await handleRefreshGroup(actionRow);
-                      closeActionModal();
-                    }}
-                  />
-                  <ActionChoice
-                    title="Open shipment detail"
-                    description="See the full cycle summary, movement reasoning, documents, and activity."
-                    cta="Open detail"
+                <div className="action-modal-buttons action-modal-buttons-stacked">
+                  <ActionButton type="button" tone="secondary" onClick={async () => {
+                    await handleRefreshGroup(actionRow);
+                    closeActionModal();
+                  }}>
+                    Refresh Shipment
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
                     onClick={() => {
                       setAuditRow(actionRow);
                       setActionRow(null);
                       setActionReturnRow(null);
                     }}
-                  />
-                  <ActionChoice
-                    title="Edit saved details"
-                    description="Correct BL-side information or operational values for this shipment cycle."
-                    cta="Edit"
+                  >
+                    Open Detail
+                  </ActionButton>
+                  <ActionButton
+                    type="button"
+                    tone="ghost"
                     onClick={() => {
                       setEditReturnRow(actionReturnRow || actionRow);
                       openEditShipment(actionRow);
                       setActionRow(null);
                       setActionReturnRow(null);
                     }}
-                  />
+                  >
+                    Edit Details
+                  </ActionButton>
                 </div>
               </section>
 
-              <section className="action-modal-section action-modal-section-quiet">
+              <section className="action-modal-section">
                 <div className="action-modal-section-head">
-                  <span>Shipment Stage</span>
-                  <p>Change the business state only when the work on this shipment cycle has truly moved forward.</p>
+                  <span>Shipment stage</span>
+                  <p>Move the shipment forward when work is complete, or reopen it if it needs to go live again.</p>
                 </div>
-                <div className="action-choice-list">
+                <div className="action-modal-buttons action-modal-buttons-stacked">
                   {canActivate ? (
-                    <ActionChoice
-                      title={reopenLabel}
-                      description="Bring this shipment back onto the live board so the team can continue working on it."
-                      cta="Reopen"
-                      onClick={() => setConfirmAction({ type: "active", row: actionRow })}
-                    />
+                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
+                      {reopenLabel}
+                    </ActionButton>
                   ) : null}
                   {canComplete ? (
-                    <ActionChoice
-                      title="Mark as complete"
-                      description="Use this once the customer-facing shipment cycle has been served through Birgunj."
-                      cta="Complete"
-                      onClick={() => setConfirmAction({ type: "completed", row: actionRow })}
-                    />
+                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
+                      Mark as complete
+                    </ActionButton>
                   ) : null}
                   {canArchive ? (
-                    <ActionChoice
-                      title="Move to archive"
-                      description="Remove this cycle from the live board after the work is properly closed and documented."
-                      cta="Archive"
+                    <ActionButton
+                      type="button"
+                      tone="ghost"
                       onClick={() => {
                         if (!cleanText(actionRow?.clearance_doc_number)) {
                           setFeedback({
@@ -4023,24 +4005,22 @@ function App() {
                         }
                         setConfirmAction({ type: "archived", row: actionRow });
                       }}
-                    />
+                    >
+                      Move to archive
+                    </ActionButton>
                   ) : null}
                 </div>
               </section>
 
-              <section className="action-modal-section action-modal-section-danger action-modal-section-quiet">
+              <section className="action-modal-section action-modal-section-danger action-modal-section-full">
                 <div className="action-modal-section-head">
                   <span>Danger Zone</span>
                   <p>Delete only if this shipment cycle should no longer exist in your working record.</p>
                 </div>
-                <div className="action-choice-list">
-                  <ActionChoice
-                    title="Delete shipment"
-                    description="This permanently removes the saved shipment cycle from your workspace."
-                    cta="Delete"
-                    tone="danger"
-                    onClick={() => setConfirmAction({ type: "delete", row: actionRow })}
-                  />
+                <div className="action-modal-buttons action-modal-buttons-stacked">
+                  <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
+                    Delete Shipment
+                  </ActionButton>
                 </div>
               </section>
             </div>
@@ -4678,9 +4658,9 @@ function App() {
 
             <div className="audit-main-layout">
               <section className="audit-detail-card audit-snapshot-card">
-                <div className="audit-card-head">
-                  <p className="audit-detail-title">Shipment Snapshot</p>
-                  <span className="audit-card-note">Only the current customer-facing cycle is highlighted here.</span>
+                <div className="audit-card-head audit-card-head-stacked">
+                  <p className="audit-detail-title">Current Shipment Cycle</p>
+                  <p className="audit-card-subtle">A quieter view of the saved shipment story.</p>
                 </div>
                 <div className="audit-kv-grid">
                   <div>
@@ -4735,7 +4715,7 @@ function App() {
                 </div>
                 <div className="audit-snapshot-row">
                   <div className="audit-kv-block audit-kv-block-compact">
-                    <span>Containers</span>
+                    <span>Container</span>
                     <div className="audit-container-chips">
                       {(auditRow.container_numbers?.length
                         ? auditRow.container_numbers
@@ -4749,120 +4729,156 @@ function App() {
                         ))}
                     </div>
                   </div>
-                  <div className="audit-snapshot-facts">
+                  <dl className="audit-snapshot-facts audit-snapshot-facts-inline">
                     <div>
-                      <span>Departure</span>
-                      <strong>{auditRow.departure || "-"}</strong>
+                      <dt>Departure</dt>
+                      <dd>{auditRow.departure || "-"}</dd>
                     </div>
                     <div>
-                      <span>Train No</span>
-                      <strong>{auditRow.train_no || "-"}</strong>
+                      <dt>Train</dt>
+                      <dd>{auditRow.train_no || "-"}</dd>
                     </div>
                     <div>
-                      <span>Check Result</span>
-                      <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
+                      <dt>Refresh</dt>
+                      <dd>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</dd>
                     </div>
-                  </div>
+                  </dl>
                 </div>
               </section>
 
               <section className="audit-detail-card audit-operations-card">
-                <div className="audit-card-head">
-                  <p className="audit-detail-title">Operational Controls</p>
-                  <span className="audit-card-note">Only update these fields when the operator really needs to intervene.</span>
+                <div className="audit-card-head audit-card-head-stacked">
+                  <p className="audit-detail-title">Documents & Handover</p>
+                  <p className="audit-card-subtle">Shown as a summary first. Update only when someone needs to intervene.</p>
                 </div>
-                <div className="audit-form-grid">
-                  <label className="audit-field">
-                    <span>DO Date</span>
-                    <input
-                      className="inline-field-control"
-                      type="date"
-                      value={getOperationalDraft(auditRow).do_date}
-                      onChange={(event) =>
-                        setOperationalDraftValue(auditRow, { do_date: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="audit-field">
-                    <span>Document Status</span>
-                    <select
-                      className="inline-field-control"
-                      value={getOperationalDraft(auditRow).document_status}
-                      onChange={(event) =>
-                        setOperationalDraftValue(auditRow, {
-                          document_status: event.target.value,
-                          original_docs_received_date:
-                            event.target.value === "Original"
-                              ? getOperationalDraft(auditRow).original_docs_received_date
-                              : "",
-                        })
-                      }
-                    >
-                      {DOCUMENT_STATUS_OPTIONS.map((option) => (
-                        <option key={option || "empty"} value={option}>
-                          {option || "Select"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {getOperationalDraft(auditRow).document_status === "Original" ? (
-                    <label className="audit-field">
-                      <span>Original Received</span>
-                      <input
-                        className="inline-field-control"
-                        type="date"
-                        value={getOperationalDraft(auditRow).original_docs_received_date}
-                        onChange={(event) =>
-                          setOperationalDraftValue(auditRow, {
-                            original_docs_received_date: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
+                <dl className="audit-operations-summary">
+                  <div>
+                    <dt>DO Date</dt>
+                    <dd>{auditRow.do_date || "Not set"}</dd>
+                  </div>
+                  <div>
+                    <dt>Document Status</dt>
+                    <dd>{formatDocumentStatusSummary(auditRow) || "Not set"}</dd>
+                  </div>
+                  {cleanText(auditRow.clearance_doc_number) ? (
+                    <div>
+                      <dt>Clearance Doc</dt>
+                      <dd>{auditRow.clearance_doc_number}</dd>
+                    </div>
                   ) : null}
-                </div>
-                <div className="audit-card-actions">
+                </dl>
+                <div className="audit-card-actions audit-card-actions-split">
+                  <span className="audit-controls-hint">
+                    Keep editing tucked away until the operator actually needs it.
+                  </span>
                   <ActionButton
                     type="button"
                     tone="ghost"
                     compact
-                    disabled={Boolean(fieldSavingKeys[`${auditRow.group_key}:do_date`])}
-                    onClick={async () => {
-                      await saveDoDateDraft(auditRow);
-                    }}
+                    onClick={() => setAuditControlsExpanded((current) => !current)}
                   >
-                    {fieldSavingKeys[`${auditRow.group_key}:do_date`] ? "Saving..." : "Save DO Date"}
-                  </ActionButton>
-                  <ActionButton
-                    type="button"
-                    tone="ghost"
-                    compact
-                    disabled={Boolean(
-                      fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
-                    )}
-                    onClick={async () => {
-                      await saveDocumentDraft(auditRow);
-                    }}
-                  >
-                    {fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
-                      ? "Saving..."
-                      : "Save Document Status"}
+                    {auditControlsExpanded ? "Close editor" : "Update"}
                   </ActionButton>
                 </div>
+                {auditControlsExpanded ? (
+                  <div className="audit-controls-editor">
+                    <div className="audit-form-grid">
+                      <label className="audit-field">
+                        <span>DO Date</span>
+                        <input
+                          className="inline-field-control"
+                          type="date"
+                          value={getOperationalDraft(auditRow).do_date}
+                          onChange={(event) =>
+                            setOperationalDraftValue(auditRow, { do_date: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="audit-field">
+                        <span>Document Status</span>
+                        <select
+                          className="inline-field-control"
+                          value={getOperationalDraft(auditRow).document_status}
+                          onChange={(event) =>
+                            setOperationalDraftValue(auditRow, {
+                              document_status: event.target.value,
+                              original_docs_received_date:
+                                event.target.value === "Original"
+                                  ? getOperationalDraft(auditRow).original_docs_received_date
+                                  : "",
+                            })
+                          }
+                        >
+                          {DOCUMENT_STATUS_OPTIONS.map((option) => (
+                            <option key={option || "empty"} value={option}>
+                              {option || "Select"}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {getOperationalDraft(auditRow).document_status === "Original" ? (
+                        <label className="audit-field">
+                          <span>Original Received</span>
+                          <input
+                            className="inline-field-control"
+                            type="date"
+                            value={getOperationalDraft(auditRow).original_docs_received_date}
+                            onChange={(event) =>
+                              setOperationalDraftValue(auditRow, {
+                                original_docs_received_date: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                    <div className="audit-card-actions">
+                      <ActionButton
+                        type="button"
+                        tone="ghost"
+                        compact
+                        disabled={Boolean(fieldSavingKeys[`${auditRow.group_key}:do_date`])}
+                        onClick={async () => {
+                          await saveDoDateDraft(auditRow);
+                        }}
+                      >
+                        {fieldSavingKeys[`${auditRow.group_key}:do_date`] ? "Saving..." : "Save DO Date"}
+                      </ActionButton>
+                      <ActionButton
+                        type="button"
+                        tone="ghost"
+                        compact
+                        disabled={Boolean(
+                          fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
+                        )}
+                        onClick={async () => {
+                          await saveDocumentDraft(auditRow);
+                        }}
+                      >
+                        {fieldSavingKeys[`${auditRow.group_key}:document_status|original_docs_received_date`]
+                          ? "Saving..."
+                          : "Save Document Status"}
+                      </ActionButton>
+                    </div>
+                  </div>
+                ) : null}
               </section>
             </div>
 
             <div className="audit-secondary-stack">
               <AuditDisclosure
                 title="Movement Decision"
-                summary={
-                  auditRow.movement_diagnostics?.resolution_summary ||
-                  "The movement engine will explain its decision here after a saved refresh."
-                }
+                summary="Open this when you want to see why the movement was chosen."
                 open={auditDecisionExpanded}
                 onToggle={() => setAuditDecisionExpanded((current) => !current)}
               >
                 <div className="audit-diagnostic-stack">
+                  {auditRow.movement_diagnostics?.resolution_summary ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Decision</span>
+                      <strong>{auditRow.movement_diagnostics.resolution_summary}</strong>
+                    </div>
+                  ) : null}
                   {auditRow.movement_diagnostics?.source_priority_summary ? (
                     <div className="audit-diagnostic-copy">
                       <span>Source Priority</span>
