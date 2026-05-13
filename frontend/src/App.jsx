@@ -138,9 +138,34 @@ function formatDocumentStatusSummary(row) {
     return "Not set";
   }
   if (status === "Original" && cleanText(row?.original_docs_received_date)) {
-    return `Original · ${row.original_docs_received_date}`;
+    return `Original - ${row.original_docs_received_date}`;
   }
   return status;
+}
+
+function formatShipmentDetailSummary(row) {
+  const movement = normalizeMovementCategory(row?.movement_category) || "Hi Seas";
+  const location = cleanText(row?.latest_location);
+
+  if (movement === "Completed") {
+    return "This shipment cycle has already been served and closed for the customer.";
+  }
+  if (movement === "Arrived Birgunj") {
+    return location
+      ? `The current shipment cycle has reached Birgunj. Latest confirmed location: ${location}.`
+      : "The current shipment cycle has reached Birgunj and is ready for the next operational step.";
+  }
+  if (movement === "On Rail") {
+    return location
+      ? `The shipment is still inland and moving toward Birgunj. Latest tracked location: ${location}.`
+      : "The shipment is still inland and moving toward Birgunj.";
+  }
+  if (movement === "At Port") {
+    return location
+      ? `The shipment has reached port and is waiting for the inland handoff. Latest port context: ${location}.`
+      : "The shipment has reached port and is waiting for the inland handoff.";
+  }
+  return "The shipment has not yet entered a confirmed inland cycle, so we are treating it as hi seas for now.";
 }
 
 function normalizeLooseText(value) {
@@ -707,6 +732,23 @@ function ActionButton({ children, tone = "default", compact = false, ...props })
   );
 }
 
+function AuditDisclosure({ title, summary = "", open = false, onToggle, children }) {
+  return (
+    <section className={`audit-disclosure-card${open ? " is-open" : ""}`}>
+      <div className="audit-disclosure-header">
+        <div className="audit-disclosure-copy">
+          <p className="audit-detail-title">{title}</p>
+          {summary ? <p className="audit-disclosure-summary">{summary}</p> : null}
+        </div>
+        <ActionButton type="button" tone="secondary" compact onClick={onToggle}>
+          {open ? "Hide" : "Show"}
+        </ActionButton>
+      </div>
+      {open ? <div className="audit-disclosure-body">{children}</div> : null}
+    </section>
+  );
+}
+
 function MovementIcon({ type }) {
   if (type === "Arrived Birgunj") {
     return (
@@ -1012,6 +1054,9 @@ function App() {
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditJournalExpanded, setAuditJournalExpanded] = useState(false);
+  const [auditDecisionExpanded, setAuditDecisionExpanded] = useState(false);
+  const [auditRowsExpanded, setAuditRowsExpanded] = useState(false);
+  const [auditRelatedCyclesExpanded, setAuditRelatedCyclesExpanded] = useState(false);
   const [actionReturnRow, setActionReturnRow] = useState(null);
   const [editReturnRow, setEditReturnRow] = useState(null);
   const [editRow, setEditRow] = useState(null);
@@ -2877,9 +2922,15 @@ function App() {
     if (!auditRow) {
       setAuditEntries([]);
       setAuditJournalExpanded(false);
+      setAuditDecisionExpanded(false);
+      setAuditRowsExpanded(false);
+      setAuditRelatedCyclesExpanded(false);
       return undefined;
     }
     setAuditJournalExpanded(false);
+    setAuditDecisionExpanded(false);
+    setAuditRowsExpanded(false);
+    setAuditRelatedCyclesExpanded(false);
     let active = true;
     api
       .getGroupAuditTrail({
@@ -4523,6 +4574,7 @@ function App() {
               <section className="audit-hero-primary">
                 <span className="audit-detail-title">Customer</span>
                 <h4>{auditRow.customer_name || "-"}</h4>
+                <p className="audit-hero-summary">{formatShipmentDetailSummary(auditRow)}</p>
                 <div className="audit-hero-meta">
                   <span className={badgeClass("movement", auditRow.movement_category || "Hi Seas")}>
                     {auditRow.movement_category || "Hi Seas"}
@@ -4536,38 +4588,93 @@ function App() {
                     {auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)} container
                     {(auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)) === 1 ? "" : "s"}
                   </span>
-                  <span className="meta-pill">
-                    {auditRow.bl_number ? `BL ${auditRow.bl_number}` : "BL not linked"}
-                  </span>
-                  <span className="meta-pill">
-                    {auditRow.source_label || "Manual Entry"}
-                  </span>
                 </div>
               </section>
 
               <section className="audit-summary-card">
-                <div className="audit-summary-row">
-                  <span>Last Updated</span>
-                  <strong>{auditRow.last_refresh_at ? formatDateTimeLabel(auditRow.last_refresh_at) : "No refresh yet"}</strong>
+                <div className="audit-summary-cluster">
+                  <div className="audit-summary-row">
+                    <span>Last Updated</span>
+                    <strong>{auditRow.last_refresh_at ? formatDateTimeLabel(auditRow.last_refresh_at) : "No refresh yet"}</strong>
+                  </div>
+                  <div className="audit-summary-row">
+                    <span>Refresh Status</span>
+                    <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
+                  </div>
                 </div>
-                <div className="audit-summary-row">
-                  <span>Sources</span>
-                  <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
+                <div className="audit-summary-cluster">
+                  <div className="audit-summary-row">
+                    <span>BL Number</span>
+                    <strong>{auditRow.bl_number || "Not linked"}</strong>
+                  </div>
+                  <div className="audit-summary-row">
+                    <span>Sources</span>
+                    <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
+                  </div>
                 </div>
-                <div className="audit-summary-row">
-                  <span>Status</span>
-                  <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
+                <div className="audit-summary-cluster">
+                  <div className="audit-summary-row">
+                    <span>Document Status</span>
+                    <strong>{formatDocumentStatusSummary(auditRow)}</strong>
+                  </div>
+                  <div className="audit-summary-row">
+                    <span>DO Date</span>
+                    <strong>{auditRow.do_date || "Not set"}</strong>
+                  </div>
                 </div>
+                {auditRow.last_refresh_error ? (
+                  <div className="confirm-warning audit-summary-warning">
+                    Latest check note: <strong>{auditRow.last_refresh_error}</strong>
+                  </div>
+                ) : null}
               </section>
             </div>
 
-            <div className="audit-detail-grid">
-              <section className="audit-detail-card audit-detail-card-wide">
-                <p className="audit-detail-title">Shipment Identity</p>
+            <div className="audit-overview-grid">
+              <article className="audit-overview-card">
+                <span>Latest Location</span>
+                <strong>{auditRow.latest_location || "Awaiting live location"}</strong>
+                <small>Current movement anchor</small>
+              </article>
+              <article className="audit-overview-card">
+                <span>Movement Since</span>
+                <strong>{auditRow.movement_since_date || auditRow.latest_time || "-"}</strong>
+                <small>When this stage began</small>
+              </article>
+              <article className="audit-overview-card">
+                <span>Port Arrival</span>
+                <strong>{auditRow.port_arrival_date || "Not confirmed"}</strong>
+                <small>Start of the current cycle</small>
+              </article>
+              <article className="audit-overview-card">
+                <span>Rail Context</span>
+                <strong>{auditRow.train_no || auditRow.departure || "Not linked yet"}</strong>
+                <small>{auditRow.train_no ? "Train number" : auditRow.departure ? "Departure marker" : "Live rail detail not saved"}</small>
+              </article>
+            </div>
+
+            <div className="audit-main-layout">
+              <section className="audit-detail-card audit-snapshot-card">
+                <div className="audit-card-head">
+                  <p className="audit-detail-title">Shipment Snapshot</p>
+                  <span className="audit-card-note">Only the current customer-facing cycle is highlighted here.</span>
+                </div>
                 <div className="audit-kv-grid">
                   <div>
                     <span>BL Number</span>
                     <strong>{auditRow.bl_number || "Not linked"}</strong>
+                  </div>
+                  <div>
+                    <span>Shipment Status</span>
+                    <strong>{formatShipmentStatusLabel(auditRow.shipment_status || "active")}</strong>
+                  </div>
+                  <div>
+                    <span>Latest Activity</span>
+                    <strong>{auditRow.latest_time || "-"}</strong>
+                  </div>
+                  <div>
+                    <span>Source Blend</span>
+                    <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
                   </div>
                   {["completed", "archived"].includes(cleanText(auditRow.shipment_status).toLowerCase()) ? (
                     <label className="audit-field">
@@ -4603,106 +4710,44 @@ function App() {
                     </label>
                   ) : null}
                 </div>
-                <div className="audit-kv-block">
-                  <span>Containers</span>
-                  <div className="audit-container-chips">
-                    {(auditRow.container_numbers?.length
-                      ? auditRow.container_numbers
-                      : [auditRow.primary_container_number]
-                    )
-                      .filter(Boolean)
-                      .map((container) => (
-                        <span key={container} className="audit-container-chip">
-                          {container}
-                        </span>
-                      ))}
+                <div className="audit-snapshot-row">
+                  <div className="audit-kv-block audit-kv-block-compact">
+                    <span>Containers</span>
+                    <div className="audit-container-chips">
+                      {(auditRow.container_numbers?.length
+                        ? auditRow.container_numbers
+                        : [auditRow.primary_container_number]
+                      )
+                        .filter(Boolean)
+                        .map((container) => (
+                          <span key={container} className="audit-container-chip">
+                            {container}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                  <div className="audit-snapshot-facts">
+                    <div>
+                      <span>Departure</span>
+                      <strong>{auditRow.departure || "-"}</strong>
+                    </div>
+                    <div>
+                      <span>Train No</span>
+                      <strong>{auditRow.train_no || "-"}</strong>
+                    </div>
+                    <div>
+                      <span>Check Result</span>
+                      <strong>{formatRefreshStatusLabel(auditRow.last_refresh_status)}</strong>
+                    </div>
                   </div>
                 </div>
               </section>
 
-              <section className="audit-detail-card audit-detail-card-wide">
-                <p className="audit-detail-title">Movement Decision</p>
-                <div className="audit-diagnostic-stack">
-                  <div className="audit-diagnostic-copy">
-                    <span>Decision</span>
-                    <strong>
-                      {auditRow.movement_diagnostics?.resolution_summary || "No movement reasoning is saved yet."}
-                    </strong>
-                  </div>
-                  {auditRow.movement_diagnostics?.source_priority_summary ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Source Priority</span>
-                      <strong>{auditRow.movement_diagnostics.source_priority_summary}</strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.group_scope_summary ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Group Scope</span>
-                      <strong>{auditRow.movement_diagnostics.group_scope_summary}</strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Action Trigger</span>
-                      <strong>
-                        {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason}
-                      </strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.evidence?.length ? (
-                    <div className="audit-diagnostic-list">
-                      {auditRow.movement_diagnostics.evidence.map((item, index) => (
-                        <article
-                          key={`${auditRow.group_key || auditRow.id}-diagnostic-${item.label}-${index}`}
-                          className="audit-diagnostic-item"
-                        >
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </article>
-                      ))}
-                    </div>
-                  ) : null}
+              <section className="audit-detail-card audit-operations-card">
+                <div className="audit-card-head">
+                  <p className="audit-detail-title">Operational Controls</p>
+                  <span className="audit-card-note">Only update these fields when the operator really needs to intervene.</span>
                 </div>
-              </section>
-
-              <section className="audit-detail-card">
-                <p className="audit-detail-title">Live Tracking</p>
-                <div className="audit-kv-block">
-                  <span>Latest Location</span>
-                  <strong>{auditRow.latest_location || "Not available"}</strong>
-                </div>
-                <div className="audit-kv-grid">
-                  <div>
-                    <span>Movement Since</span>
-                    <strong>{auditRow.movement_since_date || auditRow.latest_time || "-"}</strong>
-                  </div>
-                  <div>
-                    <span>Latest Activity</span>
-                    <strong>{auditRow.latest_time || "-"}</strong>
-                  </div>
-                </div>
-              </section>
-
-              <section className="audit-detail-card">
-                <p className="audit-detail-title">Rail Context</p>
-                <div className="audit-kv-grid">
-                  <div>
-                    <span>Port Arrival</span>
-                    <strong>{auditRow.port_arrival_date || "-"}</strong>
-                  </div>
-                  <div>
-                    <span>Train No</span>
-                    <strong>{auditRow.train_no || "-"}</strong>
-                  </div>
-                  <div>
-                    <span>Departure</span>
-                    <strong>{auditRow.departure || "-"}</strong>
-                  </div>
-                </div>
-              </section>
-
-              <section className="audit-detail-card">
-                <p className="audit-detail-title">Document Flow</p>
                 <div className="audit-form-grid">
                   <label className="audit-field">
                     <span>DO Date</span>
@@ -4784,101 +4829,143 @@ function App() {
               </section>
             </div>
 
-            {auditRow.last_refresh_error ? (
-              <div className="confirm-warning">
-                Latest check note: <strong>{auditRow.last_refresh_error}</strong>
-              </div>
-            ) : null}
-
-            <div className="history-table-wrap">
-              <table className="history-table">
-                <thead>
-                  <tr>
-                    <th>Container</th>
-                    <th>Status</th>
-                    <th>Movement</th>
-                    <th>Latest Location</th>
-                    <th>Latest Activity</th>
-                    <th>Check Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditShipments.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="empty-cell">No row-level records available.</td>
-                    </tr>
-                  ) : (
-                    auditShipments.map((shipment) => (
-                      <tr key={shipment.id}>
-                        <td>{shipment.container_number || "-"}</td>
-                        <td>{formatShipmentStatusLabel(shipment.shipment_status)}</td>
-                        <td>{normalizeMovementCategory(shipment.movement_category) || "-"}</td>
-                        <td>{shipment.latest_location || "-"}</td>
-                        <td>{shipment.latest_time || "-"}</td>
-                        <td>{formatRefreshStatusLabel(shipment.last_refresh_status)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {relatedCycleRows.length ? (
-              <section className="related-cycles-panel">
-                <div className="preview-header">
-                  <div>
-                    <h3>Related Container Cycles</h3>
-                    <p>The same physical container appearing under a different BL cycle.</p>
-                  </div>
-                </div>
-                <div className="related-cycle-list">
-                  {relatedCycleRows.map((row) => (
-                    <article key={row.group_key} className="related-cycle-item">
-                      <div className="related-cycle-copy">
-                        <div className="related-cycle-meta">
-                          <span className={badgeClass("movement", row.movement_category || "Hi Seas")}>
-                            {row.movement_category || "Hi Seas"}
-                          </span>
-                          <span className="meta-pill">
-                            {formatShipmentStatusLabel(row.shipment_status || "active")}
-                          </span>
-                        </div>
-                        <h4>{row.customer_name || "Shipment group"}</h4>
-                        <div className="related-cycle-facts">
-                          <span>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}</span>
-                          <span>{(row.container_numbers || []).join(", ") || row.primary_container_number || "-"}</span>
-                          <span>{row.movement_since_date || row.latest_time || "-"}</span>
-                        </div>
-                      </div>
-                      <ActionButton type="button" tone="ghost" onClick={() => setAuditRow(row)}>
-                        Open
-                      </ActionButton>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            <div className="audit-journal">
-              <div className="preview-header">
-                <div>
-                  <h3>Activity</h3>
-                  <p>
-                    {auditEntries.length
-                      ? `Latest update: ${formatAuditActionLabel(auditEntries[0]?.action)}`
-                      : "No activity yet."}
-                  </p>
-                </div>
-                <div className="preview-actions">
-                  {auditEntries.length ? (
-                    <ActionButton
-                      type="button"
-                      tone="secondary"
-                      onClick={() => setAuditJournalExpanded((current) => !current)}
-                    >
-                      {auditJournalExpanded ? "Hide details" : "Show details"}
-                    </ActionButton>
+            <div className="audit-secondary-stack">
+              <AuditDisclosure
+                title="Movement Decision"
+                summary={
+                  auditRow.movement_diagnostics?.resolution_summary ||
+                  "The movement engine will explain its decision here after a saved refresh."
+                }
+                open={auditDecisionExpanded}
+                onToggle={() => setAuditDecisionExpanded((current) => !current)}
+              >
+                <div className="audit-diagnostic-stack">
+                  {auditRow.movement_diagnostics?.source_priority_summary ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Source Priority</span>
+                      <strong>{auditRow.movement_diagnostics.source_priority_summary}</strong>
+                    </div>
                   ) : null}
+                  {auditRow.movement_diagnostics?.group_scope_summary ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Group Scope</span>
+                      <strong>{auditRow.movement_diagnostics.group_scope_summary}</strong>
+                    </div>
+                  ) : null}
+                  {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Action Trigger</span>
+                      <strong>
+                        {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason}
+                      </strong>
+                    </div>
+                  ) : null}
+                  {auditRow.movement_diagnostics?.evidence?.length ? (
+                    <div className="audit-diagnostic-list">
+                      {auditRow.movement_diagnostics.evidence.map((item, index) => (
+                        <article
+                          key={`${auditRow.group_key || auditRow.id}-diagnostic-${item.label}-${index}`}
+                          className="audit-diagnostic-item"
+                        >
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </AuditDisclosure>
+
+              <AuditDisclosure
+                title="Container Feed"
+                summary={
+                  auditShipments.length
+                    ? `${auditShipments.length} saved shipment row${auditShipments.length === 1 ? "" : "s"} belong to this group.`
+                    : "No row-level shipment feed is saved yet."
+                }
+                open={auditRowsExpanded}
+                onToggle={() => setAuditRowsExpanded((current) => !current)}
+              >
+                <div className="history-table-wrap">
+                  <table className="history-table">
+                    <thead>
+                      <tr>
+                        <th>Container</th>
+                        <th>Status</th>
+                        <th>Movement</th>
+                        <th>Latest Location</th>
+                        <th>Latest Activity</th>
+                        <th>Check Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditShipments.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" className="empty-cell">No row-level records available.</td>
+                        </tr>
+                      ) : (
+                        auditShipments.map((shipment) => (
+                          <tr key={shipment.id}>
+                            <td>{shipment.container_number || "-"}</td>
+                            <td>{formatShipmentStatusLabel(shipment.shipment_status)}</td>
+                            <td>{normalizeMovementCategory(shipment.movement_category) || "-"}</td>
+                            <td>{shipment.latest_location || "-"}</td>
+                            <td>{shipment.latest_time || "-"}</td>
+                            <td>{formatRefreshStatusLabel(shipment.last_refresh_status)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </AuditDisclosure>
+
+              {relatedCycleRows.length ? (
+                <AuditDisclosure
+                  title="Related Container Cycles"
+                  summary={`${relatedCycleRows.length} other shipment cycle${relatedCycleRows.length === 1 ? " uses" : "s use"} the same physical container.`}
+                  open={auditRelatedCyclesExpanded}
+                  onToggle={() => setAuditRelatedCyclesExpanded((current) => !current)}
+                >
+                  <div className="related-cycle-list">
+                    {relatedCycleRows.map((row) => (
+                      <article key={row.group_key} className="related-cycle-item">
+                        <div className="related-cycle-copy">
+                          <div className="related-cycle-meta">
+                            <span className={badgeClass("movement", row.movement_category || "Hi Seas")}>
+                              {row.movement_category || "Hi Seas"}
+                            </span>
+                            <span className="meta-pill">
+                              {formatShipmentStatusLabel(row.shipment_status || "active")}
+                            </span>
+                          </div>
+                          <h4>{row.customer_name || "Shipment group"}</h4>
+                          <div className="related-cycle-facts">
+                            <span>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}</span>
+                            <span>{(row.container_numbers || []).join(", ") || row.primary_container_number || "-"}</span>
+                            <span>{row.movement_since_date || row.latest_time || "-"}</span>
+                          </div>
+                        </div>
+                        <ActionButton type="button" tone="ghost" onClick={() => setAuditRow(row)}>
+                          Open
+                        </ActionButton>
+                      </article>
+                    ))}
+                  </div>
+                </AuditDisclosure>
+              ) : null}
+
+              <AuditDisclosure
+                title="Activity"
+                summary={
+                  auditEntries.length
+                    ? `Latest update: ${formatAuditActionLabel(auditEntries[0]?.action)}`
+                    : "No activity has been recorded for this shipment group yet."
+                }
+                open={auditJournalExpanded}
+                onToggle={() => setAuditJournalExpanded((current) => !current)}
+              >
+                <div className="preview-actions audit-journal-tools">
                   {auditEntries.length ? (
                     <ActionButton
                       type="button"
@@ -4902,45 +4989,29 @@ function App() {
                     </ActionButton>
                   ) : null}
                 </div>
-              </div>
-              <div className={`audit-journal-body ${auditJournalExpanded ? "is-expanded" : "is-collapsed"}`}>
-                {auditEntries.length === 0 ? (
-                  <div className="history-table-wrap empty-state-panel">No activity yet.</div>
-                ) : auditJournalExpanded ? (
-                  <div className="audit-timeline motion-detail-list">
-                    {auditEntries.map((entry, index) => (
-                      <article
-                        key={entry.id}
-                        className="audit-timeline-item motion-stagger-item"
-                        style={{ "--motion-index": index }}
-                      >
-                        <div className="audit-timeline-meta">
-                          <span>{entry.created_at || "-"}</span>
-                          <span>{formatShipmentStatusLabel(entry.shipment_status)}</span>
-                        </div>
-                        <h4>{formatAuditActionLabel(entry.action)}</h4>
-                        <p>{formatAuditDetails(entry.details)}</p>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="audit-journal-collapsed motion-detail-list">
-                    {auditEntries.slice(0, 3).map((entry, index) => (
-                      <article
-                        key={entry.id}
-                        className="audit-journal-summary motion-stagger-item"
-                        style={{ "--motion-index": index }}
-                      >
-                        <div>
-                          <strong>{formatAuditActionLabel(entry.action)}</strong>
+                <div className={`audit-journal-body ${auditJournalExpanded ? "is-expanded" : "is-collapsed"}`}>
+                  {auditEntries.length === 0 ? (
+                    <div className="history-table-wrap empty-state-panel">No activity yet.</div>
+                  ) : (
+                    <div className="audit-timeline motion-detail-list">
+                      {auditEntries.map((entry, index) => (
+                        <article
+                          key={entry.id}
+                          className="audit-timeline-item motion-stagger-item"
+                          style={{ "--motion-index": index }}
+                        >
+                          <div className="audit-timeline-meta">
+                            <span>{entry.created_at || "-"}</span>
+                            <span>{formatShipmentStatusLabel(entry.shipment_status)}</span>
+                          </div>
+                          <h4>{formatAuditActionLabel(entry.action)}</h4>
                           <p>{formatAuditDetails(entry.details)}</p>
-                        </div>
-                        <span>{entry.created_at || "-"}</span>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </AuditDisclosure>
             </div>
           </div>
         </Modal>
