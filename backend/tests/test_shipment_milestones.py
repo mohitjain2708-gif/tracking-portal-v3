@@ -22,6 +22,7 @@ from app.api.routes.shipments import (
     _movement_category,
     _movement_since_date,
     _normalize_bl_number,
+    _should_use_pristine_arrival_override,
     _should_ignore_stale_concor_data,
     _should_ignore_stale_ldb_data,
     _should_ignore_stale_pristine_data,
@@ -336,6 +337,41 @@ class ShipmentMilestoneTests(unittest.TestCase):
             )
         )
 
+    def test_current_pristine_arrival_can_override_live_sources_that_have_not_caught_up(self) -> None:
+        today_text = datetime.now().strftime("%d-%m-%Y")
+        self.assertTrue(
+            _should_use_pristine_arrival_override(
+                {
+                    "arrival_date": today_text,
+                    "booking_date": today_text,
+                },
+                {
+                    "latest_time": today_text,
+                    "port_arrival_date": today_text,
+                    "birgunj_arrival_date": "",
+                },
+                {},
+            )
+        )
+
+    def test_pristine_arrival_does_not_override_newer_live_source_dates(self) -> None:
+        pristine_arrival = (datetime.now() - timedelta(days=2)).strftime("%d-%m-%Y")
+        fresher_live_date = datetime.now().strftime("%d-%m-%Y")
+        self.assertFalse(
+            _should_use_pristine_arrival_override(
+                {
+                    "arrival_date": pristine_arrival,
+                    "booking_date": pristine_arrival,
+                },
+                {
+                    "latest_time": fresher_live_date,
+                    "port_arrival_date": fresher_live_date,
+                    "birgunj_arrival_date": "",
+                },
+                {},
+            )
+        )
+
     def test_build_tracking_payload_drops_stale_pristine_override_and_keeps_hi_seas(self) -> None:
         original_fetch_ldb = shipments_module._fetch_ldb
         original_fetch_concor = shipments_module._fetch_concor
@@ -402,7 +438,7 @@ class ShipmentMilestoneTests(unittest.TestCase):
         self.assertEqual(payload["data"]["tracking_source"], "")
         self.assertEqual(payload["data"]["birgunj_arrival_date"], "")
 
-    def test_build_tracking_payload_keeps_fresh_ldb_port_status_even_when_pristine_claims_arrival(self) -> None:
+    def test_build_tracking_payload_uses_pristine_arrival_when_live_sources_have_not_caught_up(self) -> None:
         today_text = datetime.now().strftime("%d-%m-%Y")
         original_fetch_ldb = shipments_module._fetch_ldb
         original_fetch_concor = shipments_module._fetch_concor
@@ -434,10 +470,47 @@ class ShipmentMilestoneTests(unittest.TestCase):
             shipments_module._get_cached_data = original_cache_get
             shipments_module._save_to_cache = original_cache_save
 
+        self.assertEqual(payload["data"]["movement_category"], "Arrived Birgunj")
+        self.assertEqual(payload["data"]["latest_location"], "ICD BIRGANJ, Samastipur")
+        self.assertEqual(payload["data"]["birgunj_arrival_date"], today_text)
+        self.assertEqual(payload["data"]["pristine_booking_date"], today_text)
+
+    def test_build_tracking_payload_keeps_live_source_when_it_is_newer_than_pristine_arrival(self) -> None:
+        live_date = datetime.now().strftime("%d-%m-%Y")
+        pristine_arrival = (datetime.now() - timedelta(days=2)).strftime("%d-%m-%Y")
+        original_fetch_ldb = shipments_module._fetch_ldb
+        original_fetch_concor = shipments_module._fetch_concor
+        original_fetch_pristine = shipments_module._fetch_pristine_arrival
+        original_cache_get = shipments_module._get_cached_data
+        original_cache_save = shipments_module._save_to_cache
+        try:
+            shipments_module._fetch_ldb = lambda container_number: {
+                "latest_location": "MMLP-VISAKHAPATNAM",
+                "latest_time": live_date,
+                "port_arrival_date": live_date,
+                "birgunj_arrival_date": "",
+                "rail_status": "At Port",
+            }
+            shipments_module._fetch_concor = lambda container_number: {}
+            shipments_module._fetch_pristine_arrival = lambda container_number: {
+                "arrival_date": pristine_arrival,
+                "booking_date": pristine_arrival,
+                "location": "ICD BIRGANJ, Samastipur",
+            }
+            shipments_module._get_cached_data = lambda container_number: None
+            shipments_module._save_to_cache = lambda container_number, data: None
+
+            payload = _build_tracking_payload("MRSU7039715", use_cache=False)
+        finally:
+            shipments_module._fetch_ldb = original_fetch_ldb
+            shipments_module._fetch_concor = original_fetch_concor
+            shipments_module._fetch_pristine_arrival = original_fetch_pristine
+            shipments_module._get_cached_data = original_cache_get
+            shipments_module._save_to_cache = original_cache_save
+
         self.assertEqual(payload["data"]["movement_category"], "At Port")
         self.assertEqual(payload["data"]["latest_location"], "MMLP-VISAKHAPATNAM")
         self.assertEqual(payload["data"]["birgunj_arrival_date"], "")
-        self.assertEqual(payload["data"]["pristine_booking_date"], today_text)
 
     def test_group_dashboard_rows_preserve_action_needed_when_one_container_qualifies(self) -> None:
         shipments = [

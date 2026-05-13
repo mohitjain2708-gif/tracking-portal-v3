@@ -1044,6 +1044,41 @@ def _should_ignore_stale_pristine_data(
     return False
 
 
+def _freshest_live_tracking_date(
+    ldb_data: dict[str, Any] | None,
+    concor_data: dict[str, Any] | None,
+) -> datetime | None:
+    candidates = [
+        _freshest_tracking_date(ldb_data or {}, ["latest_time", "port_arrival_date", "birgunj_arrival_date"]),
+        _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_station"]),
+    ]
+    parsed_dates = [candidate for candidate in candidates if candidate is not None]
+    if not parsed_dates:
+        return None
+    return max(parsed_dates)
+
+
+def _should_use_pristine_arrival_override(
+    pristine_data: dict[str, Any] | None,
+    ldb_data: dict[str, Any] | None,
+    concor_data: dict[str, Any] | None,
+) -> bool:
+    payload = pristine_data or {}
+    pristine_arrival_date = _parse_date(_clean_text(payload.get("arrival_date", "")))
+    if pristine_arrival_date is None or _is_tracking_date_stale(pristine_arrival_date):
+        return False
+
+    ldb_birgunj_date = _parse_date(_clean_text((ldb_data or {}).get("birgunj_arrival_date", "")))
+    if ldb_birgunj_date is not None and not _is_tracking_date_stale(ldb_birgunj_date):
+        return False
+
+    freshest_live_date = _freshest_live_tracking_date(ldb_data, concor_data)
+    if freshest_live_date is None:
+        return True
+
+    return pristine_arrival_date >= freshest_live_date
+
+
 def _date_sort_value(value: str) -> float:
     parsed = _parse_date(value)
     return parsed.timestamp() if parsed else 0.0
@@ -2632,7 +2667,9 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
     )
     birgunj_arrival_date = ldb_data.get("birgunj_arrival_date", "")
 
-    if pristine_data.get("arrival_date") and not has_current_live_result:
+    if pristine_data.get("arrival_date") and (
+        not has_current_live_result or _should_use_pristine_arrival_override(pristine_data, ldb_data, concor_data)
+    ):
         latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
         rail_status = "Arrived Birgunj"
         movement_category = "Arrived Birgunj"
