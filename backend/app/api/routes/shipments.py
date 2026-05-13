@@ -690,7 +690,6 @@ def _movement_category(
 
 def _has_reached_birgunj(shipment: Shipment) -> bool:
     stored_movement = _normalize_existing_movement(shipment.movement_category or "")
-    tracking_source = _clean_text(shipment.tracking_source).lower()
     rail_status = _normalize_existing_movement(shipment.rail_status or "")
     latest_location = _clean_text(shipment.latest_location)
     shipment_status = _clean_text(shipment.shipment_status).lower()
@@ -698,7 +697,6 @@ def _has_reached_birgunj(shipment: Shipment) -> bool:
     if (
         stored_movement == "Arrived Birgunj"
         or rail_status == "Arrived Birgunj"
-        or "pristine" in tracking_source
         or _is_arrived(latest_location)
     ):
         return True
@@ -909,8 +907,98 @@ def _has_concor_live_signal(concor_data: dict[str, Any] | None) -> bool:
     payload = concor_data or {}
     return any(
         _clean_text(payload.get(field, ""))
-        for field in ("train_no", "departure", "wagon_loaded_date", "concor_location_code")
+        for field in ("train_no", "departure", "wagon_loaded_date", "concor_location_code", "last_reported_station")
     )
+
+
+def _has_ldb_live_signal(ldb_data: dict[str, Any] | None) -> bool:
+    payload = ldb_data or {}
+    return any(
+        _clean_text(payload.get(field, ""))
+        for field in ("latest_location", "latest_time", "port_arrival_date", "birgunj_arrival_date", "rail_status")
+    )
+
+
+def _is_tracking_date_stale(candidate: datetime | None) -> bool:
+    if candidate is None:
+        return False
+    current_date = datetime.now(APP_TIMEZONE).replace(tzinfo=None)
+    days_from_now = _days_between_dates(current_date, candidate)
+    return bool(days_from_now is not None and days_from_now >= STALE_PORTAL_RECORD_DAYS)
+
+
+def _should_ignore_stale_ldb_data(
+    ldb_data: dict[str, Any] | None,
+    concor_data: dict[str, Any] | None,
+    pristine_data: dict[str, Any] | None,
+) -> bool:
+    payload = ldb_data or {}
+    if not _has_ldb_live_signal(payload):
+        return False
+
+    freshest_ldb_date = _freshest_tracking_date(payload, ["latest_time", "port_arrival_date", "birgunj_arrival_date"])
+    if freshest_ldb_date is None:
+        return False
+
+    freshest_concor_date = _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_station"])
+    freshest_pristine_date = _freshest_tracking_date(
+        pristine_data or {},
+        ["arrival_date", "booking_date", "empty_date", "rake_departure_date"],
+    )
+
+    if _is_tracking_date_stale(freshest_ldb_date) and not any(
+        not _is_tracking_date_stale(reference_date)
+        for reference_date in (freshest_concor_date, freshest_pristine_date)
+        if reference_date is not None
+    ):
+        return True
+
+    days_from_concor = _days_between_dates(freshest_ldb_date, freshest_concor_date)
+    if days_from_concor is not None and days_from_concor >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    days_from_pristine = _days_between_dates(freshest_ldb_date, freshest_pristine_date)
+    if days_from_pristine is not None and days_from_pristine >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    return False
+
+
+def _should_ignore_stale_concor_data(
+    concor_data: dict[str, Any] | None,
+    ldb_data: dict[str, Any] | None,
+    pristine_data: dict[str, Any] | None,
+) -> bool:
+    payload = concor_data or {}
+    if not _has_concor_live_signal(payload):
+        return False
+
+    freshest_concor_date = _freshest_tracking_date(payload, ["departure", "wagon_loaded_date", "last_reported_station"])
+    if freshest_concor_date is None:
+        return False
+
+    freshest_ldb_date = _freshest_tracking_date(ldb_data or {}, ["latest_time", "port_arrival_date", "birgunj_arrival_date"])
+    freshest_pristine_date = _freshest_tracking_date(
+        pristine_data or {},
+        ["arrival_date", "booking_date", "empty_date", "rake_departure_date"],
+    )
+
+    if _is_tracking_date_stale(freshest_concor_date) and not any(
+        not _is_tracking_date_stale(reference_date)
+        for reference_date in (freshest_ldb_date, freshest_pristine_date)
+        if reference_date is not None
+    ):
+        return True
+
+    days_from_ldb = _days_between_dates(freshest_concor_date, freshest_ldb_date)
+    if days_from_ldb is not None and days_from_ldb >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    days_from_pristine = _days_between_dates(freshest_concor_date, freshest_pristine_date)
+    if days_from_pristine is not None and days_from_pristine >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    return False
 
 
 def _should_ignore_stale_pristine_data(
@@ -2513,6 +2601,12 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         concor_data = future_concor.result() or {}
         pristine_data = future_pristine.result() or {}
 
+    if _should_ignore_stale_ldb_data(ldb_data, concor_data, pristine_data):
+        ldb_data = {}
+
+    if _should_ignore_stale_concor_data(concor_data, ldb_data, pristine_data):
+        concor_data = {}
+
     if _should_ignore_stale_pristine_data(pristine_data, ldb_data, concor_data):
         pristine_data = {}
 
@@ -2528,8 +2622,7 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
     train_origin = concor_data.get("train_origin", "")
     train_destination = concor_data.get("train_destination", "")
     shipping_line = concor_data.get("shipping_line", "")
-    if not latest_location and concor_data.get("last_reported_station"):
-        latest_location = concor_data["last_reported_station"]
+    has_current_live_result = _has_ldb_live_signal(ldb_data) or _has_concor_live_signal(concor_data)
     movement_category = _movement_category(
         latest_location,
         train_no,
@@ -2537,18 +2630,20 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         delay_days,
         concor_location_code,
     )
+    birgunj_arrival_date = ldb_data.get("birgunj_arrival_date", "")
 
-    if pristine_data.get("arrival_date"):
+    if pristine_data.get("arrival_date") and not has_current_live_result:
         latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
         rail_status = "Arrived Birgunj"
         movement_category = "Arrived Birgunj"
         delay_days = _compute_delay_days(latest_time or pristine_data["arrival_date"])
+        birgunj_arrival_date = pristine_data["arrival_date"]
 
     data = {
         "latest_location": latest_location,
         "latest_time": latest_time,
         "port_arrival_date": ldb_data.get("port_arrival_date", ""),
-        "birgunj_arrival_date": pristine_data.get("arrival_date") or ldb_data.get("birgunj_arrival_date", ""),
+        "birgunj_arrival_date": birgunj_arrival_date,
         "pristine_booking_date": pristine_data.get("booking_date", ""),
         "train_no": train_no,
         "departure": departure,
