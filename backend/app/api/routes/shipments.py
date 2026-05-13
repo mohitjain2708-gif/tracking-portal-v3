@@ -56,6 +56,7 @@ APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REFRESH_JOB_RETENTION_HOURS = 12
 REFRESH_JOB_STALE_SECONDS = 600
 BACKGROUND_REFRESH_LEASE_SECONDS = 900
+STALE_PORTAL_RECORD_DAYS = 180
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -885,6 +886,74 @@ def _parse_ldb_timestamp(value: str) -> datetime | None:
         return datetime.fromisoformat(text_value.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _days_between_dates(left: datetime | None, right: datetime | None) -> int | None:
+    if left is None or right is None:
+        return None
+    return abs((left.date() - right.date()).days)
+
+
+def _freshest_tracking_date(payload: dict[str, Any] | None, keys: list[str]) -> datetime | None:
+    freshest: datetime | None = None
+    for key in keys:
+        parsed = _parse_date(_clean_text((payload or {}).get(key, "")))
+        if parsed is None:
+            continue
+        if freshest is None or parsed > freshest:
+            freshest = parsed
+    return freshest
+
+
+def _has_concor_live_signal(concor_data: dict[str, Any] | None) -> bool:
+    payload = concor_data or {}
+    return any(
+        _clean_text(payload.get(field, ""))
+        for field in ("train_no", "departure", "wagon_loaded_date", "concor_location_code")
+    )
+
+
+def _should_ignore_stale_pristine_data(
+    pristine_data: dict[str, Any] | None,
+    ldb_data: dict[str, Any] | None,
+    concor_data: dict[str, Any] | None,
+) -> bool:
+    payload = pristine_data or {}
+    if not payload.get("arrival_date"):
+        return False
+
+    freshest_pristine_date = _freshest_tracking_date(
+        payload,
+        ["arrival_date", "booking_date", "empty_date", "rake_departure_date"],
+    )
+    if freshest_pristine_date is None:
+        return False
+
+    ldb_latest_date = _parse_date(_clean_text((ldb_data or {}).get("latest_time", "")))
+    ldb_birgunj_date = _parse_date(_clean_text((ldb_data or {}).get("birgunj_arrival_date", "")))
+    ldb_port_date = _parse_date(_clean_text((ldb_data or {}).get("port_arrival_date", "")))
+    current_date = datetime.now(APP_TIMEZONE).replace(tzinfo=None)
+
+    days_from_now = _days_between_dates(current_date, freshest_pristine_date) or 0
+    days_from_ldb_latest = _days_between_dates(ldb_latest_date, freshest_pristine_date)
+    days_from_ldb_port = _days_between_dates(ldb_port_date, freshest_pristine_date)
+
+    has_current_birgunj_confirmation = ldb_birgunj_date is not None
+    has_other_live_signal = bool(ldb_latest_date or ldb_port_date or _has_concor_live_signal(concor_data))
+
+    if has_current_birgunj_confirmation:
+        return False
+
+    if days_from_now >= STALE_PORTAL_RECORD_DAYS and not has_other_live_signal:
+        return True
+
+    if days_from_ldb_latest is not None and days_from_ldb_latest >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    if days_from_ldb_port is not None and days_from_ldb_port >= STALE_PORTAL_RECORD_DAYS:
+        return True
+
+    return False
 
 
 def _date_sort_value(value: str) -> float:
@@ -2443,6 +2512,9 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
         ldb_data = future_ldb.result() or {}
         concor_data = future_concor.result() or {}
         pristine_data = future_pristine.result() or {}
+
+    if _should_ignore_stale_pristine_data(pristine_data, ldb_data, concor_data):
+        pristine_data = {}
 
     latest_location = ldb_data.get("latest_location", "")
     latest_time = ldb_data.get("latest_time", "")
