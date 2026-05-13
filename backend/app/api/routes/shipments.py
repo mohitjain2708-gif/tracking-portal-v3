@@ -36,6 +36,15 @@ from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSour
 from app.models.upload_session import UploadSession
 from app.models.user import User
 from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
+from app.services.shipment_state import (
+    MAX_SAME_CYCLE_BACKWARD_DRIFT_DAYS,
+    STALE_SOURCE_DAYS,
+    extract_concor_candidates,
+    extract_ldb_candidates,
+    extract_pristine_candidates,
+    pristine_birgunj_can_override_lagging_live_feeds,
+    resolve_shipment_state,
+)
 
 router = APIRouter()
 
@@ -56,7 +65,7 @@ APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 REFRESH_JOB_RETENTION_HOURS = 12
 REFRESH_JOB_STALE_SECONDS = 600
 BACKGROUND_REFRESH_LEASE_SECONDS = 900
-STALE_PORTAL_RECORD_DAYS = 180
+STALE_PORTAL_RECORD_DAYS = STALE_SOURCE_DAYS
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -872,6 +881,25 @@ def _movement_diagnostics(
     effective_location: str,
     action_required: bool,
 ) -> dict[str, Any]:
+    existing_diagnostics = getattr(shipment, "_movement_diagnostics", None)
+    if isinstance(existing_diagnostics, dict) and existing_diagnostics:
+        diagnostics = dict(existing_diagnostics)
+        diagnostics.setdefault(
+            "resolution_summary",
+            _movement_resolution_summary(shipment, movement_category, effective_location),
+        )
+        diagnostics.setdefault("source_priority_summary", _movement_source_priority_summary(shipment))
+        diagnostics.setdefault("group_scope_summary", "")
+        diagnostics.setdefault(
+            "evidence",
+            _movement_diagnostic_evidence(
+                shipment,
+                effective_location,
+                movement_category,
+                action_required,
+            ),
+        )
+        return diagnostics
     return {
         "resolution_summary": _movement_resolution_summary(shipment, movement_category, effective_location),
         "source_priority_summary": _movement_source_priority_summary(shipment),
@@ -1201,20 +1229,54 @@ def _should_use_pristine_arrival_override(
     ldb_data: dict[str, Any] | None,
     concor_data: dict[str, Any] | None,
 ) -> bool:
-    payload = pristine_data or {}
-    pristine_arrival_date = _parse_date(_clean_text(payload.get("arrival_date", "")))
-    if pristine_arrival_date is None or _is_tracking_date_stale(pristine_arrival_date):
-        return False
+    pristine_candidates = extract_pristine_candidates(pristine_data)
+    ldb_candidates = extract_ldb_candidates(ldb_data)
+    concor_candidates = extract_concor_candidates(concor_data)
 
-    ldb_birgunj_date = _parse_date(_clean_text((ldb_data or {}).get("birgunj_arrival_date", "")))
-    if ldb_birgunj_date is not None and not _is_tracking_date_stale(ldb_birgunj_date):
-        return False
+    pristine_birgunj = next(
+        (candidate for candidate in pristine_candidates if candidate.milestone == "birgunj_arrival"),
+        None,
+    )
+    live_birgunj = next(
+        (
+            candidate
+            for candidate in [*ldb_candidates, *concor_candidates]
+            if candidate.milestone == "birgunj_arrival"
+        ),
+        None,
+    )
+    live_inland = next(
+        (
+            candidate
+            for candidate in [*ldb_candidates, *concor_candidates]
+            if candidate.milestone == "inland_movement"
+        ),
+        None,
+    )
+    accepted_port = next(
+        (
+            candidate
+            for candidate in [*ldb_candidates, *concor_candidates]
+            if candidate.milestone == "port_arrival"
+        ),
+        None,
+    )
 
-    freshest_live_date = _freshest_live_tracking_date(ldb_data, concor_data)
-    if freshest_live_date is None:
-        return True
+    for candidate in (pristine_birgunj, live_birgunj, live_inland):
+        if candidate is not None and candidate.date is not None:
+            candidate.stale_by_age = _is_tracking_date_stale(candidate.date)
+            candidate.same_cycle = not candidate.stale_by_age
+            if (
+                candidate is pristine_birgunj
+                and accepted_port is not None
+                and accepted_port.date is not None
+                and candidate.date < accepted_port.date
+            ):
+                candidate.same_cycle = False
+            if candidate.date and candidate.milestone == "birgunj_arrival" and live_inland and live_inland.date:
+                candidate.same_cycle = candidate.same_cycle and candidate.date >= live_inland.date - timedelta(days=MAX_SAME_CYCLE_BACKWARD_DRIFT_DAYS)
 
-    return pristine_arrival_date >= freshest_live_date
+    return pristine_birgunj_can_override_lagging_live_feeds(pristine_birgunj, live_birgunj, live_inland)
 
 
 def _date_sort_value(value: str) -> float:
@@ -1360,7 +1422,9 @@ def _get_cached_data(container_number: str) -> dict[str, Any] | None:
             return None
         cached_time = datetime.fromisoformat(cached.get("cached_at", "2000-01-01T00:00:00"))
         if datetime.now() - cached_time < timedelta(minutes=CACHE_DURATION_MINUTES):
-            return cached.get("data")
+            cached_data = cached.get("data")
+            if isinstance(cached_data, dict) and {"ldb", "concor", "pristine"}.issubset(cached_data.keys()):
+                return cached_data
     except Exception:
         return None
     return None
@@ -1373,6 +1437,78 @@ def _save_to_cache(container_number: str, data: dict[str, Any]) -> None:
         CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
     except Exception:
         return
+
+
+def _fetch_tracking_sources(container_number: str, use_cache: bool = True) -> dict[str, Any]:
+    container_number = _clean_container(container_number)
+    if not container_number:
+        return {
+            "ldb": {},
+            "concor": {},
+            "pristine": {},
+            "status": "error",
+            "error": "Missing container number",
+            "cached": False,
+            "has_data": False,
+        }
+
+    if use_cache:
+        cached_sources = _get_cached_data(container_number)
+        if cached_sources:
+            has_data = bool(
+                (cached_sources.get("ldb") or {})
+                or (cached_sources.get("concor") or {})
+                or (cached_sources.get("pristine") or {})
+            )
+            return {
+                "ldb": cached_sources.get("ldb") or {},
+                "concor": cached_sources.get("concor") or {},
+                "pristine": cached_sources.get("pristine") or {},
+                "status": "success-cached" if has_data else "no_data",
+                "error": "" if has_data else "No data from any API",
+                "cached": True,
+                "has_data": has_data,
+            }
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        future_ldb = executor.submit(_fetch_ldb, container_number)
+        future_concor = executor.submit(_fetch_concor, container_number)
+        future_pristine = executor.submit(_fetch_pristine_arrival, container_number)
+        ldb_data = future_ldb.result() or {}
+        concor_data = future_concor.result() or {}
+        pristine_data = future_pristine.result() or {}
+
+    if _should_ignore_stale_ldb_data(ldb_data, concor_data, pristine_data):
+        ldb_data = {}
+
+    if _should_ignore_stale_concor_data(concor_data, ldb_data, pristine_data):
+        concor_data = {}
+
+    if _should_ignore_stale_pristine_data(pristine_data, ldb_data, concor_data):
+        pristine_data = {}
+
+    sources = {"ldb": ldb_data, "concor": concor_data, "pristine": pristine_data}
+    has_data = bool(ldb_data or concor_data or pristine_data)
+    error = (
+        ""
+        if _clean_text(concor_data.get("train_no", "")) or _clean_text(concor_data.get("concor_location_code", "")) == "WGN" or not concor_data
+        else "CONCOR returned but no train number"
+    )
+    if not has_data:
+        error = "No data from any API"
+
+    if has_data:
+        _save_to_cache(container_number, sources)
+
+    return {
+        "ldb": ldb_data,
+        "concor": concor_data,
+        "pristine": pristine_data,
+        "status": "success" if has_data else "no_data",
+        "error": error,
+        "cached": False,
+        "has_data": has_data,
+    }
 
 
 def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
@@ -2752,7 +2888,68 @@ def get_portal_user(
     return fallback_user
 
 
-def _build_tracking_payload(container_number: str, use_cache: bool = True) -> dict[str, Any]:
+def _build_tracking_payload_from_sources(
+    container_number: str,
+    shipment: Shipment | None,
+    source_payload: dict[str, Any],
+) -> dict[str, Any]:
+    ldb_data = source_payload.get("ldb") or {}
+    concor_data = source_payload.get("concor") or {}
+    pristine_data = source_payload.get("pristine") or {}
+    resolved_state = resolve_shipment_state(
+        shipment,
+        ldb_data,
+        concor_data,
+        pristine_data,
+        now=datetime.now(APP_TIMEZONE).replace(tzinfo=None),
+    )
+
+    delay_reference = _movement_since_date(
+        resolved_state.movement_category,
+        resolved_state.latest_time,
+        resolved_state.port_arrival_date,
+        resolved_state.birgunj_arrival_date,
+        resolved_state.departure,
+        resolved_state.wagon_loaded_date,
+    )
+    delay_days = _compute_delay_days(delay_reference)
+
+    data = {
+        "latest_location": resolved_state.latest_location,
+        "latest_time": resolved_state.latest_time,
+        "port_arrival_date": resolved_state.port_arrival_date,
+        "birgunj_arrival_date": resolved_state.birgunj_arrival_date,
+        "pristine_booking_date": resolved_state.pristine_booking_date,
+        "train_no": resolved_state.train_no,
+        "departure": resolved_state.departure,
+        "wagon_loaded_date": resolved_state.wagon_loaded_date,
+        "concor_location_code": resolved_state.concor_location_code,
+        "rail_status": resolved_state.rail_status,
+        "movement_category": resolved_state.movement_category,
+        "delay_days": delay_days,
+        "wagon_no": concor_data.get("wagon_no", ""),
+        "train_origin": concor_data.get("train_origin", ""),
+        "train_destination": concor_data.get("train_destination", ""),
+        "shipping_line": concor_data.get("shipping_line", ""),
+        "tracking_source": resolved_state.tracking_source,
+        "movement_diagnostics": resolved_state.decision_trace,
+        "completion_frozen": resolved_state.completion_frozen,
+    }
+
+    return {
+        "data": data,
+        "status": source_payload.get("status", "success"),
+        "error": source_payload.get("error", "") or "",
+        "cached": bool(source_payload.get("cached")),
+        "has_data": bool(source_payload.get("has_data")),
+    }
+
+
+def _build_tracking_payload(
+    container_number: str,
+    shipment: Shipment | None = None,
+    use_cache: bool = True,
+) -> dict[str, Any]:
     container_number = _clean_container(container_number)
     if not container_number:
         return {
@@ -2762,104 +2959,8 @@ def _build_tracking_payload(container_number: str, use_cache: bool = True) -> di
             "cached": False,
             "has_data": False,
         }
-    if use_cache:
-        cached_data = _get_cached_data(container_number)
-        if cached_data:
-            return {
-                "data": cached_data,
-                "status": "success-cached",
-                "error": "",
-                "cached": True,
-                "has_data": True,
-            }
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_ldb = executor.submit(_fetch_ldb, container_number)
-        future_concor = executor.submit(_fetch_concor, container_number)
-        future_pristine = executor.submit(_fetch_pristine_arrival, container_number)
-        ldb_data = future_ldb.result() or {}
-        concor_data = future_concor.result() or {}
-        pristine_data = future_pristine.result() or {}
-
-    if _should_ignore_stale_ldb_data(ldb_data, concor_data, pristine_data):
-        ldb_data = {}
-
-    if _should_ignore_stale_concor_data(concor_data, ldb_data, pristine_data):
-        concor_data = {}
-
-    if _should_ignore_stale_pristine_data(pristine_data, ldb_data, concor_data):
-        pristine_data = {}
-
-    latest_location = ldb_data.get("latest_location", "")
-    latest_time = ldb_data.get("latest_time", "")
-    rail_status = ldb_data.get("rail_status", "")
-    delay_days = float(ldb_data.get("delay_days", 0) or 0)
-    train_no = concor_data.get("train_no", "")
-    departure = concor_data.get("departure", "")
-    wagon_loaded_date = concor_data.get("wagon_loaded_date", "")
-    concor_location_code = concor_data.get("concor_location_code", "")
-    wagon_no = concor_data.get("wagon_no", "")
-    train_origin = concor_data.get("train_origin", "")
-    train_destination = concor_data.get("train_destination", "")
-    shipping_line = concor_data.get("shipping_line", "")
-    has_current_live_result = _has_ldb_live_signal(ldb_data) or _has_concor_live_signal(concor_data)
-    movement_category = _movement_category(
-        latest_location,
-        train_no,
-        departure,
-        delay_days,
-        concor_location_code,
-    )
-    birgunj_arrival_date = ldb_data.get("birgunj_arrival_date", "")
-
-    if pristine_data.get("arrival_date") and (
-        not has_current_live_result or _should_use_pristine_arrival_override(pristine_data, ldb_data, concor_data)
-    ):
-        latest_location = pristine_data.get("location") or "ICD BIRGANJ, Samastipur"
-        rail_status = "Arrived Birgunj"
-        movement_category = "Arrived Birgunj"
-        delay_days = _compute_delay_days(latest_time or pristine_data["arrival_date"])
-        birgunj_arrival_date = pristine_data["arrival_date"]
-
-    data = {
-        "latest_location": latest_location,
-        "latest_time": latest_time,
-        "port_arrival_date": ldb_data.get("port_arrival_date", ""),
-        "birgunj_arrival_date": birgunj_arrival_date,
-        "pristine_booking_date": pristine_data.get("booking_date", ""),
-        "train_no": train_no,
-        "departure": departure,
-        "wagon_loaded_date": wagon_loaded_date,
-        "concor_location_code": concor_location_code,
-        "rail_status": rail_status,
-        "movement_category": movement_category,
-        "delay_days": delay_days,
-        "wagon_no": wagon_no,
-        "train_origin": train_origin,
-        "train_destination": train_destination,
-        "shipping_line": shipping_line,
-        "tracking_source": "+".join(
-            source
-            for source, payload in (("ldb", ldb_data), ("concor", concor_data), ("pristine", pristine_data))
-            if payload
-        ),
-    }
-    has_data = bool(ldb_data or concor_data or pristine_data)
-    status = "success" if has_data else "no_data"
-    error = "" if train_no or concor_location_code == "WGN" or not concor_data else "CONCOR returned but no train number"
-    if not has_data:
-        error = "No data from any API"
-
-    if has_data:
-        _save_to_cache(container_number, data)
-
-    return {
-        "data": data,
-        "status": status,
-        "error": error,
-        "cached": False,
-        "has_data": has_data,
-    }
+    source_payload = _fetch_tracking_sources(container_number, use_cache=use_cache)
+    return _build_tracking_payload_from_sources(container_number, shipment, source_payload)
 
 
 def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Shipment:
@@ -2884,6 +2985,8 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     shipment.last_refresh_at = _now_datetime()
     shipment.last_refresh_status = payload.get("status", "success")
     shipment.last_refresh_error = payload.get("error", "") or ""
+    if data.get("movement_diagnostics"):
+        setattr(shipment, "_movement_diagnostics", data.get("movement_diagnostics"))
     return shipment
 
 
@@ -2894,7 +2997,7 @@ def _refresh_one_shipment(shipment: Shipment, use_cache: bool = True) -> Shipmen
         shipment.last_refresh_error = "Missing container number"
         shipment.last_refresh_at = _now_datetime()
         return shipment
-    return _apply_tracking_payload(shipment, _build_tracking_payload(container_number, use_cache=use_cache))
+    return _apply_tracking_payload(shipment, _build_tracking_payload(container_number, shipment=shipment, use_cache=use_cache))
 
 
 def _get_shipments(db: Session, current_user: User) -> list[Shipment]:
@@ -2969,20 +3072,22 @@ def _refresh_active_shipments_for_user(
             "refreshed_container_count": 0,
         }
 
-    payloads: dict[str, dict[str, Any]] = {}
+    source_payloads: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total_containers))) as executor:
         futures = {
-            executor.submit(_build_tracking_payload, container_number, False): container_number
+            executor.submit(_fetch_tracking_sources, container_number, False): container_number
             for container_number in unique_containers
         }
         completed = 0
         for future in as_completed(futures):
             container_number = futures[future]
             try:
-                payloads[container_number] = future.result()
+                source_payloads[container_number] = future.result()
             except Exception:
-                payloads[container_number] = {
-                    "data": {},
+                source_payloads[container_number] = {
+                    "ldb": {},
+                    "concor": {},
+                    "pristine": {},
                     "status": "error",
                     "error": "Tracking fetch failed",
                     "cached": False,
@@ -2999,8 +3104,13 @@ def _refresh_active_shipments_for_user(
 
     for shipment in shipments:
         container_number = _clean_container(shipment.container_number)
-        if container_number in payloads:
-            _apply_tracking_payload(shipment, payloads[container_number])
+        if container_number in source_payloads:
+            resolved_payload = _build_tracking_payload_from_sources(
+                container_number,
+                shipment,
+                source_payloads[container_number],
+            )
+            _apply_tracking_payload(shipment, resolved_payload)
 
     if audit_action:
         _log_audit_event(
