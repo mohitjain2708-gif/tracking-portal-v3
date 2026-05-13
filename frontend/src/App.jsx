@@ -749,6 +749,20 @@ function AuditDisclosure({ title, summary = "", open = false, onToggle, children
   );
 }
 
+function ActionChoice({ title, description, cta, tone = "ghost", onClick, disabled = false }) {
+  return (
+    <div className="action-choice">
+      <div className="action-choice-copy">
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
+      <ActionButton type="button" tone={tone} compact onClick={onClick} disabled={disabled}>
+        {cta}
+      </ActionButton>
+    </div>
+  );
+}
+
 function MovementIcon({ type }) {
   if (type === "Arrived Birgunj") {
     return (
@@ -3889,10 +3903,11 @@ function App() {
             const reopenLabel = actionStatus === "archived" ? "Bring back to live" : "Reopen shipment";
             return (
           <div className="action-modal-shell">
-            <section className="action-modal-hero action-modal-hero-balanced">
+            <section className="action-modal-hero action-modal-hero-quiet">
               <div className="action-modal-copy">
                 <p className="action-modal-eyebrow">Manage this shipment cycle</p>
                 <h4>{actionRow.customer_name || "Shipment group"}</h4>
+                <p className="action-modal-summary">{formatShipmentDetailSummary(actionRow)}</p>
                 <div className="action-modal-chips">
                   <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
                     {actionRow.movement_category || "Hi Seas"}
@@ -3902,31 +3917,28 @@ function App() {
                       Action needed
                     </span>
                   ) : null}
-                  <span className="meta-pill">
-                    {actionRow.container_count || actionRow.container_numbers?.length || 1} container
-                    {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}
-                  </span>
-                  <span className="meta-pill">
-                    {actionRow.bl_number ? `BL ${actionRow.bl_number}` : "BL not linked"}
-                  </span>
                 </div>
               </div>
 
-              <div className="action-modal-facts">
-                <div className="action-fact-card">
-                  <span>State</span>
+              <div className="action-modal-strip">
+                <div className="action-inline-fact">
+                  <span>Shipment Status</span>
                   <strong>{formatShipmentStatusLabel(actionRow.shipment_status || "active")}</strong>
                 </div>
-                <div className="action-fact-card">
-                  <span>Movement Since</span>
-                  <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
+                <div className="action-inline-fact">
+                  <span>BL Number</span>
+                  <strong>{actionRow.bl_number || "Not linked"}</strong>
                 </div>
-                <div className="action-fact-card action-fact-card-wide">
+                <div className="action-inline-fact">
                   <span>Current Location</span>
                   <strong>{actionRow.latest_location || "Not available"}</strong>
                 </div>
+                <div className="action-inline-fact">
+                  <span>Movement Since</span>
+                  <strong>{actionRow.movement_since_date || actionRow.latest_time || "-"}</strong>
+                </div>
                 {["completed", "archived"].includes(actionStatus) ? (
-                  <div className="action-fact-card">
+                  <div className="action-inline-fact">
                     <span>Clearance Doc</span>
                     <strong>{actionRow.clearance_doc_number || "Not saved"}</strong>
                   </div>
@@ -3934,65 +3946,74 @@ function App() {
               </div>
             </section>
 
-            <div className="action-modal-grid">
-              <section className="action-modal-section">
+            <div className="action-modal-stack">
+              <section className="action-modal-section action-modal-section-quiet">
                 <div className="action-modal-section-head">
-                  <span>Inspect</span>
-                  <p>Refresh the tracking, open the detail view, or correct shipment information.</p>
+                  <span>Review</span>
+                  <p>Use these when you want to inspect the shipment, refresh the live state, or correct the saved details.</p>
                 </div>
-                <div className="action-modal-buttons action-modal-buttons-stacked">
-                  <ActionButton type="button" tone="secondary" onClick={async () => {
-                    await handleRefreshGroup(actionRow);
-                    closeActionModal();
-                  }}>
-                    Refresh Shipment
-                  </ActionButton>
-                  <ActionButton
-                    type="button"
-                    tone="ghost"
+                <div className="action-choice-list">
+                  <ActionChoice
+                    title="Refresh shipment"
+                    description="Run a fresh live check before you make any operational decision."
+                    cta="Refresh"
+                    tone="secondary"
+                    onClick={async () => {
+                      await handleRefreshGroup(actionRow);
+                      closeActionModal();
+                    }}
+                  />
+                  <ActionChoice
+                    title="Open shipment detail"
+                    description="See the full cycle summary, movement reasoning, documents, and activity."
+                    cta="Open detail"
                     onClick={() => {
                       setAuditRow(actionRow);
                       setActionRow(null);
                       setActionReturnRow(null);
                     }}
-                  >
-                    Open Detail
-                  </ActionButton>
-                  <ActionButton
-                    type="button"
-                    tone="ghost"
+                  />
+                  <ActionChoice
+                    title="Edit saved details"
+                    description="Correct BL-side information or operational values for this shipment cycle."
+                    cta="Edit"
                     onClick={() => {
                       setEditReturnRow(actionReturnRow || actionRow);
                       openEditShipment(actionRow);
                       setActionRow(null);
                       setActionReturnRow(null);
                     }}
-                  >
-                    Edit Details
-                  </ActionButton>
+                  />
                 </div>
               </section>
 
-              <section className="action-modal-section">
+              <section className="action-modal-section action-modal-section-quiet">
                 <div className="action-modal-section-head">
-                  <span>Shipment stage</span>
-                  <p>Move the shipment forward when work is complete, or reopen it if it needs to go live again.</p>
+                  <span>Shipment Stage</span>
+                  <p>Change the business state only when the work on this shipment cycle has truly moved forward.</p>
                 </div>
-                <div className="action-modal-buttons action-modal-buttons-stacked">
+                <div className="action-choice-list">
                   {canActivate ? (
-                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "active", row: actionRow })}>
-                      {reopenLabel}
-                    </ActionButton>
+                    <ActionChoice
+                      title={reopenLabel}
+                      description="Bring this shipment back onto the live board so the team can continue working on it."
+                      cta="Reopen"
+                      onClick={() => setConfirmAction({ type: "active", row: actionRow })}
+                    />
                   ) : null}
                   {canComplete ? (
-                    <ActionButton type="button" tone="ghost" onClick={() => setConfirmAction({ type: "completed", row: actionRow })}>
-                      Mark as complete
-                    </ActionButton>
+                    <ActionChoice
+                      title="Mark as complete"
+                      description="Use this once the customer-facing shipment cycle has been served through Birgunj."
+                      cta="Complete"
+                      onClick={() => setConfirmAction({ type: "completed", row: actionRow })}
+                    />
                   ) : null}
                   {canArchive ? (
-                    <ActionButton
-                      type="button"
-                      tone="ghost"
+                    <ActionChoice
+                      title="Move to archive"
+                      description="Remove this cycle from the live board after the work is properly closed and documented."
+                      cta="Archive"
                       onClick={() => {
                         if (!cleanText(actionRow?.clearance_doc_number)) {
                           setFeedback({
@@ -4002,22 +4023,24 @@ function App() {
                         }
                         setConfirmAction({ type: "archived", row: actionRow });
                       }}
-                    >
-                      Move to archive
-                    </ActionButton>
+                    />
                   ) : null}
                 </div>
               </section>
 
-              <section className="action-modal-section action-modal-section-danger action-modal-section-full">
+              <section className="action-modal-section action-modal-section-danger action-modal-section-quiet">
                 <div className="action-modal-section-head">
                   <span>Danger Zone</span>
                   <p>Delete only if this shipment cycle should no longer exist in your working record.</p>
                 </div>
-                <div className="action-modal-buttons action-modal-buttons-stacked">
-                  <ActionButton type="button" tone="danger" onClick={() => setConfirmAction({ type: "delete", row: actionRow })}>
-                    Delete Shipment
-                  </ActionButton>
+                <div className="action-choice-list">
+                  <ActionChoice
+                    title="Delete shipment"
+                    description="This permanently removes the saved shipment cycle from your workspace."
+                    cta="Delete"
+                    tone="danger"
+                    onClick={() => setConfirmAction({ type: "delete", row: actionRow })}
+                  />
                 </div>
               </section>
             </div>
