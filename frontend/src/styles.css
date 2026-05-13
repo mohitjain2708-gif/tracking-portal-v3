@@ -2278,23 +2278,11 @@ select:focus {
   flex-wrap: wrap;
 }
 
-.audit-card-head-stacked {
-  display: grid;
-  gap: 4px;
-}
-
 .audit-card-note {
   color: #7a8899;
   font-size: 12px;
   line-height: 1.5;
   max-width: 28ch;
-}
-
-.audit-card-subtle {
-  margin: 0;
-  color: #75849a;
-  font-size: 14px;
-  line-height: 1.55;
 }
 
 .audit-diagnostic-stack {
@@ -2561,16 +2549,9 @@ select:focus {
 }
 
 .audit-card-actions-split {
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 14px;
-}
-
-.audit-controls-hint {
-  color: #7a8899;
-  font-size: 13px;
-  line-height: 1.5;
-  max-width: 34ch;
 }
 
 .audit-journal-tools {

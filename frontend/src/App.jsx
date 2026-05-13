@@ -1054,8 +1054,6 @@ function App() {
   const [auditRow, setAuditRow] = useState(null);
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditJournalExpanded, setAuditJournalExpanded] = useState(false);
-  const [auditDecisionExpanded, setAuditDecisionExpanded] = useState(false);
-  const [auditRowsExpanded, setAuditRowsExpanded] = useState(false);
   const [auditRelatedCyclesExpanded, setAuditRelatedCyclesExpanded] = useState(false);
   const [auditControlsExpanded, setAuditControlsExpanded] = useState(false);
   const [actionReturnRow, setActionReturnRow] = useState(null);
@@ -1502,13 +1500,6 @@ function App() {
     shipmentCountSummary.completed,
     shipmentCountSummary.total,
   ]);
-
-  const auditShipments = useMemo(() => {
-    if (!auditRow) {
-      return [];
-    }
-    return shipments.filter((shipment) => rowMatchesShipment(auditRow, shipment));
-  }, [auditRow, shipments]);
 
   const relatedCycleRows = useMemo(() => {
     if (!auditRow) {
@@ -2923,15 +2914,11 @@ function App() {
     if (!auditRow) {
       setAuditEntries([]);
       setAuditJournalExpanded(false);
-      setAuditDecisionExpanded(false);
-      setAuditRowsExpanded(false);
       setAuditRelatedCyclesExpanded(false);
       setAuditControlsExpanded(false);
       return undefined;
     }
     setAuditJournalExpanded(false);
-    setAuditDecisionExpanded(false);
-    setAuditRowsExpanded(false);
     setAuditRelatedCyclesExpanded(false);
     setAuditControlsExpanded(false);
     let active = true;
@@ -4637,30 +4624,25 @@ function App() {
               <article className="audit-overview-card">
                 <span>Latest Location</span>
                 <strong>{auditRow.latest_location || "Awaiting live location"}</strong>
-                <small>Current movement anchor</small>
               </article>
               <article className="audit-overview-card">
                 <span>Movement Since</span>
                 <strong>{auditRow.movement_since_date || auditRow.latest_time || "-"}</strong>
-                <small>When this stage began</small>
               </article>
               <article className="audit-overview-card">
                 <span>Port Arrival</span>
                 <strong>{auditRow.port_arrival_date || "Not confirmed"}</strong>
-                <small>Start of the current cycle</small>
               </article>
               <article className="audit-overview-card">
-                <span>Rail Context</span>
+                <span>Rail</span>
                 <strong>{auditRow.train_no || auditRow.departure || "Not linked yet"}</strong>
-                <small>{auditRow.train_no ? "Train number" : auditRow.departure ? "Departure marker" : "Live rail detail not saved"}</small>
               </article>
             </div>
 
             <div className="audit-main-layout">
               <section className="audit-detail-card audit-snapshot-card">
-                <div className="audit-card-head audit-card-head-stacked">
-                  <p className="audit-detail-title">Current Shipment Cycle</p>
-                  <p className="audit-card-subtle">A quieter view of the saved shipment story.</p>
+                <div className="audit-card-head">
+                  <p className="audit-detail-title">Shipment</p>
                 </div>
                 <div className="audit-kv-grid">
                   <div>
@@ -4668,7 +4650,7 @@ function App() {
                     <strong>{auditRow.bl_number || "Not linked"}</strong>
                   </div>
                   <div>
-                    <span>Shipment Status</span>
+                    <span>Status</span>
                     <strong>{formatShipmentStatusLabel(auditRow.shipment_status || "active")}</strong>
                   </div>
                   <div>
@@ -4676,7 +4658,7 @@ function App() {
                     <strong>{auditRow.latest_time || "-"}</strong>
                   </div>
                   <div>
-                    <span>Source Blend</span>
+                    <span>Sources</span>
                     <strong>{formatTrackingSourceLabel(auditRow.tracking_source)}</strong>
                   </div>
                   {["completed", "archived"].includes(cleanText(auditRow.shipment_status).toLowerCase()) ? (
@@ -4747,9 +4729,8 @@ function App() {
               </section>
 
               <section className="audit-detail-card audit-operations-card">
-                <div className="audit-card-head audit-card-head-stacked">
-                  <p className="audit-detail-title">Documents & Handover</p>
-                  <p className="audit-card-subtle">Shown as a summary first. Update only when someone needs to intervene.</p>
+                <div className="audit-card-head">
+                  <p className="audit-detail-title">Documents</p>
                 </div>
                 <dl className="audit-operations-summary">
                   <div>
@@ -4768,16 +4749,13 @@ function App() {
                   ) : null}
                 </dl>
                 <div className="audit-card-actions audit-card-actions-split">
-                  <span className="audit-controls-hint">
-                    Keep editing tucked away until the operator actually needs it.
-                  </span>
                   <ActionButton
                     type="button"
                     tone="ghost"
                     compact
                     onClick={() => setAuditControlsExpanded((current) => !current)}
                   >
-                    {auditControlsExpanded ? "Close editor" : "Update"}
+                    {auditControlsExpanded ? "Done" : "Edit"}
                   </ActionButton>
                 </div>
                 {auditControlsExpanded ? (
@@ -4866,99 +4844,6 @@ function App() {
             </div>
 
             <div className="audit-secondary-stack">
-              <AuditDisclosure
-                title="Movement Decision"
-                summary="Open this when you want to see why the movement was chosen."
-                open={auditDecisionExpanded}
-                onToggle={() => setAuditDecisionExpanded((current) => !current)}
-              >
-                <div className="audit-diagnostic-stack">
-                  {auditRow.movement_diagnostics?.resolution_summary ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Decision</span>
-                      <strong>{auditRow.movement_diagnostics.resolution_summary}</strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.source_priority_summary ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Source Priority</span>
-                      <strong>{auditRow.movement_diagnostics.source_priority_summary}</strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.group_scope_summary ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Group Scope</span>
-                      <strong>{auditRow.movement_diagnostics.group_scope_summary}</strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason ? (
-                    <div className="audit-diagnostic-copy">
-                      <span>Action Trigger</span>
-                      <strong>
-                        {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason}
-                      </strong>
-                    </div>
-                  ) : null}
-                  {auditRow.movement_diagnostics?.evidence?.length ? (
-                    <div className="audit-diagnostic-list">
-                      {auditRow.movement_diagnostics.evidence.map((item, index) => (
-                        <article
-                          key={`${auditRow.group_key || auditRow.id}-diagnostic-${item.label}-${index}`}
-                          className="audit-diagnostic-item"
-                        >
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </article>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </AuditDisclosure>
-
-              <AuditDisclosure
-                title="Container Feed"
-                summary={
-                  auditShipments.length
-                    ? `${auditShipments.length} saved shipment row${auditShipments.length === 1 ? "" : "s"} belong to this group.`
-                    : "No row-level shipment feed is saved yet."
-                }
-                open={auditRowsExpanded}
-                onToggle={() => setAuditRowsExpanded((current) => !current)}
-              >
-                <div className="history-table-wrap">
-                  <table className="history-table">
-                    <thead>
-                      <tr>
-                        <th>Container</th>
-                        <th>Status</th>
-                        <th>Movement</th>
-                        <th>Latest Location</th>
-                        <th>Latest Activity</th>
-                        <th>Check Result</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditShipments.length === 0 ? (
-                        <tr>
-                          <td colSpan="6" className="empty-cell">No row-level records available.</td>
-                        </tr>
-                      ) : (
-                        auditShipments.map((shipment) => (
-                          <tr key={shipment.id}>
-                            <td>{shipment.container_number || "-"}</td>
-                            <td>{formatShipmentStatusLabel(shipment.shipment_status)}</td>
-                            <td>{normalizeMovementCategory(shipment.movement_category) || "-"}</td>
-                            <td>{shipment.latest_location || "-"}</td>
-                            <td>{shipment.latest_time || "-"}</td>
-                            <td>{formatRefreshStatusLabel(shipment.last_refresh_status)}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </AuditDisclosure>
-
               {relatedCycleRows.length ? (
                 <AuditDisclosure
                   title="Related Container Cycles"
