@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ShipmentCreateRequest(BaseModel):
@@ -51,6 +51,9 @@ class ShipmentResponse(BaseModel):
     do_date: str = ""
     document_status: str = ""
     original_docs_received_date: str = ""
+    action_required: bool = False
+    action_required_reason: str = ""
+    movement_diagnostics: dict = Field(default_factory=dict)
     source_type: str = ""
     source_label: str = ""
     source_batch_id: int = 0

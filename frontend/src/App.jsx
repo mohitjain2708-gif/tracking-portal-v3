@@ -235,6 +235,26 @@ function formatRefreshStatusLabel(value) {
     .join(" ");
 }
 
+function normalizeMovementDiagnostics(value) {
+  const diagnostics = value && typeof value === "object" ? value : {};
+  const evidence = Array.isArray(diagnostics.evidence)
+    ? diagnostics.evidence
+        .map((item) => ({
+          label: cleanText(item?.label),
+          value: cleanText(item?.value),
+        }))
+        .filter((item) => item.label && item.value)
+    : [];
+
+  return {
+    resolution_summary: cleanText(diagnostics.resolution_summary),
+    source_priority_summary: cleanText(diagnostics.source_priority_summary),
+    group_scope_summary: cleanText(diagnostics.group_scope_summary),
+    action_summary: cleanText(diagnostics.action_summary),
+    evidence,
+  };
+}
+
 function formatTrackingSourceLabel(value) {
   const normalized = cleanText(value)
     .split(/[,+]/)
@@ -585,6 +605,14 @@ function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         last_refresh_status: cleanText(lead.last_refresh_status),
         last_refresh_error: cleanText(lead.last_refresh_error),
         clearance_doc_number: cleanText(lead.clearance_doc_number),
+        action_required: Boolean(sortedEntries.some((item) => item.action_required)),
+        action_required_reason: cleanText(
+          sortedEntries.find((item) => cleanText(item.action_required_reason))?.action_required_reason
+        ),
+        movement_diagnostics: {
+          ...normalizeMovementDiagnostics(lead.movement_diagnostics),
+          group_scope_summary: `The dashboard is showing the strongest live movement across ${containerNumbers.length || 1} container${containerNumbers.length === 1 ? "" : "s"} in this BL group.`,
+        },
         raw_shipments: sortedEntries,
       };
     })
@@ -1391,6 +1419,7 @@ function App() {
         container_count:
           Number(row.container_count) ||
           (Array.isArray(row.container_numbers) ? row.container_numbers.length : 0),
+        movement_diagnostics: normalizeMovementDiagnostics(row.movement_diagnostics),
       })),
     [dashboardRows]
   );
@@ -4588,6 +4617,51 @@ function App() {
                         </span>
                       ))}
                   </div>
+                </div>
+              </section>
+
+              <section className="audit-detail-card audit-detail-card-wide">
+                <p className="audit-detail-title">Movement Decision</p>
+                <div className="audit-diagnostic-stack">
+                  <div className="audit-diagnostic-copy">
+                    <span>Decision</span>
+                    <strong>
+                      {auditRow.movement_diagnostics?.resolution_summary || "No movement reasoning is saved yet."}
+                    </strong>
+                  </div>
+                  {auditRow.movement_diagnostics?.source_priority_summary ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Source Priority</span>
+                      <strong>{auditRow.movement_diagnostics.source_priority_summary}</strong>
+                    </div>
+                  ) : null}
+                  {auditRow.movement_diagnostics?.group_scope_summary ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Group Scope</span>
+                      <strong>{auditRow.movement_diagnostics.group_scope_summary}</strong>
+                    </div>
+                  ) : null}
+                  {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason ? (
+                    <div className="audit-diagnostic-copy">
+                      <span>Action Trigger</span>
+                      <strong>
+                        {auditRow.movement_diagnostics?.action_summary || auditRow.action_required_reason}
+                      </strong>
+                    </div>
+                  ) : null}
+                  {auditRow.movement_diagnostics?.evidence?.length ? (
+                    <div className="audit-diagnostic-list">
+                      {auditRow.movement_diagnostics.evidence.map((item, index) => (
+                        <article
+                          key={`${auditRow.group_key || auditRow.id}-diagnostic-${item.label}-${index}`}
+                          className="audit-diagnostic-item"
+                        >
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </section>
 

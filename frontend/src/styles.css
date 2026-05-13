@@ -2208,6 +2208,59 @@ select:focus {
   grid-column: 1 / -1;
 }
 
+.audit-diagnostic-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.audit-diagnostic-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-diagnostic-copy span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.audit-diagnostic-copy strong {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.audit-diagnostic-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.audit-diagnostic-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(239, 245, 251, 0.82);
+  border: 1px solid var(--border);
+}
+
+.audit-diagnostic-item span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.audit-diagnostic-item strong {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 .audit-detail-title {
   margin: 0;
   font-size: 11px;

@@ -1,7 +1,10 @@
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
-const IS_LOCAL_HOST = typeof window !== "undefined" && LOCAL_HOSTS.has(window.location.hostname);
+const DEFAULT_REMOTE_API_BASE = "https://tracking-portal-v3-backend.onrender.com";
+const CURRENT_HOSTNAME = typeof window !== "undefined" ? window.location.hostname : "";
+const IS_LOCAL_HOST = LOCAL_HOSTS.has(CURRENT_HOSTNAME);
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "")
+  || (IS_LOCAL_HOST ? "http://127.0.0.1:8000" : DEFAULT_REMOTE_API_BASE);
 const DEMO_SESSION_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SESSION !== "false" && IS_LOCAL_HOST;
 const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
@@ -56,6 +59,64 @@ export function isDemoSessionEnabled() {
   return DEMO_SESSION_ENABLED;
 }
 
+function isNetworkFailure(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.name === "TypeError"
+    || error?.name === "NetworkError"
+    || message.includes("failed to fetch")
+    || message.includes("networkerror")
+    || message.includes("load failed")
+    || message.includes("fetch failed")
+  );
+}
+
+function getFriendlyServiceMessage(path = "") {
+  const normalizedPath = String(path || "").toLowerCase();
+
+  if (normalizedPath.includes("/api/auth/login") || normalizedPath.includes("/api/auth/register")) {
+    return "We couldn't reach the portal service just now. It may be restarting. Please try signing in again in a few seconds.";
+  }
+
+  if (normalizedPath.includes("/refresh-all") || normalizedPath.includes("/refresh-group") || normalizedPath.includes("/refresh-one")) {
+    return "The live tracking service is temporarily unavailable. It may be restarting. Please try the refresh again in a few seconds.";
+  }
+
+  if (normalizedPath.includes("/bootstrap") || normalizedPath.includes("/dashboard")) {
+    return "We couldn't load the latest dashboard data just now. The backend may be restarting. Please try again in a few seconds.";
+  }
+
+  if (normalizedPath.includes("/bl-documents")) {
+    return "We couldn't reach the document service just now. Please try again in a few seconds.";
+  }
+
+  return "The portal service is temporarily unavailable right now. It may be restarting. Please try again in a few seconds.";
+}
+
+function decorateRequestError(error, path = "", fallback = "Request failed") {
+  if (error instanceof Error && error.name === "AbortError") {
+    return new Error("The request took too long. Please try again.");
+  }
+
+  if (isNetworkFailure(error)) {
+    return new Error(getFriendlyServiceMessage(path));
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(fallback);
+}
+
+async function safeFetch(url, options = {}, path = "") {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    throw decorateRequestError(error, path, "Request failed");
+  }
+}
+
 async function ensurePortalSession(path = "") {
   if (!path.startsWith("/api/shipments")) {
     return getToken();
@@ -71,11 +132,11 @@ async function ensurePortalSession(path = "") {
   }
 
   if (!portalSessionPromise) {
-    portalSessionPromise = fetch(`${API_BASE}/api/auth/login`, {
+    portalSessionPromise = safeFetch(`${API_BASE}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
-    })
+    }, "/api/auth/login")
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data?.access_token) {
@@ -92,7 +153,7 @@ async function ensurePortalSession(path = "") {
   return portalSessionPromise;
 }
 
-async function handleResponse(response) {
+async function handleResponse(response, path = "") {
   if (response.status === 204) {
     return {};
   }
@@ -100,6 +161,13 @@ async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (
+      response.status === 401
+      && !path.startsWith("/api/auth/login")
+      && !path.startsWith("/api/auth/register")
+    ) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
     throw new Error(normalizeErrorDetail(data?.detail || data?.message, "Request failed"));
   }
 
@@ -114,12 +182,12 @@ async function request(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await safeFetch(`${API_BASE}${path}`, {
     ...options,
     headers,
-  });
+  }, path);
 
-  return handleResponse(response);
+  return handleResponse(response, path);
 }
 
 async function requestBlob(path, options = {}) {
@@ -129,10 +197,10 @@ async function requestBlob(path, options = {}) {
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await safeFetch(`${API_BASE}${path}`, {
     ...options,
     headers,
-  });
+  }, path);
 
   if (!response.ok) {
     let detail = "Request failed";
@@ -151,10 +219,10 @@ async function requestBlob(path, options = {}) {
   };
 }
 
-async function requestBlobUrl(url, options = {}) {
-  const response = await fetch(url, {
+async function requestBlobUrl(url, options = {}, path = "") {
+  const response = await safeFetch(url, {
     ...options,
-  });
+  }, path);
 
   if (!response.ok) {
     let detail = "Request failed";
@@ -395,7 +463,9 @@ export const api = {
   fetchBLDocument: (blNumber, documentType) =>
     ensurePortalSession("/api/shipments/bl-documents/file").then(() =>
       requestBlobUrl(
-        `${API_BASE}/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}&access_token=${encodeURIComponent(getDocumentAuthToken())}`
+        `${API_BASE}/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}&access_token=${encodeURIComponent(getDocumentAuthToken())}`,
+        {},
+        "/api/shipments/bl-documents/file"
       )
     ),
 

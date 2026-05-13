@@ -747,6 +747,144 @@ def _shipment_needs_action(shipment: Shipment) -> bool:
     return booking_date > arrival_date
 
 
+def _tracking_source_labels(tracking_source: str) -> list[str]:
+    labels: list[str] = []
+    for source in re.split(r"[,+]", _clean_text(tracking_source).lower()):
+        source = source.strip()
+        if not source:
+            continue
+        if source == "ldb":
+            label = "LDB"
+        elif source == "concor":
+            label = "CONCOR"
+        elif source == "pristine":
+            label = "Pristine"
+        else:
+            label = source.capitalize()
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _join_human_labels(labels: list[str]) -> str:
+    clean_labels = [label for label in labels if _clean_text(label)]
+    if not clean_labels:
+        return ""
+    if len(clean_labels) == 1:
+        return clean_labels[0]
+    if len(clean_labels) == 2:
+        return f"{clean_labels[0]} and {clean_labels[1]}"
+    return f"{', '.join(clean_labels[:-1])}, and {clean_labels[-1]}"
+
+
+def _movement_resolution_summary(
+    shipment: Shipment,
+    movement_category: str,
+    effective_location: str,
+) -> str:
+    stored_movement = _normalize_existing_movement(shipment.movement_category or "")
+    rail_status = _normalize_existing_movement(shipment.rail_status or "")
+    latest_location = _clean_text(shipment.latest_location)
+    shipment_status = _clean_text(shipment.shipment_status).lower()
+    train_no = _clean_text(shipment.train_no)
+    departure = _clean_text(shipment.departure)
+    port_arrival_date = _clean_text(shipment.port_arrival_date)
+    birgunj_arrival_date = _clean_text(getattr(shipment, "birgunj_arrival_date", ""))
+    concor_code = _clean_text(getattr(shipment, "concor_location_code", "")).upper()
+
+    if movement_category == "Arrived Birgunj":
+        if birgunj_arrival_date:
+            return "Marked as Arrived Birgunj because a Birgunj arrival milestone is saved for this shipment."
+        if _is_arrived(latest_location):
+            return "Marked as Arrived Birgunj because the latest live location already points to Birgunj."
+        if stored_movement == "Arrived Birgunj" or rail_status == "Arrived Birgunj":
+            return "Marked as Arrived Birgunj because the saved live movement already confirms Birgunj."
+        if shipment_status in {"completed", "archived"}:
+            return "Kept at Arrived Birgunj because this shipment cycle is already closed."
+        return "Marked as Arrived Birgunj because the freshest saved source signals now point to Birgunj."
+
+    if movement_category == "On Rail":
+        if train_no or departure or concor_code == "WGN":
+            return "Marked as On Rail because active inland rail movement signals are saved on this shipment."
+        if _clean_text(effective_location):
+            return "Marked as On Rail because there is a live inland location, but Birgunj arrival is not yet confirmed."
+        return "Marked as On Rail because the latest saved tracking fields show the shipment is already moving inland."
+
+    if movement_category == "At Port":
+        if port_arrival_date:
+            return "Marked as At Port because a port-arrival milestone is saved and Birgunj arrival is not confirmed yet."
+        if _is_port(latest_location):
+            return "Marked as At Port because the latest saved location is still at the port side."
+        return "Marked as At Port because the latest saved movement has not progressed inland yet."
+
+    return "Kept at Hi Seas because no fresh port-side or inland-arrival confirmation is saved on this shipment yet."
+
+
+def _movement_source_priority_summary(shipment: Shipment) -> str:
+    source_labels = _tracking_source_labels(getattr(shipment, "tracking_source", ""))
+    lower_sources = {label.lower() for label in source_labels}
+    has_live_rail_source = any(label in lower_sources for label in {"ldb", "concor"})
+    has_pristine = "pristine" in lower_sources
+
+    if has_live_rail_source and has_pristine:
+        return "LDB and CONCOR are checked first. Pristine is only used as a fallback when the live rail feeds are missing, stale, or still lagging behind the latest arrival."
+    if has_live_rail_source:
+        return "The current movement is being driven by the live rail sources saved on this shipment."
+    if has_pristine:
+        return "Pristine is providing the current saved signal because fresher live rail confirmation is not available on this shipment."
+    return "This shipment is currently relying on the most recently saved portal fields."
+
+
+def _movement_diagnostic_evidence(
+    shipment: Shipment,
+    effective_location: str,
+    movement_category: str,
+    action_required: bool,
+) -> list[dict[str, str]]:
+    evidence: list[dict[str, str]] = []
+    source_text = _join_human_labels(_tracking_source_labels(getattr(shipment, "tracking_source", "")))
+
+    def add(label: str, value: Any) -> None:
+        text_value = _clean_text(value)
+        if text_value:
+            evidence.append({"label": label, "value": text_value})
+
+    add("Resolved movement", movement_category)
+    add("Source mix", source_text or "Manual entry")
+    add("Saved latest location", effective_location)
+    add("Saved latest activity", shipment.latest_time)
+    add("Port arrival", shipment.port_arrival_date)
+    add("Birgunj arrival", getattr(shipment, "birgunj_arrival_date", ""))
+    add("Train number", shipment.train_no)
+    add("Departure", shipment.departure)
+    add("Wagon loaded", getattr(shipment, "wagon_loaded_date", ""))
+    add("Pristine booking", getattr(shipment, "pristine_booking_date", ""))
+    add("Latest check status", shipment.last_refresh_status)
+    if action_required:
+        add("Action note", "Pristine booking date is after Birgunj arrival")
+    add("Latest check note", shipment.last_refresh_error)
+    return evidence
+
+
+def _movement_diagnostics(
+    shipment: Shipment,
+    movement_category: str,
+    effective_location: str,
+    action_required: bool,
+) -> dict[str, Any]:
+    return {
+        "resolution_summary": _movement_resolution_summary(shipment, movement_category, effective_location),
+        "source_priority_summary": _movement_source_priority_summary(shipment),
+        "group_scope_summary": "",
+        "evidence": _movement_diagnostic_evidence(
+            shipment,
+            effective_location,
+            movement_category,
+            action_required,
+        ),
+    }
+
+
 def _movement_since_date(
     movement_category: str,
     latest_time: str,
@@ -2010,6 +2148,12 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     action_required = _shipment_needs_action(shipment)
     source_type = _clean_text(getattr(shipment, "source_type", "")) or "manual"
     source_label = _clean_text(getattr(shipment, "source_label", "")) or ("Manual Entry" if source_type == "manual" else "")
+    movement_diagnostics = _movement_diagnostics(
+        shipment,
+        movement_category,
+        effective_location,
+        action_required,
+    )
     movement_since_date = _movement_since_date(
         movement_category,
         shipment.latest_time,
@@ -2051,6 +2195,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "original_docs_received_date": getattr(shipment, "original_docs_received_date", ""),
         "action_required": action_required,
         "action_required_reason": "Pristine booking date is after Birgunj arrival" if action_required else "",
+        "movement_diagnostics": movement_diagnostics,
         "source_type": source_type,
         "source_label": source_label,
         "source_batch_id": int(getattr(shipment, "source_batch_id", 0) or 0),
@@ -3410,6 +3555,16 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 if source and source not in tracking_sources:
                     tracking_sources.append(source)
         documents = _documents_for_bl(bl_number)
+        lead_diagnostics = dict(lead.get("movement_diagnostics") or {})
+        if lead_diagnostics:
+            lead_diagnostics["group_scope_summary"] = (
+                f"The dashboard is showing the strongest live movement across {len(container_numbers)} container"
+                f"{'' if len(container_numbers) == 1 else 's'} in this BL group."
+            )
+            if any(bool(item.get("action_required")) for item in sorted_entries):
+                lead_diagnostics["action_summary"] = _first_non_empty(
+                    [item.get("action_required_reason", "") for item in sorted_entries]
+                )
         rows.append(
             {
                 "group_key": group_key,
@@ -3444,6 +3599,7 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
                 "original_docs_received_date": _first_non_empty([item.get("original_docs_received_date", "") for item in sorted_entries]),
                 "action_required": any(bool(item.get("action_required")) for item in sorted_entries),
                 "action_required_reason": _first_non_empty([item.get("action_required_reason", "") for item in sorted_entries]),
+                "movement_diagnostics": lead_diagnostics,
                 "documents": documents,
                 "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),
             }
