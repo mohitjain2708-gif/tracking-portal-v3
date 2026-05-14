@@ -1,0 +1,1214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASYCUDA XML/PDF Tax Table Utility</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --panel-2: #eef4f8;
+      --text: #17202a;
+      --muted: #667085;
+      --border: #d8e0e8;
+      --accent: #136f63;
+      --accent-2: #19466f;
+      --danger: #b42318;
+      --shadow: 0 18px 45px rgba(16, 24, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      background: #ffffff;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .topbar {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--accent-2);
+      color: #ffffff;
+      flex: 0 0 auto;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .workspace-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #f8fbfd;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .workspace-switch select {
+      min-width: 176px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 8px 34px 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25 7 8.75l3.5-3.5' stroke='%2317202a' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      cursor: pointer;
+    }
+
+    .workspace-switch select:focus {
+      outline: none;
+      border-color: #afc1d3;
+      box-shadow: 0 0 0 3px rgba(25, 70, 111, 0.08);
+    }
+
+    main {
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 22px 24px 36px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 330px minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 18px;
+      overflow: hidden;
+    }
+
+    .upload-zone {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .drop {
+      min-height: 156px;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      border: 1px dashed #a6b5c5;
+      border-radius: 8px;
+      background: #fbfcfe;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease;
+    }
+
+    .drop:hover,
+    .drop.is-dragging {
+      border-color: var(--accent);
+      background: #f2fbf8;
+    }
+
+    .drop svg {
+      width: 32px;
+      height: 32px;
+      color: var(--accent-2);
+      margin-bottom: 10px;
+    }
+
+    .drop strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .drop span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      border-radius: 7px;
+      padding: 9px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 38px;
+    }
+
+    button svg {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: #ffffff;
+      border-color: var(--accent);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .meta {
+      border-top: 1px solid var(--border);
+      background: var(--panel-2);
+      padding: 16px 18px;
+      display: grid;
+      gap: 11px;
+    }
+
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(25, 70, 111, 0.12);
+      padding-bottom: 8px;
+    }
+
+    .meta-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .meta-row span:first-child {
+      color: var(--muted);
+    }
+
+    .meta-row span:last-child {
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .stat {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      min-width: 0;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.2;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .table-panel {
+      overflow: hidden;
+    }
+
+    .table-toolbar {
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid var(--border);
+      background: #ffffff;
+    }
+
+    .table-toolbar input {
+      width: min(360px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 10px;
+      font: inherit;
+      font-size: 13px;
+      background: #ffffff;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      min-height: 19px;
+    }
+
+    .status.error {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 205px);
+      background: #ffffff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 1220px;
+    }
+
+    th,
+    td {
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 9px;
+      vertical-align: top;
+      background: #ffffff;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--accent-2);
+      color: #ffffff;
+      font-size: 12px;
+      text-align: left;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    td {
+      font-size: 12px;
+    }
+
+    tbody tr:nth-child(even) td {
+      background: #f9fbfc;
+    }
+
+    td.num,
+    th.num {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    td.item-name {
+      min-width: 310px;
+      max-width: 420px;
+    }
+
+    tfoot td {
+      position: sticky;
+      bottom: 0;
+      z-index: 1;
+      background: #dfeef5;
+      font-weight: 700;
+    }
+
+    .empty {
+      min-height: 400px;
+      display: grid;
+      place-items: center;
+      padding: 36px;
+      color: var(--muted);
+      text-align: center;
+      background: #ffffff;
+    }
+
+    .empty svg {
+      width: 42px;
+      height: 42px;
+      color: #8da4b8;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 980px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .table-wrap {
+        max-height: none;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      .summary,
+      .button-row {
+        grid-template-columns: 1fr;
+      }
+
+      .table-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .brand h1 {
+        white-space: normal;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M7 4h7l4 4v12H7V4Z" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M14 4v5h5M9.5 13h5M9.5 16h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div>
+            <h1>ASYCUDA XML/PDF Tax Table Utility</h1>
+            <p>Upload customs XML or PDF and generate item-wise duty, ECS, and VAT table.</p>
+          </div>
+        </div>
+        <div class="actions">
+          <label class="workspace-switch" aria-label="Switch workspace">
+            <span>Workspace</span>
+            <select id="workspaceSwitch">
+              <option value="tracking">Tracking Portal</option>
+              <option value="tax-table" selected>Tax Table Utility</option>
+            </select>
+          </label>
+          <button id="copyBtn" disabled title="Copy table rows to clipboard">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 8h10v12H8V8Z" stroke="currentColor" stroke-width="1.8"/><path d="M6 16H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" stroke="currentColor" stroke-width="1.8"/></svg>
+            Copy
+          </button>
+          <button id="csvBtn" disabled title="Export as CSV">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            CSV
+          </button>
+          <button id="xlsBtn" class="primary" disabled title="Export as Excel-compatible file">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 4h9l5 5v11H5V4Z" stroke="currentColor" stroke-width="1.8"/><path d="m9 10 5 6m0-6-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Excel
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="workspace">
+        <aside class="panel sidebar">
+          <div class="upload-zone">
+            <label id="dropZone" class="drop" for="xmlInput">
+              <span>
+                <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 16v3h14v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <strong>Select or drop XML/PDF file</strong>
+                <span>ASYCUDA declaration XML or customs declaration PDF</span>
+              </span>
+            </label>
+            <input id="xmlInput" type="file" accept=".xml,.pdf,text/xml,application/xml,application/pdf">
+            <div class="button-row">
+              <button id="clearBtn" disabled>Clear</button>
+              <button id="chooseBtn">Choose File</button>
+            </div>
+            <div id="status" class="status">No file loaded.</div>
+          </div>
+          <div class="meta">
+            <div class="meta-row"><span>File</span><span id="fileName">-</span></div>
+            <div class="meta-row"><span>Declaration</span><span id="declaration">-</span></div>
+            <div class="meta-row"><span>Registration</span><span id="registration">-</span></div>
+            <div class="meta-row"><span>Office</span><span id="office">-</span></div>
+            <div class="meta-row"><span>Importer</span><span id="importer">-</span></div>
+          </div>
+        </aside>
+
+        <section>
+          <div class="summary" aria-live="polite">
+            <div class="stat"><span>Items</span><strong id="statItems">0</strong></div>
+            <div class="stat"><span>Quantity</span><strong id="statQty">0</strong></div>
+            <div class="stat"><span>ID Amount</span><strong id="statId">0.00</strong></div>
+            <div class="stat"><span>ECS Amount</span><strong id="statEcs">0.00</strong></div>
+            <div class="stat"><span>VAT Amount</span><strong id="statVat">0.00</strong></div>
+            <div class="stat"><span>Other Tariffs</span><strong id="statOther">0.00</strong></div>
+          </div>
+
+          <div class="panel table-panel">
+            <div class="table-toolbar">
+              <input id="searchInput" type="search" placeholder="Search item name or HS code" disabled>
+              <div id="tableStatus" class="status">Upload an XML or PDF file to generate the table.</div>
+            </div>
+            <div class="table-wrap">
+              <div id="emptyState" class="empty">
+                <div>
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16M4 10h16M4 15h16M4 20h16M8 5v15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                  <div>Your item-wise duty table will appear here.</div>
+                </div>
+              </div>
+              <table id="resultTable" hidden>
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"></tbody>
+                <tfoot id="tableFoot"></tfoot>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="vendor/pdfjs/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
+    }
+
+    const baseHeaders = [
+      'ITEM NO',
+      'ITEM NAME',
+      'HS CODE',
+      'QUANTITY'
+    ];
+
+    const preferredTaxCodes = ['ID', 'ECS', 'VAT'];
+
+    const els = {
+      input: document.getElementById('xmlInput'),
+      drop: document.getElementById('dropZone'),
+      clear: document.getElementById('clearBtn'),
+      choose: document.getElementById('chooseBtn'),
+      workspaceSwitch: document.getElementById('workspaceSwitch'),
+      copy: document.getElementById('copyBtn'),
+      csv: document.getElementById('csvBtn'),
+      xls: document.getElementById('xlsBtn'),
+      search: document.getElementById('searchInput'),
+      status: document.getElementById('status'),
+      tableStatus: document.getElementById('tableStatus'),
+      table: document.getElementById('resultTable'),
+      head: document.getElementById('tableHead'),
+      body: document.getElementById('tableBody'),
+      foot: document.getElementById('tableFoot'),
+      empty: document.getElementById('emptyState'),
+      fileName: document.getElementById('fileName'),
+      declaration: document.getElementById('declaration'),
+      registration: document.getElementById('registration'),
+      office: document.getElementById('office'),
+      importer: document.getElementById('importer'),
+      statItems: document.getElementById('statItems'),
+      statQty: document.getElementById('statQty'),
+      statId: document.getElementById('statId'),
+      statEcs: document.getElementById('statEcs'),
+      statVat: document.getElementById('statVat'),
+      statOther: document.getElementById('statOther')
+    };
+
+    let currentRows = [];
+    let currentMeta = {};
+    let currentTaxCodes = [];
+    let currentFileBase = 'asycuda-tax-table';
+
+    const formatNumber = (value, decimals = 2) => {
+      const number = Number(value || 0);
+      return number.toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      });
+    };
+
+    const formatPlain = (value) => {
+      const number = Number(value || 0);
+      return Number.isInteger(number) ? String(number) : String(Math.round(number * 100) / 100);
+    };
+
+    const directChild = (node, name) => {
+      if (!node) return null;
+      return Array.from(node.children || []).find((child) => child.localName === name) || null;
+    };
+
+    const textPath = (node, path) => {
+      const result = path.split('/').reduce((current, part) => directChild(current, part), node);
+      const text = result ? result.textContent.trim() : '';
+      return text === 'null' ? '' : text;
+    };
+
+    const numberPath = (node, path) => {
+      const raw = textPath(node, path).replace(/,/g, '');
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const parseNumberText = (value) => {
+      const cleaned = String(value ?? '').replace(/,/g, '').trim();
+      const parsed = Number.parseFloat(cleaned);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const parseTaxLines = (item) => {
+      const taxation = directChild(item, 'Taxation');
+      const lines = taxation ? Array.from(taxation.children).filter((child) => child.localName === 'Taxation_line') : [];
+      const byCode = {};
+
+      for (const line of lines) {
+        const code = textPath(line, 'Duty_tax_code');
+        if (!code) continue;
+        const normalizedCode = code.toUpperCase();
+        const existing = byCode[normalizedCode] || { value: 0, percent: '', amount: 0 };
+        const rate = numberPath(line, 'Duty_tax_rate');
+        byCode[normalizedCode] = {
+          value: existing.value + numberPath(line, 'Duty_tax_Base'),
+          percent: existing.percent === '' ? rate : existing.percent,
+          amount: existing.amount + numberPath(line, 'Duty_tax_amount')
+        };
+      }
+
+      return byCode;
+    };
+
+    const parseXml = (xmlText) => {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlText, 'application/xml');
+      const parserError = doc.querySelector('parsererror');
+      if (parserError) throw new Error('The selected file is not valid XML.');
+
+      const root = doc.documentElement;
+      if (!root || root.localName !== 'ASYCUDA') {
+        throw new Error('This does not look like an ASYCUDA XML file.');
+      }
+
+      const items = Array.from(root.children).filter((child) => child.localName === 'Item');
+      if (!items.length) throw new Error('No item rows were found in this XML file.');
+
+      const discoveredCodes = [];
+      const rememberCode = (code) => {
+        if (code && !discoveredCodes.includes(code)) discoveredCodes.push(code);
+      };
+
+      const rows = items.map((item, index) => {
+        const taxes = parseTaxLines(item);
+        Object.keys(taxes).forEach(rememberCode);
+
+        return {
+          itemNo: index + 1,
+          itemName: textPath(item, 'Goods_description/Commercial_Description') || textPath(item, 'Goods_description/Description_of_goods'),
+          hsCode: textPath(item, 'Tarification/HScode/Commodity_code'),
+          quantity: numberPath(item, 'Tarification/Supplementary_unit/Suppplementary_unit_quantity'),
+          taxes
+        };
+      });
+
+      const taxCodes = [
+        ...preferredTaxCodes.filter((code) => discoveredCodes.includes(code)),
+        ...discoveredCodes.filter((code) => !preferredTaxCodes.includes(code)).sort()
+      ];
+
+      const meta = {
+        declaration: `${textPath(root, 'Identification/Type/Type_of_declaration')} ${textPath(root, 'Identification/Type/Declaration_gen_procedure_code')}`.trim(),
+        registration: `${textPath(root, 'Identification/Registration/Serial_number')}${textPath(root, 'Identification/Registration/Number')}`.trim(),
+        registrationDate: textPath(root, 'Identification/Registration/Date'),
+        office: `${textPath(root, 'Identification/Office_segment/Customs_clearance_office_code')} ${textPath(root, 'Identification/Office_segment/Customs_Clearance_office_name')}`.trim(),
+        importer: textPath(root, 'Traders/Consignee/Consignee_name').replace(/\s+/g, ' '),
+        declaredItems: textPath(root, 'Property/Nbers/Total_number_of_items'),
+        declaredPackages: textPath(root, 'Property/Nbers/Total_number_of_packages'),
+        declaredTaxes: textPath(root, 'Financial/Amounts/Totals_taxes')
+      };
+
+      return { rows, meta, taxCodes };
+    };
+
+    const getPdfPageSpans = async (page) => {
+      const content = await page.getTextContent();
+      return content.items
+        .map((item) => ({
+          text: String(item.str || '').trim(),
+          x: item.transform[4],
+          y: item.transform[5]
+        }))
+        .filter((item) => item.text);
+    };
+
+    const sameLine = (a, b, tolerance = 2.2) => Math.abs(a - b) <= tolerance;
+
+    const isPdfItemAnchor = (span, spans) => {
+      if (!/^\d{1,3}$/.test(span.text)) return false;
+      if (span.x < 295 || span.x > 325 || span.y < 300 || span.y > 770) return false;
+      return spans.some((candidate) =>
+        sameLine(candidate.y, span.y)
+        && candidate.x >= 340
+        && candidate.x <= 385
+        && /^\d{8}$/.test(candidate.text)
+      );
+    };
+
+    const getPdfHsCode = (spans, anchorY) => {
+      const hs = spans.find((span) =>
+        sameLine(span.y, anchorY)
+        && span.x >= 340
+        && span.x <= 385
+        && /^\d{8}$/.test(span.text)
+      );
+      return hs ? hs.text : '';
+    };
+
+    const getPdfItemName = (spans, anchorY) => {
+      const candidates = spans.filter((span) =>
+        span.x >= 85
+        && span.x <= 345
+        && span.y < anchorY - 38
+        && span.y > anchorY - 92
+        && !/^[\d,.]+$/.test(span.text)
+        && !/^(System H\.S|Description:|Declared Name:|Number|packages|and kind|of goods)$/i.test(span.text)
+      );
+      if (!candidates.length) return '';
+
+      const chosen = candidates
+        .slice()
+        .sort((a, b) => Math.abs((anchorY - a.y) - 58) - Math.abs((anchorY - b.y) - 58))[0];
+
+      return candidates
+        .filter((span) => span.y <= chosen.y + 1 && span.y >= chosen.y - 14)
+        .sort((a, b) => b.y - a.y || a.x - b.x)
+        .map((span) => span.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    const getPdfQuantity = (spans, anchorY) => {
+      const qty = spans
+        .filter((span) =>
+          span.x >= 365
+          && span.x <= 410
+          && span.y < anchorY - 76
+          && span.y > anchorY - 125
+          && /^[\d,]+(?:\.\d+)?$/.test(span.text)
+        )
+        .sort((a, b) => Math.abs((anchorY - a.y) - 99) - Math.abs((anchorY - b.y) - 99))[0];
+      return qty ? parseNumberText(qty.text) : 0;
+    };
+
+    const taxRegionFor = (pageIndex, itemIndexOnPage) => {
+      if (pageIndex === 0) {
+        return { minY: 270, maxY: 305, side: 'left' };
+      }
+      if (itemIndexOnPage === 0) {
+        return { minY: 205, maxY: 245, side: 'left' };
+      }
+      if (itemIndexOnPage === 1) {
+        return { minY: 205, maxY: 245, side: 'right' };
+      }
+      return { minY: 100, maxY: 140, side: 'left' };
+    };
+
+    const numberInWindow = (spans, y, minX, maxX) => {
+      const value = spans
+        .filter((span) =>
+          span.x >= minX
+          && span.x <= maxX
+          && sameLine(span.y, y)
+          && /^[\d,]+(?:\.\d+)?$/.test(span.text)
+        )
+        .sort((a, b) => Math.abs(a.y - y) - Math.abs(b.y - y) || a.x - b.x)[0];
+      return value ? parseNumberText(value.text) : 0;
+    };
+
+    const parsePdfTaxes = (spans, region) => {
+      const codeMinX = region.side === 'right' ? 290 : 40;
+      const codeMaxX = region.side === 'right' ? 370 : 75;
+      const baseRange = region.side === 'right' ? [335, 375] : [95, 135];
+      const rateRange = region.side === 'right' ? [420, 452] : [175, 205];
+      const amountRange = region.side === 'right' ? [475, 515] : [230, 270];
+      const codeSpans = spans
+        .filter((span) =>
+          span.x >= codeMinX
+          && span.x <= codeMaxX
+          && span.y >= region.minY
+          && span.y <= region.maxY
+          && /^[A-Z][A-Z0-9]{1,5}$/.test(span.text)
+          && !['TYPE', 'RATE', 'AMOUNT', 'TOTAL'].includes(span.text.toUpperCase())
+        )
+        .sort((a, b) => b.y - a.y || a.x - b.x);
+
+      const taxes = {};
+      for (const codeSpan of codeSpans) {
+        const code = codeSpan.text.toUpperCase();
+        taxes[code] = {
+          value: numberInWindow(spans, codeSpan.y, baseRange[0], baseRange[1]),
+          percent: numberInWindow(spans, codeSpan.y, rateRange[0], rateRange[1]),
+          amount: numberInWindow(spans, codeSpan.y, amountRange[0], amountRange[1])
+        };
+      }
+      return taxes;
+    };
+
+    const parsePdfFile = async (file) => {
+      if (!window.pdfjsLib) {
+        throw new Error('PDF support library could not be loaded.');
+      }
+
+      const buffer = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+      const rows = [];
+      const discoveredCodes = [];
+      const rememberCode = (code) => {
+        if (code && !discoveredCodes.includes(code)) discoveredCodes.push(code);
+      };
+      let firstPageSpans = [];
+
+      for (let pageIndex = 0; pageIndex < pdf.numPages; pageIndex++) {
+        const page = await pdf.getPage(pageIndex + 1);
+        const spans = await getPdfPageSpans(page);
+        if (pageIndex === 0) firstPageSpans = spans;
+
+        const anchors = spans
+          .filter((span) => isPdfItemAnchor(span, spans))
+          .sort((a, b) => b.y - a.y || Number(a.text) - Number(b.text));
+
+        anchors.forEach((anchor, itemIndexOnPage) => {
+          const taxes = parsePdfTaxes(spans, taxRegionFor(pageIndex, itemIndexOnPage));
+          Object.keys(taxes).forEach(rememberCode);
+          rows.push({
+            itemNo: Number(anchor.text),
+            itemName: getPdfItemName(spans, anchor.y),
+            hsCode: getPdfHsCode(spans, anchor.y),
+            quantity: getPdfQuantity(spans, anchor.y),
+            taxes
+          });
+        });
+      }
+
+      if (!rows.length) {
+        throw new Error('No item rows were found in this PDF file.');
+      }
+
+      rows.sort((a, b) => a.itemNo - b.itemNo);
+      const firstPageText = firstPageSpans.map((span) => span.text).join(' ');
+      const registration = firstPageText.match(/\bM\s+(\d{3,})\s+(\d{2}\/\d{2}\/\d{4})\b/);
+      const officeCode = firstPageSpans.find((span) => /^BRJ\d+$/i.test(span.text));
+      const officeName = firstPageSpans.find((span) => /Birgunj Customs Office/i.test(span.text));
+      const importer = firstPageSpans
+        .filter((span) => span.x >= 45 && span.x <= 210 && span.y <= 705 && span.y >= 688)
+        .sort((a, b) => b.y - a.y || a.x - b.x)
+        .map((span) => span.text)
+        .join(' ')
+        .replace(/\s+/g, ' ');
+
+      const meta = {
+        declaration: 'IM 4',
+        registration: registration ? `M${registration[1]}` : '',
+        registrationDate: registration ? registration[2] : '',
+        office: `${officeCode ? officeCode.text : ''} ${officeName ? officeName.text : ''}`.trim(),
+        importer,
+        declaredItems: String(rows.length),
+        declaredPackages: '',
+        declaredTaxes: ''
+      };
+
+      const taxCodes = [
+        ...preferredTaxCodes.filter((code) => discoveredCodes.includes(code)),
+        ...discoveredCodes.filter((code) => !preferredTaxCodes.includes(code)).sort()
+      ];
+
+      return { rows, meta, taxCodes };
+    };
+
+    const emptyTax = { value: 0, percent: 0, amount: 0 };
+    const taxFor = (row, code) => row.taxes[code] || emptyTax;
+    const taxHeaders = (codes) => codes.flatMap((code) => [
+      code === 'ID' ? 'ID VALUE (CIF Value)' : `${code} VALUE`,
+      `${code} %`,
+      `${code} AMT`
+    ]);
+    const headersFor = (codes = currentTaxCodes) => [...baseHeaders, ...taxHeaders(codes)];
+    const isOtherTax = (code) => !preferredTaxCodes.includes(code);
+
+    const totalsFor = (rows, codes = currentTaxCodes) => rows.reduce((sum, row) => {
+      sum.quantity += row.quantity;
+      for (const code of codes) {
+        const tax = taxFor(row, code);
+        sum.taxValues[code] = (sum.taxValues[code] || 0) + tax.value;
+        sum.taxAmounts[code] = (sum.taxAmounts[code] || 0) + tax.amount;
+        if (isOtherTax(code)) sum.otherAmount += tax.amount;
+      }
+      return sum;
+    }, {
+      quantity: 0,
+      taxValues: {},
+      taxAmounts: {},
+      otherAmount: 0
+    });
+
+    const rowValues = (row, codes = currentTaxCodes) => [
+      row.itemNo,
+      row.itemName,
+      row.hsCode,
+      row.quantity,
+      ...codes.flatMap((code) => {
+        const tax = taxFor(row, code);
+        return [tax.value, tax.percent, tax.amount];
+      })
+    ];
+
+    const totalRowValues = (totals, codes = currentTaxCodes) => [
+      '',
+      'TOTAL',
+      '',
+      totals.quantity,
+      ...codes.flatMap((code) => [totals.taxValues[code] || 0, '', totals.taxAmounts[code] || 0])
+    ];
+
+    const renderHeader = () => {
+      const headers = headersFor();
+      els.head.innerHTML = `<tr>${headers.map((header, index) => {
+        const className = index === 1 || index === 2 ? '' : ' class="num"';
+        return `<th${className}>${escapeHtml(header)}</th>`;
+      }).join('')}</tr>`;
+    };
+
+    const render = () => {
+      const term = els.search.value.trim().toLowerCase();
+      const rows = currentRows.filter((row) => {
+        if (!term) return true;
+        return row.itemName.toLowerCase().includes(term)
+          || row.hsCode.toLowerCase().includes(term)
+          || currentTaxCodes.some((code) => code.toLowerCase().includes(term));
+      });
+
+      renderHeader();
+      els.body.innerHTML = rows.map((row) => `
+        <tr>
+          <td class="num">${row.itemNo}</td>
+          <td class="item-name">${escapeHtml(row.itemName)}</td>
+          <td>${escapeHtml(row.hsCode)}</td>
+          <td class="num">${formatPlain(row.quantity)}</td>
+          ${currentTaxCodes.map((code) => {
+            const tax = taxFor(row, code);
+            return `
+              <td class="num">${formatNumber(tax.value)}</td>
+              <td class="num">${formatPlain(tax.percent)}</td>
+              <td class="num">${formatNumber(tax.amount)}</td>
+            `;
+          }).join('')}
+        </tr>
+      `).join('');
+
+      const totals = totalsFor(rows);
+      els.foot.innerHTML = `
+        <tr>
+          <td></td>
+          <td>TOTAL</td>
+          <td></td>
+          <td class="num">${formatPlain(totals.quantity)}</td>
+          ${currentTaxCodes.map((code) => `
+            <td class="num">${formatNumber(totals.taxValues[code] || 0)}</td>
+            <td></td>
+            <td class="num">${formatNumber(totals.taxAmounts[code] || 0)}</td>
+          `).join('')}
+        </tr>
+      `;
+
+      els.tableStatus.textContent = rows.length === currentRows.length
+        ? `${rows.length} item rows shown. Tariffs: ${currentTaxCodes.join(', ')}.`
+        : `${rows.length} of ${currentRows.length} item rows shown. Tariffs: ${currentTaxCodes.join(', ')}.`;
+    };
+
+    const setLoadedState = (fileName, rows, meta, taxCodes) => {
+      currentRows = rows;
+      currentMeta = meta;
+      currentTaxCodes = taxCodes;
+      currentFileBase = (fileName || 'asycuda-tax-table').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+
+      const totals = totalsFor(rows);
+      els.fileName.textContent = fileName || 'Loaded XML';
+      els.declaration.textContent = meta.declaration || '-';
+      els.registration.textContent = meta.registrationDate ? `${meta.registration} / ${meta.registrationDate}` : (meta.registration || '-');
+      els.office.textContent = meta.office || '-';
+      els.importer.textContent = meta.importer || '-';
+      els.statItems.textContent = rows.length.toLocaleString('en-US');
+      els.statQty.textContent = formatPlain(totals.quantity);
+      els.statId.textContent = formatNumber(totals.taxAmounts.ID || 0);
+      els.statEcs.textContent = formatNumber(totals.taxAmounts.ECS || 0);
+      els.statVat.textContent = formatNumber(totals.taxAmounts.VAT || 0);
+      els.statOther.textContent = formatNumber(totals.otherAmount);
+      const extraCodes = taxCodes.filter(isOtherTax);
+      const extraText = extraCodes.length ? ` Extra tariffs found: ${extraCodes.join(', ')}.` : '';
+      els.status.textContent = `Loaded ${rows.length} items${meta.declaredItems ? `; file declares ${meta.declaredItems}` : ''}.${extraText}`;
+      els.status.classList.remove('error');
+      els.empty.hidden = true;
+      els.table.hidden = false;
+
+      [els.clear, els.copy, els.csv, els.xls, els.search].forEach((el) => { el.disabled = false; });
+      els.search.value = '';
+      render();
+    };
+
+    const reset = () => {
+      currentRows = [];
+      currentMeta = {};
+      currentTaxCodes = [];
+      currentFileBase = 'asycuda-tax-table';
+      els.input.value = '';
+      els.search.value = '';
+      els.body.innerHTML = '';
+      els.foot.innerHTML = '';
+      els.head.innerHTML = '';
+      els.fileName.textContent = '-';
+      els.declaration.textContent = '-';
+      els.registration.textContent = '-';
+      els.office.textContent = '-';
+      els.importer.textContent = '-';
+      els.statItems.textContent = '0';
+      els.statQty.textContent = '0';
+      els.statId.textContent = '0.00';
+      els.statEcs.textContent = '0.00';
+      els.statVat.textContent = '0.00';
+      els.statOther.textContent = '0.00';
+      els.status.textContent = 'No file loaded.';
+      els.tableStatus.textContent = 'Upload an XML or PDF file to generate the table.';
+      els.status.classList.remove('error');
+      els.empty.hidden = false;
+      els.table.hidden = true;
+      [els.clear, els.copy, els.csv, els.xls, els.search].forEach((el) => { el.disabled = true; });
+    };
+
+    const loadFile = async (file) => {
+      if (!file) return;
+      try {
+        els.status.textContent = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+          ? 'Reading PDF declaration...'
+          : 'Reading XML declaration...';
+        els.status.classList.remove('error');
+        const parsed = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+          ? await parsePdfFile(file)
+          : parseXml(await file.text());
+        setLoadedState(file.name, parsed.rows, parsed.meta, parsed.taxCodes);
+      } catch (error) {
+        els.status.textContent = error.message;
+        els.status.classList.add('error');
+      }
+    };
+
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+
+    const csvEscape = (value) => {
+      const text = String(value ?? '');
+      return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+
+    const exportRows = () => currentRows.map((row) => rowValues(row));
+
+    const download = (content, fileName, type) => {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    };
+
+    const exportCsv = () => {
+      const headers = headersFor();
+      const rows = [headers, ...exportRows()];
+      const totals = totalsFor(currentRows);
+      rows.push(totalRowValues(totals));
+      const csv = '\uFEFF' + rows.map((row) => row.map(csvEscape).join(',')).join('\r\n');
+      download(csv, `${currentFileBase}_tax_table.csv`, 'text/csv;charset=utf-8');
+    };
+
+    const exportExcel = () => {
+      const headers = headersFor();
+      const tableRows = currentRows.map((row) => `
+        <tr>${rowValues(row).map((value, index) => `<td${index === 1 ? ' style="mso-number-format:\\@;"' : ''}>${escapeHtml(value)}</td>`).join('')}</tr>
+      `).join('');
+      const totals = totalsFor(currentRows);
+      const totalRow = totalRowValues(totals);
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 12px; }
+              th { background: #19466f; color: #fff; font-weight: bold; }
+              th, td { border: 1px solid #d8e0e8; padding: 6px; }
+              td.num { text-align: right; }
+            </style>
+          </head>
+          <body>
+            <table>
+              <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+              <tbody>${tableRows}</tbody>
+              <tfoot><tr>${totalRow.map((value) => `<td>${escapeHtml(value)}</td>`).join('')}</tr></tfoot>
+            </table>
+          </body>
+        </html>
+      `;
+      download(html, `${currentFileBase}_tax_table.xls`, 'application/vnd.ms-excel;charset=utf-8');
+    };
+
+    const copyTable = async () => {
+      const rows = [headersFor(), ...exportRows()];
+      const text = rows.map((row) => row.join('\t')).join('\n');
+      await navigator.clipboard.writeText(text);
+      els.tableStatus.textContent = 'Table copied to clipboard.';
+    };
+
+    els.input.addEventListener('change', () => loadFile(els.input.files[0]));
+    els.clear.addEventListener('click', reset);
+    els.csv.addEventListener('click', exportCsv);
+    els.xls.addEventListener('click', exportExcel);
+    els.copy.addEventListener('click', copyTable);
+    els.search.addEventListener('input', render);
+    els.workspaceSwitch.addEventListener('change', (event) => {
+      if (event.target.value === 'tracking') {
+        window.location.assign('/');
+      }
+    });
+
+    els.choose.addEventListener('click', async () => {
+      els.input.click();
+    });
+
+    ['dragenter', 'dragover'].forEach((eventName) => {
+      els.drop.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        els.drop.classList.add('is-dragging');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach((eventName) => {
+      els.drop.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        els.drop.classList.remove('is-dragging');
+      });
+    });
+
+    els.drop.addEventListener('drop', (event) => {
+      const file = event.dataTransfer.files[0];
+      loadFile(file);
+    });
+  </script>
+</body>
+</html>

@@ -1070,6 +1070,13 @@ function App() {
     bl_copy: null,
   });
 
+  const handleWorkspaceChange = useCallback((event) => {
+    const nextWorkspace = cleanText(event.target.value);
+    if (nextWorkspace === "tax-table") {
+      window.location.assign("/tax-table-utility.html");
+    }
+  }, []);
+
   useEffect(() => {
     const { pathname, search } = window.location;
     if (pathname.startsWith("/api/shipments/bl-documents/file")) {
@@ -2975,6 +2982,13 @@ function App() {
         </div>
 
         <div className="hero-actions compact-actions">
+          <label className="workspace-switcher" aria-label="Switch workspace">
+            <span>Workspace</span>
+            <select value="tracking" onChange={handleWorkspaceChange}>
+              <option value="tracking">Tracking Portal</option>
+              <option value="tax-table">Tax Table Utility</option>
+            </select>
+          </label>
           {!demoSessionEnabled && currentUser ? (
             <div className="session-chip">
               <span>{currentUser.email}</span>

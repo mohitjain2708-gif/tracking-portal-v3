@@ -304,6 +304,55 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.workspace-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #eef5fc;
+  font-size: 12px;
+}
+
+.workspace-switcher span {
+  color: rgba(238, 245, 252, 0.76);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.workspace-switcher select {
+  min-width: 176px;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 34px 7px 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.1)),
+    rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.1)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25 7 8.75l3.5-3.5' stroke='white' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right 12px center;
+  background-size: auto, 14px 14px;
+  cursor: pointer;
+}
+
+.workspace-switcher select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+}
+
+.workspace-switcher select option {
+  color: #102033;
+}
+
 .session-chip {
   display: inline-flex;
   align-items: center;
