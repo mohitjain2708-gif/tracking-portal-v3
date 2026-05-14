@@ -1010,6 +1010,23 @@ def _extract_concor_wagon_signal(details_text: str, last_reported_text: str = ""
     return "WGN", wagon_loaded_date
 
 
+def _extract_concor_last_reported_station(last_reported_text: str) -> str:
+    text_value = _clean_text(last_reported_text)
+    if not text_value:
+        return ""
+
+    # Keep the human station text, but strip trailing date/status fragments that
+    # are useful for freshness checks and wagon signals, not for display.
+    station_text = re.sub(r"\bsince\b.*$", "", text_value, flags=re.IGNORECASE)
+    station_text = re.sub(r"\b\d{2}/\d{2}/\d{4}\b", "", station_text)
+    station_text = re.sub(r"[(),;]+", " ", station_text)
+    station_text = re.sub(r"\s{2,}", " ", station_text).strip(" -:/")
+
+    if station_text.upper() in {"", "WGN", "NA", "N/A", "NIL"}:
+        return ""
+    return station_text
+
+
 def _normalize_document_status(value: Any) -> str:
     text_value = _clean_text(value).lower()
     if text_value == "copy":
@@ -1073,7 +1090,14 @@ def _has_concor_live_signal(concor_data: dict[str, Any] | None) -> bool:
     payload = concor_data or {}
     return any(
         _clean_text(payload.get(field, ""))
-        for field in ("train_no", "departure", "wagon_loaded_date", "concor_location_code", "last_reported_station")
+        for field in (
+            "train_no",
+            "departure",
+            "wagon_loaded_date",
+            "concor_location_code",
+            "last_reported_station",
+            "last_reported_date",
+        )
     )
 
 
@@ -1106,7 +1130,7 @@ def _should_ignore_stale_ldb_data(
     if freshest_ldb_date is None:
         return False
 
-    freshest_concor_date = _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_station"])
+    freshest_concor_date = _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_date"])
     freshest_pristine_date = _freshest_tracking_date(
         pristine_data or {},
         ["arrival_date", "booking_date", "empty_date", "rake_departure_date"],
@@ -1139,7 +1163,7 @@ def _should_ignore_stale_concor_data(
     if not _has_concor_live_signal(payload):
         return False
 
-    freshest_concor_date = _freshest_tracking_date(payload, ["departure", "wagon_loaded_date", "last_reported_station"])
+    freshest_concor_date = _freshest_tracking_date(payload, ["departure", "wagon_loaded_date", "last_reported_date"])
     if freshest_concor_date is None:
         return False
 
@@ -1216,7 +1240,7 @@ def _freshest_live_tracking_date(
 ) -> datetime | None:
     candidates = [
         _freshest_tracking_date(ldb_data or {}, ["latest_time", "port_arrival_date", "birgunj_arrival_date"]),
-        _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_station"]),
+        _freshest_tracking_date(concor_data or {}, ["departure", "wagon_loaded_date", "last_reported_date"]),
     ]
     parsed_dates = [candidate for candidate in candidates if candidate is not None]
     if not parsed_dates:
@@ -1596,6 +1620,7 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
         last_reported_raw = _json_value(container_track, "LAST_REPORTED_STATION")
         details_text = _json_value(container_track, "DETAILS") or _json_value(container_track, "details")
         concor_location_code, wagon_loaded_date = _extract_concor_wagon_signal(details_text, last_reported_raw)
+        last_reported_station = _extract_concor_last_reported_station(last_reported_raw)
         last_reported_date = ""
         date_match = re.search(r"(\d{2}/\d{2}/\d{4})", last_reported_raw)
         if date_match:
@@ -1606,7 +1631,8 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
             "train_origin": _json_value(container_track, "TRAIN_ORIGNATING_STATION"),
             "train_destination": _json_value(container_track, "TRAIN_DESTINATION_STATION"),
             "departure": departure,
-            "last_reported_station": last_reported_date,
+            "last_reported_station": last_reported_station,
+            "last_reported_date": last_reported_date,
             "shipping_line": "",
             "concor_location_code": concor_location_code,
             "wagon_loaded_date": wagon_loaded_date,

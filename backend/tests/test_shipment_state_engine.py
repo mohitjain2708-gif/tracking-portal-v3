@@ -150,6 +150,85 @@ class ShipmentStateEngineTests(unittest.TestCase):
         self.assertEqual(resolved.latest_location, "ICD BIRGANJ, Samastipur")
         self.assertEqual(resolved.birgunj_arrival_date, "30-03-2026")
 
+    def test_concor_on_rail_can_fallback_to_ldb_station_for_display_location(self) -> None:
+        shipment = SimpleNamespace(
+            customer_name="Rail Customer",
+            container_number="MRKU5778966",
+            bl_number="BL5778966",
+            shipment_status="active",
+            created_at=None,
+            updated_at=None,
+            movement_category="Hi Seas",
+            latest_location="",
+            latest_time="",
+            birgunj_arrival_date="",
+            tracking_source="",
+        )
+
+        resolved = resolve_shipment_state(
+            shipment,
+            {
+                "latest_location": "VISAKHAPATNAM STATION",
+                "latest_time": "13-05-2026",
+                "port_arrival_date": "10-05-2026",
+                "birgunj_arrival_date": "",
+                "rail_status": "At Port",
+            },
+            {
+                "train_no": "R120H",
+                "departure": "13-05-2026",
+                "last_reported_station": "",
+                "last_reported_date": "",
+                "concor_location_code": "WGN",
+                "wagon_loaded_date": "",
+            },
+            {},
+            now=datetime(2026, 5, 14),
+        )
+
+        self.assertEqual(resolved.movement_category, "On Rail")
+        self.assertEqual(resolved.train_no, "R120H")
+        self.assertEqual(resolved.latest_location, "VISAKHAPATNAM STATION")
+
+    def test_concor_real_station_text_is_preferred_over_placeholder_codes(self) -> None:
+        shipment = SimpleNamespace(
+            customer_name="Rail Customer",
+            container_number="MRKU5778967",
+            bl_number="BL5778967",
+            shipment_status="active",
+            created_at=None,
+            updated_at=None,
+            movement_category="Hi Seas",
+            latest_location="",
+            latest_time="",
+            birgunj_arrival_date="",
+            tracking_source="",
+        )
+
+        resolved = resolve_shipment_state(
+            shipment,
+            {
+                "latest_location": "VISAKHAPATNAM STATION",
+                "latest_time": "13-05-2026",
+                "port_arrival_date": "10-05-2026",
+                "birgunj_arrival_date": "",
+                "rail_status": "At Port",
+            },
+            {
+                "train_no": "R120H",
+                "departure": "13-05-2026",
+                "last_reported_station": "WALTair JN.",
+                "last_reported_date": "13-05-2026",
+                "concor_location_code": "WGN",
+                "wagon_loaded_date": "",
+            },
+            {},
+            now=datetime(2026, 5, 14),
+        )
+
+        self.assertEqual(resolved.movement_category, "On Rail")
+        self.assertEqual(resolved.latest_location, "WALTair JN.")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,6 +104,13 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _clean_concor_location(value: Any) -> str:
+    text_value = _clean_text(value)
+    if text_value.upper() in {"", "WGN", "NA", "N/A", "NIL"}:
+        return ""
+    return text_value
+
+
 @dataclass
 class MilestoneCandidate:
     milestone: MilestoneType
@@ -257,16 +264,24 @@ def extract_concor_candidates(concor_data: dict[str, Any] | None) -> list[Milest
     train_no = _clean_text(payload.get("train_no", ""))
     departure = _normalize_date_text(payload.get("departure", ""))
     wagon_loaded_date = _normalize_date_text(payload.get("wagon_loaded_date", ""))
-    last_reported_station = _clean_text(payload.get("last_reported_station", ""))
-    concor_location_code = _clean_text(payload.get("concor_location_code", ""))
+    last_reported_date = _normalize_date_text(payload.get("last_reported_date", ""))
+    last_reported_station = _clean_concor_location(payload.get("last_reported_station", ""))
+    concor_location_code = _clean_concor_location(payload.get("concor_location_code", ""))
     signal = any(
         _clean_text(payload.get(field, ""))
-        for field in ("train_no", "departure", "wagon_loaded_date", "concor_location_code", "last_reported_station")
+        for field in (
+            "train_no",
+            "departure",
+            "wagon_loaded_date",
+            "concor_location_code",
+            "last_reported_station",
+            "last_reported_date",
+        )
     )
     if not signal:
         return []
 
-    date_text = _first_non_empty(departure, wagon_loaded_date)
+    date_text = _first_non_empty(departure, wagon_loaded_date, last_reported_date)
     location = _first_non_empty(last_reported_station, concor_location_code)
     milestone: MilestoneType = "birgunj_arrival" if _is_arrived(location) else "inland_movement"
     return [
@@ -580,12 +595,20 @@ def resolve_shipment_state(
             why.append("A live rail source directly confirmed Birgunj arrival for this shipment cycle.")
     elif accepted_inland is not None:
         movement_category = "On Rail"
-        latest_location = accepted_inland.location
+        latest_location = _first_non_empty(
+            accepted_inland.location,
+            _clean_text((ldb_data or {}).get("latest_location", "")),
+            context.stored_latest_location,
+            "Rail movement in progress",
+        )
         latest_time = accepted_inland.date_text
         port_arrival_date = accepted_port.date_text if accepted_port else ""
         birgunj_arrival_date = ""
         rail_status = "On Rail"
-        why.append("Current same-cycle inland movement exists, but Birgunj arrival is not yet accepted.")
+        if accepted_inland.location:
+            why.append("Current same-cycle inland movement exists, but Birgunj arrival is not yet accepted.")
+        else:
+            why.append("Current same-cycle inland movement exists. Live location fell back to the strongest readable station text.")
     elif accepted_port is not None:
         movement_category = "At Port"
         latest_location = accepted_port.location
