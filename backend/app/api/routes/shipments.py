@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -18,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import boto3
 import requests
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from jose import JWTError, jwt
@@ -47,6 +49,7 @@ from app.services.shipment_state import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 RUNTIME_DIR = Path(settings.runtime_dir).expanduser()
@@ -188,7 +191,8 @@ def _load_state() -> dict[str, Any]:
         return {"shipments": [], "shipment_id_counter": 1}
     try:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Unable to read shipment state from %s: %s", STATE_FILE, exc)
         return {"shipments": [], "shipment_id_counter": 1}
     data.setdefault("shipments", [])
     data.setdefault("shipment_id_counter", 1)
@@ -213,7 +217,8 @@ def _load_refresh_jobs() -> dict[str, dict[str, Any]]:
         return {}
     try:
         payload = json.loads(REFRESH_JOBS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Unable to read refresh jobs from %s: %s", REFRESH_JOBS_FILE, exc)
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -227,7 +232,12 @@ def _load_background_refresh_lease() -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(BACKGROUND_REFRESH_LEASE_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Unable to read background refresh lease from %s: %s",
+            BACKGROUND_REFRESH_LEASE_FILE,
+            exc,
+        )
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -460,7 +470,7 @@ def _apply_import_row_overrides(
     for override in row_overrides:
         try:
             row_number = int(override.get("source_row_number") or 0)
-        except Exception:
+        except (TypeError, ValueError):
             row_number = 0
         if row_number <= 0:
             continue
@@ -962,7 +972,7 @@ def _extract_json_object_by_key(json_str: str, key_name: str) -> dict[str, Any] 
                 brace_count -= 1
                 if brace_count == 0:
                     return json.loads(json_str[brace_start : index + 1])
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
     return None
 
@@ -982,7 +992,7 @@ def _format_to_dd_mm_yyyy(date_str: str) -> str:
     for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
         try:
             return datetime.strptime(date_str, fmt).strftime("%d-%m-%Y")
-        except Exception:
+        except ValueError:
             continue
     return date_str
 
@@ -1043,7 +1053,7 @@ def _format_ldb_date(iso_text: str) -> str:
         if "T" in iso_text:
             iso_text = iso_text.split("T")[0]
         return datetime.fromisoformat(iso_text).strftime("%d-%m-%Y")
-    except Exception:
+    except ValueError:
         return _format_to_dd_mm_yyyy(iso_text)
 
 
@@ -1054,7 +1064,7 @@ def _parse_date(value: str) -> datetime | None:
     for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
         try:
             return datetime.strptime(text_value, fmt)
-        except Exception:
+        except ValueError:
             continue
     return None
 
@@ -1065,7 +1075,7 @@ def _parse_ldb_timestamp(value: str) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(text_value.replace("Z", "+00:00"))
-    except Exception:
+    except ValueError:
         return None
 
 
@@ -1449,7 +1459,8 @@ def _get_cached_data(container_number: str) -> dict[str, Any] | None:
             cached_data = cached.get("data")
             if isinstance(cached_data, dict) and {"ldb", "concor", "pristine"}.issubset(cached_data.keys()):
                 return cached_data
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Unable to read tracking cache for %s: %s", container_number, exc)
         return None
     return None
 
@@ -1459,7 +1470,8 @@ def _save_to_cache(container_number: str, data: dict[str, Any]) -> None:
         cache = json.loads(CACHE_FILE.read_text(encoding="utf-8")) if CACHE_FILE.exists() else {}
         cache[container_number] = {"data": data, "cached_at": _now_iso_for_cache()}
         CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.warning("Unable to save tracking cache for %s: %s", container_number, exc)
         return
 
 
@@ -1547,20 +1559,17 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
         payload_json = None
         try:
             payload_json = response.json()
-        except Exception:
+        except ValueError:
             payload_json = None
 
         last_event = _extract_json_object_by_key(response.text, "lastEvent")
         track_log = None
         if not last_event:
-            try:
-                data = payload_json
-                if isinstance(data, dict):
-                    last_event = data.get("lastEvent") or data.get("data") or data.get("result")
-                    if isinstance(last_event, list) and last_event:
-                        last_event = last_event[0]
-            except Exception:
-                return None
+            data = payload_json
+            if isinstance(data, dict):
+                last_event = data.get("lastEvent") or data.get("data") or data.get("result")
+                if isinstance(last_event, list) and last_event:
+                    last_event = last_event[0]
         if isinstance(payload_json, dict):
             object_payload = payload_json.get("object") if isinstance(payload_json.get("object"), dict) else payload_json
             candidate_track_log = object_payload.get("trackLog") if isinstance(object_payload, dict) else None
@@ -1580,7 +1589,11 @@ def _fetch_ldb(container_number: str) -> dict[str, Any] | None:
             "rail_status": _classify_ldb_rail_status(location, event),
             "delay_days": _compute_delay_days(latest_date),
         }
-    except Exception:
+    except requests.RequestException as exc:
+        logger.warning("LDB fetch failed for %s: %s", container_number, exc)
+        return None
+    except (TypeError, ValueError) as exc:
+        logger.warning("LDB payload parse failed for %s: %s", container_number, exc)
         return None
 
 
@@ -1637,7 +1650,11 @@ def _fetch_concor(container_number: str) -> dict[str, Any] | None:
             "concor_location_code": concor_location_code,
             "wagon_loaded_date": wagon_loaded_date,
         }
-    except Exception:
+    except requests.RequestException as exc:
+        logger.warning("CONCOR fetch failed for %s: %s", container_number, exc)
+        return None
+    except (TypeError, ValueError) as exc:
+        logger.warning("CONCOR payload parse failed for %s: %s", container_number, exc)
         return None
 
 
@@ -1716,7 +1733,8 @@ def _fetch_pristine_arrival(container_number: str) -> dict[str, Any] | None:
             ),
             "location": "ICD BIRGANJ, Samastipur",
         }
-    except Exception:
+    except requests.RequestException as exc:
+        logger.warning("Pristine fetch failed for %s: %s", container_number, exc)
         return None
 
 
@@ -1789,7 +1807,7 @@ def _is_customer_match(left: str, right: str) -> bool:
 def _aliases_from_json(raw_value: str) -> list[str]:
     try:
         parsed = json.loads(raw_value or "[]")
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         return []
     if not isinstance(parsed, list):
         return []
@@ -1882,7 +1900,8 @@ def _load_documents_index() -> dict[str, dict[str, Any]]:
         if _documents_index_cache is not None and _documents_index_mtime == current_mtime:
             return _documents_index_cache
         data = json.loads(BL_DOCUMENTS_INDEX_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning("Unable to read BL documents index from %s: %s", BL_DOCUMENTS_INDEX_FILE, exc)
         return {}
     normalized = data if isinstance(data, dict) else {}
     _documents_index_cache = normalized
@@ -1896,7 +1915,8 @@ def _save_documents_index(data: dict[str, dict[str, Any]]) -> None:
     _documents_index_cache = data
     try:
         _documents_index_mtime = BL_DOCUMENTS_INDEX_FILE.stat().st_mtime
-    except Exception:
+    except OSError as exc:
+        logger.warning("Unable to stat BL documents index %s: %s", BL_DOCUMENTS_INDEX_FILE, exc)
         _documents_index_mtime = None
 
 
@@ -1957,8 +1977,8 @@ def _delete_document_object(metadata: dict[str, Any] | None) -> None:
         if client and object_key:
             try:
                 client.delete_object(Bucket=bucket_name, Key=object_key)
-            except Exception:
-                pass
+            except (BotoCoreError, ClientError) as exc:
+                logger.warning("Unable to delete R2 document object %s: %s", object_key, exc)
         return
 
     target_path = Path(metadata.get("path", ""))
@@ -1991,7 +2011,7 @@ def _log_audit_event(
 def _serialize_audit_log(entry: AuditLog) -> dict[str, Any]:
     try:
         details = json.loads(entry.details_json or "{}")
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         details = {}
     if not isinstance(details, dict):
         details = {"value": details}
@@ -2103,7 +2123,12 @@ def _load_location_distance_cache() -> dict[str, dict[str, Any]]:
         return {}
     try:
         data = json.loads(LOCATION_DISTANCE_CACHE_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Unable to read location distance cache from %s: %s",
+            LOCATION_DISTANCE_CACHE_FILE,
+            exc,
+        )
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -2173,7 +2198,11 @@ def _geocode_location(location_name: str) -> dict[str, Any] | None:
                     "lon": float(first.get("lon")),
                     "display_name": _clean_text(first.get("display_name")),
                 }
-        except Exception:
+        except requests.RequestException as exc:
+            logger.warning("Location geocode request failed for %s: %s", location_name, exc)
+            continue
+        except (TypeError, ValueError) as exc:
+            logger.warning("Location geocode parse failed for %s: %s", location_name, exc)
             continue
         finally:
             if index < len(queries) - 1:
@@ -2199,7 +2228,11 @@ def _route_distance_to_birgunj_km(lat: float, lon: float) -> float | None:
         if distance_meters is None:
             return None
         return round(float(distance_meters) / 1000, 2)
-    except Exception:
+    except requests.RequestException as exc:
+        logger.warning("Route distance lookup failed for (%s, %s): %s", lat, lon, exc)
+        return None
+    except (TypeError, ValueError) as exc:
+        logger.warning("Route distance parse failed for (%s, %s): %s", lat, lon, exc)
         return None
 
 
@@ -2469,7 +2502,7 @@ def _ensure_shipment_columns() -> None:
 def _json_dumps(value: Any) -> str:
     try:
         return json.dumps(value or {}, ensure_ascii=False)
-    except Exception:
+    except (TypeError, ValueError):
         return "{}"
 
 
@@ -2480,7 +2513,7 @@ def _safe_json_loads(raw_value: Any, fallback: Any) -> Any:
         return raw_value
     try:
         return json.loads(raw_value)
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         return fallback
 
 
@@ -2611,7 +2644,7 @@ def _load_recent_mapping_for_sheet(
         if profile:
             try:
                 return json.loads(profile.mapping_json or "{}")
-            except Exception:
+            except (TypeError, json.JSONDecodeError):
                 return {}
 
     recent_profile = db.execute(
@@ -2627,7 +2660,7 @@ def _load_recent_mapping_for_sheet(
         return {}
     try:
         return json.loads(recent_profile.mapping_json or "{}")
-    except Exception:
+    except (TypeError, json.JSONDecodeError):
         return {}
 
 
@@ -2699,7 +2732,7 @@ def _download_google_sheet_workbook(source_url: str) -> tuple[bytes, dict[str, s
             allow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0", "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*"},
         )
-    except Exception as exc:
+    except requests.RequestException as exc:
         raise HTTPException(status_code=400, detail=f"Unable to fetch Google Sheet: {exc}") from exc
 
     if response.status_code != 200 or not response.content:
@@ -2737,7 +2770,7 @@ def _fetch_google_sheet_title(source_url: str) -> str:
             allow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml"},
         )
-    except Exception:
+    except requests.RequestException:
         return ""
     if response.status_code != 200 or not response.text:
         return ""
@@ -3110,6 +3143,10 @@ def _refresh_active_shipments_for_user(
             try:
                 resolved_payloads[container_number] = future.result()
             except Exception:
+                logger.exception(
+                    "Tracking payload build failed during bulk refresh for container %s",
+                    container_number,
+                )
                 resolved_payloads[container_number] = {
                     "ldb": {},
                     "concor": {},
@@ -3215,6 +3252,10 @@ def _run_background_refresh_cycle() -> None:
             try:
                 result = _refresh_active_shipments_for_user(db, user_id, audit_action=None)
             except Exception:
+                logger.exception(
+                    "Background refresh failed for user %s during scheduled cycle",
+                    user_id,
+                )
                 db.rollback()
                 continue
             if result["refreshed_count"] > 0:
@@ -3246,6 +3287,7 @@ def _run_refresh_all_job(task_id: str, db_url: str, user_id: int) -> None:
             audit_action="shipment_all_refreshed",
         )
     except Exception as exc:
+        logger.exception("Refresh-all job %s failed for user %s", task_id, user_id)
         db.rollback()
         _set_refresh_job(
             task_id,
@@ -4754,6 +4796,11 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
             bl_col,
         )
     except Exception:
+        logger.exception(
+            "Import provenance save failed for user %s and source %s",
+            current_user.id,
+            source_type,
+        )
         db.rollback()
         source = None
         mapping_profile = None
@@ -4870,8 +4917,8 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
     db.commit()
     try:
         file_path.unlink()
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.warning("Unable to delete temporary import file %s: %s", file_path, exc)
     return {
         "imported_count": imported_count,
         "duplicate_count": duplicate_count,
@@ -4995,6 +5042,10 @@ def refresh_group(payload: dict, db: Session = Depends(get_db), current_user: Us
             try:
                 payloads[container_number] = future.result()
             except Exception:
+                logger.exception(
+                    "Tracking payload build failed during group refresh for container %s",
+                    container_number,
+                )
                 payloads[container_number] = {
                     "data": {},
                     "status": "error",
@@ -5199,7 +5250,7 @@ def get_bl_document_file(
         try:
             response = client.get_object(Bucket=bucket_name, Key=object_key)
             content = response["Body"].read()
-        except Exception as exc:
+        except (BotoCoreError, ClientError, KeyError, OSError) as exc:
             raise HTTPException(status_code=404, detail="Stored document file not found") from exc
         filename = metadata.get("original_name") or Path(object_key).name
         return StreamingResponse(
@@ -5242,8 +5293,8 @@ def cache_stats():
         try:
             cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
             return {"cache_size": len(cache), "cached_containers": list(cache.keys()), "cache_duration_minutes": CACHE_DURATION_MINUTES, "cache_file": str(CACHE_FILE)}
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Unable to read cache stats from %s: %s", CACHE_FILE, exc)
     return {"cache_size": 0, "cached_containers": [], "cache_duration_minutes": CACHE_DURATION_MINUTES}
 
 
@@ -5261,7 +5312,7 @@ def debug_concor_raw(container_number: str):
     try:
         response = requests.post(CONCOR_API_URL, json={"containerNo": [container_number]}, timeout=20, headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0", "Origin": "https://www.concorindia.co.in", "Referer": "https://www.concorindia.co.in/track-n-trace?lang=en"})
         return {"container": container_number, "status_code": response.status_code, "response_text": response.text[:2000] if response.text else "Empty", "response_json": response.json() if response.status_code == 200 else None}
-    except Exception as error:
+    except (requests.RequestException, ValueError) as error:
         return {"container": container_number, "error": str(error)}
 
 
