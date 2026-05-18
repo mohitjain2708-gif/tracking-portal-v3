@@ -3055,6 +3055,9 @@ function App() {
                       <div className="owner-user-copy">
                         <strong>{user.email}</strong>
                         <span>
+                          Joined {user.created_at ? formatDateTimeLabel(user.created_at) : "date not recorded"}
+                        </span>
+                        <span>
                           {user.shipment_count || 0} shipments, {user.source_batch_count || 0} imports
                           {user.password_reset_required ? " • password needs to be changed" : ""}
                         </span>
