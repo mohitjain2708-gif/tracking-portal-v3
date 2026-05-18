@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import os
+import sys
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 import app.api.routes.shipments as shipments_module
 from app.api.routes.shipments import (

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.shipment_state import resolve_shipment_state
 

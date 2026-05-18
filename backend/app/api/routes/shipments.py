@@ -3098,19 +3098,19 @@ def _refresh_active_shipments_for_user(
             "refreshed_container_count": 0,
         }
 
-    source_payloads: dict[str, dict[str, Any]] = {}
+    resolved_payloads: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=max(1, min(TRACKING_POOL_WORKERS, total_containers))) as executor:
         futures = {
-            executor.submit(_fetch_tracking_sources, container_number, False): container_number
+            executor.submit(lambda value: _build_tracking_payload(value, use_cache=False), container_number): container_number
             for container_number in unique_containers
         }
         completed = 0
         for future in as_completed(futures):
             container_number = futures[future]
             try:
-                source_payloads[container_number] = future.result()
+                resolved_payloads[container_number] = future.result()
             except Exception:
-                source_payloads[container_number] = {
+                resolved_payloads[container_number] = {
                     "ldb": {},
                     "concor": {},
                     "pristine": {},
@@ -3130,13 +3130,8 @@ def _refresh_active_shipments_for_user(
 
     for shipment in shipments:
         container_number = _clean_container(shipment.container_number)
-        if container_number in source_payloads:
-            resolved_payload = _build_tracking_payload_from_sources(
-                container_number,
-                shipment,
-                source_payloads[container_number],
-            )
-            _apply_tracking_payload(shipment, resolved_payload)
+        if container_number in resolved_payloads:
+            _apply_tracking_payload(shipment, resolved_payloads[container_number])
 
     if audit_action:
         _log_audit_event(

@@ -1266,7 +1266,9 @@ function App() {
           setCurrentUser(null);
           setIsAuthenticated(false);
         }
-        setFeedback({ tone: "error", text: error.message || "Failed to load shipments" });
+        if (!silent) {
+          setFeedback({ tone: "error", text: error.message || "Failed to load shipments" });
+        }
       } finally {
         dashboardLoadPromiseRef.current = null;
         setLoading(false);
@@ -1333,6 +1335,11 @@ function App() {
 
   useEffect(() => {
     const query = cleanText(manualForm.customer_name);
+
+    if (!query) {
+      setCustomerSuggestions([]);
+      return undefined;
+    }
 
     const timer = window.setTimeout(async () => {
       try {
@@ -2761,7 +2768,7 @@ function App() {
         setAuthSubmitting(false);
       }
     },
-    [authForm, authMode, loadDashboard]
+    [authForm, authMode, refreshDashboardLight]
   );
 
   const handleLogout = useCallback(() => {

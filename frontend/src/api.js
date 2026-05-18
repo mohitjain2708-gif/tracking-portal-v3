@@ -9,6 +9,7 @@ const DEMO_SESSION_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SESSION !== "false
 const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
 let portalSessionPromise = null;
+let volatileToken = "";
 
 function normalizeErrorDetail(detail, fallback = "Request failed") {
   if (!detail) {
@@ -40,14 +41,27 @@ function normalizeErrorDetail(detail, fallback = "Request failed") {
 }
 
 function getToken() {
-  return localStorage.getItem("tp_token");
+  try {
+    return localStorage.getItem("tp_token") || volatileToken;
+  } catch {
+    return volatileToken;
+  }
 }
 
 function setToken(token) {
+  volatileToken = token || "";
   if (token) {
-    localStorage.setItem("tp_token", token);
+    try {
+      localStorage.setItem("tp_token", token);
+    } catch {
+      // Fall back to memory-only auth when storage is unavailable.
+    }
   } else {
-    localStorage.removeItem("tp_token");
+    try {
+      localStorage.removeItem("tp_token");
+    } catch {
+      // ignore storage cleanup issues
+    }
   }
 }
 

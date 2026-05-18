@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, select
@@ -34,18 +35,36 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _log_auth_audit_event(db: Session, user: User, action: str, details: dict | None = None) -> None:
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            action=action,
-            shipment_status="",
-            details_json=json.dumps(details or {}),
+    try:
+        db.add(
+            AuditLog(
+                user_id=user.id,
+                action=action,
+                shipment_status="",
+                details_json=json.dumps(details or {}, default=str),
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to write auth audit event for user %s", getattr(user, "id", None))
+
+
+def _normalize_email(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _safe_json_loads(raw_value: str, fallback: dict | list | None = None):
+    if not raw_value:
+        return fallback if fallback is not None else {}
+    try:
+        return json.loads(raw_value)
+    except json.JSONDecodeError:
+        return fallback if fallback is not None else {}
 
 
 def _group_owner_shipments(shipments: list[Shipment]) -> list[dict]:
@@ -146,11 +165,12 @@ def _remove_user_data(db: Session, user: User) -> dict[str, int]:
 @router.post("/register", response_model=TokenResponse)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     ensure_user_schema(db)
-    existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
+    normalized_email = _normalize_email(payload.email)
+    existing = db.execute(select(User).where(User.email == normalized_email)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = User(email=payload.email, password_hash=hash_password(payload.password), is_admin=False, password_reset_required=False)
+    user = User(email=normalized_email, password_hash=hash_password(payload.password), is_admin=False, password_reset_required=False)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -161,8 +181,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     ensure_owner_account(db)
-    user = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
-    if settings.allow_demo_account_bootstrap and payload.email == settings.demo_email:
+    normalized_email = _normalize_email(payload.email)
+    user = db.execute(select(User).where(User.email == normalized_email)).scalar_one_or_none()
+    if settings.allow_demo_account_bootstrap and normalized_email == _normalize_email(settings.demo_email):
         if not user:
             user = User(email=settings.demo_email, password_hash=hash_password(settings.demo_password))
             db.add(user)
@@ -240,6 +261,7 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
             select(ShipmentBatch.user_id, func.count(ShipmentBatch.id)).group_by(ShipmentBatch.user_id)
         ).all()
     }
+    user_email_by_id = {user.id: user.email for user in users}
     last_activity_by_user = {
         user_id: created_at
         for user_id, created_at in db.execute(
@@ -305,12 +327,12 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
         "recent_activity": [
             {
                 "id": entry.id,
-                "email": next((user.email for user in users if user.id == entry.user_id), ""),
+                "email": user_email_by_id.get(entry.user_id, ""),
                 "action": entry.action,
                 "shipment_status": entry.shipment_status,
                 "bl_number": entry.bl_number,
                 "container_number": entry.container_number,
-                "details": json.loads(entry.details_json or "{}"),
+                "details": _safe_json_loads(entry.details_json, {}),
                 "created_at": entry.created_at.isoformat() if entry.created_at else "",
             }
             for entry in recent_audit_entries
