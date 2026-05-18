@@ -73,7 +73,14 @@ const MOVEMENT_PRIORITY = {
 };
 
 function cleanText(value) {
-  return String(value || "").trim();
+  return String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseContainerInput(value) {
@@ -729,88 +736,6 @@ function ActionButton({ children, tone = "default", compact = false, ...props })
     <button className={`button button-${tone}${compact ? " button-compact" : ""}`} {...props}>
       {children}
     </button>
-  );
-}
-
-function LogisticsHeroArtwork() {
-  return (
-    <div className="hero-artwork" aria-hidden="true">
-      <svg viewBox="0 0 520 340" role="presentation">
-        <defs>
-          <linearGradient id="heroSky" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#f8fbff" />
-            <stop offset="55%" stopColor="#edf4ff" />
-            <stop offset="100%" stopColor="#d9e7fb" />
-          </linearGradient>
-          <linearGradient id="heroWater" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#bed5f7" />
-            <stop offset="100%" stopColor="#dce9fb" />
-          </linearGradient>
-          <linearGradient id="heroRail" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#2d4d76" />
-            <stop offset="100%" stopColor="#496a94" />
-          </linearGradient>
-        </defs>
-
-        <rect x="0" y="0" width="520" height="340" rx="34" fill="url(#heroSky)" />
-        <ellipse cx="386" cy="88" rx="122" ry="74" fill="rgba(255,255,255,0.65)" />
-        <ellipse cx="430" cy="112" rx="68" ry="36" fill="rgba(255,255,255,0.7)" />
-
-        <rect x="38" y="224" width="444" height="54" rx="26" fill="url(#heroWater)" />
-        <path
-          d="M74 198c40-20 92-26 152-16 52 8 95 26 149 24 38-1 76-13 104-28"
-          fill="none"
-          stroke="#8aa8d1"
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity="0.42"
-        />
-        <path
-          d="M78 206c42-21 95-28 156-18 50 8 96 28 149 26 34-1 70-11 96-24"
-          fill="none"
-          stroke="#ffffff"
-          strokeWidth="2"
-          strokeDasharray="2 12"
-          strokeLinecap="round"
-          opacity="0.88"
-        />
-
-        <circle cx="86" cy="203" r="8" fill="#173a63" />
-        <circle cx="474" cy="180" r="8" fill="#173a63" />
-        <circle cx="474" cy="180" r="15" fill="none" stroke="#173a63" strokeOpacity="0.18" strokeWidth="8" />
-
-        <g transform="translate(58 102)">
-          <path d="M0 76h124l20 24H20Z" fill="#173a63" />
-          <path d="M104 76V40l18 8v28Z" fill="#2f5b89" />
-          <rect x="22" y="46" width="26" height="20" rx="4" fill="#fff" fillOpacity="0.86" />
-          <circle cx="30" cy="104" r="9" fill="#102c4a" />
-          <circle cx="108" cy="104" r="9" fill="#102c4a" />
-          <rect x="138" y="86" width="54" height="8" rx="4" fill="#8aa8d1" />
-        </g>
-
-        <g transform="translate(228 150)">
-          <rect x="0" y="80" width="210" height="12" rx="6" fill="url(#heroRail)" />
-          <rect x="20" y="22" width="46" height="46" rx="12" fill="#26496f" />
-          <rect x="72" y="22" width="46" height="46" rx="12" fill="#86a9d9" />
-          <rect x="124" y="22" width="46" height="46" rx="12" fill="#d78552" />
-          <rect x="26" y="68" width="34" height="14" rx="7" fill="#ebf2fc" />
-          <rect x="78" y="68" width="34" height="14" rx="7" fill="#ebf2fc" />
-          <rect x="130" y="68" width="34" height="14" rx="7" fill="#ebf2fc" />
-          <circle cx="32" cy="92" r="10" fill="#173a63" />
-          <circle cx="54" cy="92" r="10" fill="#173a63" />
-          <circle cx="84" cy="92" r="10" fill="#173a63" />
-          <circle cx="106" cy="92" r="10" fill="#173a63" />
-          <circle cx="136" cy="92" r="10" fill="#173a63" />
-          <circle cx="158" cy="92" r="10" fill="#173a63" />
-        </g>
-
-        <g transform="translate(410 98)">
-          <path d="M22 0C12 12 6 22 6 34c0 16 11 28 28 28s28-12 28-28c0-12-6-22-16-34L34 12Z" fill="#173a63" />
-          <circle cx="34" cy="34" r="10" fill="#eef5ff" />
-        </g>
-      </svg>
-    </div>
   );
 }
 
@@ -3084,9 +3009,6 @@ function App() {
         <div className="hero-main">
           <div className="hero-copy-wrap">
             <h1>Logistics Operations Dashboard</h1>
-            <p className="hero-copy">
-              Clear port-to-Birgunj tracking, quieter document control, and live shipment refresh in one place.
-            </p>
             <div className="hero-actions compact-actions">
               <ActionButton type="button" tone="secondary" onClick={() => loadDashboard({ silent: true })}>
                 {refreshing ? "Refreshing..." : "Refresh Dashboard"}
@@ -3106,9 +3028,6 @@ function App() {
                 />
               </label>
             </div>
-          </div>
-          <div className="hero-visual">
-            <LogisticsHeroArtwork />
           </div>
         </div>
       </section>
@@ -3838,7 +3757,7 @@ function App() {
                           ) : null}
                         </div>
                       </td>
-                      <td>{row.latest_location || "Not available"}</td>
+                      <td>{cleanText(row.latest_location) || "Not available"}</td>
                       <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
@@ -3940,7 +3859,7 @@ function App() {
                     </div>
                     <div className="mobile-fact">
                       <span>Current Location</span>
-                      <strong>{row.latest_location || "Not available"}</strong>
+                      <strong>{cleanText(row.latest_location) || "Not available"}</strong>
                     </div>
                     <div className="mobile-fact">
                       <span>Movement Since</span>
@@ -4031,7 +3950,7 @@ function App() {
                 </div>
                 <div className="action-fact-card action-fact-card-wide">
                   <span>Current Location</span>
-                  <strong>{actionRow.latest_location || "Not available"}</strong>
+                  <strong>{cleanText(actionRow.latest_location) || "Not available"}</strong>
                 </div>
                 {["completed", "archived"].includes(actionStatus) ? (
                   <div className="action-fact-card">
@@ -4741,7 +4660,7 @@ function App() {
             <div className="audit-overview-grid">
               <article className="audit-overview-card">
                 <span>Latest Location</span>
-                <strong>{auditRow.latest_location || "Awaiting live location"}</strong>
+                <strong>{cleanText(auditRow.latest_location) || "Awaiting live location"}</strong>
               </article>
               <article className="audit-overview-card">
                 <span>Movement Since</span>

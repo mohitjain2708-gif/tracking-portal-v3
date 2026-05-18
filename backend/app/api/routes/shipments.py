@@ -303,7 +303,9 @@ def _normalize_refresh_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _clean_text(value: Any) -> str:
-    return str(value or "").strip()
+    text_value = unescape(str(value or ""))
+    text_value = re.sub(r"<[^>]*>", " ", text_value)
+    return re.sub(r"\s+", " ", text_value).strip()
 
 
 def _sheet_cell_text(value: Any) -> str:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from html import unescape
+import re
 from typing import Any, Literal
 
 MovementState = Literal["Hi Seas", "At Port", "On Rail", "Arrived Birgunj"]
@@ -40,7 +42,9 @@ SOURCE_CONFIDENCE: dict[tuple[MilestoneType, str], int] = {
 def _clean_text(value: Any) -> str:
     if value is None:
         return ""
-    return str(value).strip()
+    text_value = unescape(str(value))
+    text_value = re.sub(r"<[^>]*>", " ", text_value)
+    return re.sub(r"\s+", " ", text_value).strip()
 
 
 def _normalize_existing_movement(value: str) -> str:
