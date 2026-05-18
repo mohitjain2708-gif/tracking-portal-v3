@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -22,5 +24,30 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @staticmethod
+    def _is_local_origin(origin: str) -> bool:
+        host = (urlparse(origin).hostname or "").strip().lower()
+        return host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+    @property
+    def is_local_env(self) -> bool:
+        return self.app_env.lower() in {"development", "local"}
+
+    def validate_runtime_settings(self) -> None:
+        if not self.is_local_env:
+            origins = self.cors_origins_list
+            if self.secret_key == "change-me":
+                raise RuntimeError("SECRET_KEY must be changed outside local development.")
+            if not origins:
+                raise RuntimeError("CORS_ORIGINS must be set outside local development.")
+            if "*" in origins:
+                raise RuntimeError("Wildcard CORS is not allowed outside local development.")
+            if all(self._is_local_origin(origin) for origin in origins):
+                raise RuntimeError("CORS_ORIGINS must include at least one non-local origin outside local development.")
+            if self.allow_demo_portal_fallback:
+                raise RuntimeError("ALLOW_DEMO_PORTAL_FALLBACK must be false outside local development.")
+            if self.allow_demo_account_bootstrap:
+                raise RuntimeError("ALLOW_DEMO_ACCOUNT_BOOTSTRAP must be false outside local development.")
 
 settings = Settings()

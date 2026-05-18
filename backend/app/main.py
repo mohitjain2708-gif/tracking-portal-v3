@@ -1,33 +1,20 @@
-import importlib.util
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, uploads, templates, jobs
+from app.api.routes import auth, uploads, templates, jobs, shipments
 from app.core.bootstrap import seed_test_users
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
-
-BASE_DIR = Path(__file__).resolve().parent
-ROUTES_DIR = BASE_DIR / "api" / "routes"
-SHIPMENTS_FILE = ROUTES_DIR / "shipments.py"
-
-if not SHIPMENTS_FILE.exists():
-    raise RuntimeError(f"Shipments module file not found: {SHIPMENTS_FILE}")
-
-spec = importlib.util.spec_from_file_location("shipments_dynamic", str(SHIPMENTS_FILE))
-shipments = importlib.util.module_from_spec(spec)
-assert spec and spec.loader
-spec.loader.exec_module(shipments)
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.app_name)
 
+cors_origins = settings.cors_origins_list or ["http://localhost:5173", "http://127.0.0.1:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if "*" in cors_origins else cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -42,6 +29,7 @@ app.include_router(shipments.router, prefix="/api/shipments", tags=["shipments"]
 
 @app.on_event("startup")
 def startup_bootstrap():
+    settings.validate_runtime_settings()
     db = SessionLocal()
     try:
         seed_test_users(db)

@@ -33,3 +33,6 @@ setup_step_08_with_report.bat
 backend/restart_backend_live.ps1
 backend/restart_backend_live2.ps1
 backend/str
+
+/.vercel/
+/frontend/.vercel/
