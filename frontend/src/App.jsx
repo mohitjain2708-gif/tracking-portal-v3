@@ -3058,8 +3058,16 @@ function App() {
                           Joined {user.created_at ? formatDateTimeLabel(user.created_at) : "date not recorded"}
                         </span>
                         <span>
+                          Last active{" "}
+                          {user.last_activity_at ? formatDateTimeLabel(user.last_activity_at) : "no activity yet"}
+                        </span>
+                        <span>
+                          Last sign in{" "}
+                          {user.last_login_at ? formatDateTimeLabel(user.last_login_at) : "not recorded yet"}
+                        </span>
+                        <span>
                           {user.shipment_count || 0} shipments, {user.source_batch_count || 0} imports
-                          {user.password_reset_required ? " • password needs to be changed" : ""}
+                          {user.password_reset_required ? " | password needs to be changed" : ""}
                         </span>
                       </div>
                       {!user.is_admin ? (

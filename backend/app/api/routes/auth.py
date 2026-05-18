@@ -36,6 +36,18 @@ from app.schemas.auth import (
 router = APIRouter()
 
 
+def _log_auth_audit_event(db: Session, user: User, action: str, details: dict | None = None) -> None:
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action=action,
+            shipment_status="",
+            details_json=json.dumps(details or {}),
+        )
+    )
+    db.commit()
+
+
 def _group_owner_shipments(shipments: list[Shipment]) -> list[dict]:
     grouped: dict[str, list[dict]] = {}
     for shipment in shipments:
@@ -142,6 +154,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    _log_auth_audit_event(db, user, "portal_signup", {"email": user.email})
 
     return TokenResponse(access_token=create_access_token(str(user.id)))
 
@@ -162,6 +175,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    _log_auth_audit_event(db, user, "portal_login", {"email": user.email})
     return TokenResponse(access_token=create_access_token(str(user.id)))
 
 @router.get("/me", response_model=UserResponse)
@@ -226,6 +240,20 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
             select(ShipmentBatch.user_id, func.count(ShipmentBatch.id)).group_by(ShipmentBatch.user_id)
         ).all()
     }
+    last_activity_by_user = {
+        user_id: created_at
+        for user_id, created_at in db.execute(
+            select(AuditLog.user_id, func.max(AuditLog.created_at)).group_by(AuditLog.user_id)
+        ).all()
+    }
+    last_login_by_user = {
+        user_id: created_at
+        for user_id, created_at in db.execute(
+            select(AuditLog.user_id, func.max(AuditLog.created_at))
+            .where(AuditLog.action == "portal_login")
+            .group_by(AuditLog.user_id)
+        ).all()
+    }
 
     recent_audit_entries = list(
         db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(12)).scalars()
@@ -258,6 +286,16 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
                 "is_admin": bool(user.is_admin),
                 "password_reset_required": bool(user.password_reset_required),
                 "created_at": user.created_at.isoformat() if user.created_at else "",
+                "last_activity_at": (
+                    last_activity_by_user[user.id].isoformat()
+                    if last_activity_by_user.get(user.id)
+                    else ""
+                ),
+                "last_login_at": (
+                    last_login_by_user[user.id].isoformat()
+                    if last_login_by_user.get(user.id)
+                    else ""
+                ),
                 "shipment_count": int(shipment_counts.get(user.id, 0)),
                 "live_shipment_count": int(live_counts.get(user.id, 0)),
                 "source_batch_count": int(batch_counts.get(user.id, 0)),
