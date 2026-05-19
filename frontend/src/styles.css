@@ -4,26 +4,27 @@
 
 :root {
   color-scheme: light;
-  --bg: #f5f7fb;
-  --bg-accent: #eef2f8;
-  --surface: rgba(255, 255, 255, 0.72);
-  --surface-strong: #ffffff;
-  --border: rgba(194, 204, 216, 0.58);
-  --border-strong: rgba(168, 182, 198, 0.82);
-  --text: #132033;
-  --muted: #6b7a90;
-  --primary: #133a63;
-  --primary-strong: #0d2d4d;
-  --primary-soft: #eff5fb;
+  --bg: #f6f2eb;
+  --bg-accent: #ece6dc;
+  --surface: rgba(255, 252, 247, 0.84);
+  --surface-strong: #fffdfa;
+  --border: rgba(204, 194, 180, 0.52);
+  --border-strong: rgba(184, 172, 156, 0.82);
+  --text: #1b2633;
+  --muted: #718091;
+  --primary: #29506b;
+  --primary-strong: #1d3d53;
+  --primary-soft: #edf3f7;
   --danger: #b42318;
   --danger-soft: #fff1ef;
   --success: #067647;
   --success-soft: #ecfdf3;
   --warning: #b54708;
   --warning-soft: #fff7ed;
-  --shadow: 0 18px 48px rgba(15, 23, 42, 0.09);
-  --radius-xl: 22px;
-  --radius-lg: 16px;
+  --shadow: 0 18px 48px rgba(16, 25, 37, 0.08);
+  --shadow-soft: 0 10px 28px rgba(16, 25, 37, 0.05);
+  --radius-xl: 28px;
+  --radius-lg: 18px;
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-duration-fast: 0.22s;
   --motion-duration-base: 0.34s;
@@ -39,9 +40,9 @@ body,
 
 body {
   background:
-    radial-gradient(circle at top right, rgba(19, 58, 99, 0.12), transparent 22%),
-    radial-gradient(circle at left top, rgba(69, 129, 184, 0.12), transparent 18%),
-    linear-gradient(180deg, #f7f9fc, var(--bg));
+    radial-gradient(circle at top right, rgba(41, 80, 107, 0.08), transparent 22%),
+    radial-gradient(circle at left top, rgba(197, 179, 149, 0.14), transparent 18%),
+    linear-gradient(180deg, #fcfaf6, var(--bg));
   color: var(--text);
   font-family: "SF Pro Display", "Segoe UI Variable", "Segoe UI", Arial, sans-serif;
 }
@@ -60,9 +61,10 @@ input,
 select {
   width: 100%;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: #fff;
-  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  min-height: 44px;
+  padding: 10px 14px;
   color: var(--text);
 }
 
@@ -74,9 +76,9 @@ select:focus {
 }
 
 .app-shell {
-  width: min(1600px, calc(100vw - 28px));
+  width: min(1560px, calc(100vw - 36px));
   margin: 0 auto;
-  padding: 18px 0 28px;
+  padding: 22px 0 34px;
 }
 
 .loading-shell {
@@ -96,12 +98,12 @@ select:focus {
 
 .auth-card {
   width: min(460px, 100%);
-  padding: 28px;
+  padding: 34px 32px 30px;
   border: 1px solid var(--border);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.86);
+  border-radius: 30px;
+  background: rgba(255, 251, 245, 0.9);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(24px);
+  backdrop-filter: blur(18px);
 }
 
 .auth-card h1 {
@@ -178,9 +180,9 @@ select:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   box-shadow:
-    0 18px 48px rgba(15, 23, 42, 0.08),
-    0 2px 8px rgba(15, 23, 42, 0.03);
-  backdrop-filter: blur(22px);
+    0 18px 48px rgba(16, 25, 37, 0.08),
+    0 2px 8px rgba(16, 25, 37, 0.03);
+  backdrop-filter: blur(16px);
   isolation: isolate;
 }
 
@@ -190,9 +192,9 @@ select:focus {
   inset: 1px;
   border-radius: calc(var(--radius-xl) - 1px);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0)),
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.26), transparent 44%);
-  opacity: 0.72;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.24), transparent 42%);
+  opacity: 0.62;
   pointer-events: none;
   z-index: 0;
 }
@@ -213,18 +215,18 @@ select:focus {
 .hero-panel {
   position: relative;
   display: grid;
-  gap: 18px;
-  padding: 16px 18px 18px;
-  margin-bottom: 14px;
+  gap: 14px;
+  padding: 14px 18px 16px;
+  margin-bottom: 16px;
   overflow: hidden;
   background:
-    radial-gradient(circle at top right, rgba(191, 214, 240, 0.2), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 251, 255, 0.96));
+    radial-gradient(circle at top right, rgba(207, 219, 232, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(255, 252, 248, 0.99), rgba(249, 245, 239, 0.96));
   color: var(--text);
-  border-color: rgba(108, 142, 184, 0.22);
+  border-color: rgba(184, 172, 156, 0.24);
   box-shadow:
-    0 18px 36px rgba(15, 36, 66, 0.07),
-    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    var(--shadow-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .hero-toolbar {
@@ -240,20 +242,23 @@ select:focus {
 }
 
 .hero-copy-wrap {
-  display: grid;
-  gap: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 18px;
+  flex-wrap: wrap;
   position: relative;
   z-index: 1;
-  max-width: 720px;
+  max-width: none;
 }
 
 .eyebrow {
   margin: 0;
-  color: #8b98aa;
+  color: #928a7f;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .hero-panel h1,
@@ -265,9 +270,9 @@ select:focus {
 }
 
 .hero-panel h1 {
-  font-size: clamp(28px, 3.1vw, 38px);
+  font-size: clamp(26px, 2.4vw, 34px);
   line-height: 1.04;
-  max-width: 12ch;
+  max-width: none;
 }
 
 .hero-copy,
@@ -300,13 +305,13 @@ select:focus {
 .stack-form,
 .import-preview {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .compact-actions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -318,22 +323,23 @@ select:focus {
 .workspace-switcher {
   display: inline-flex;
   align-items: center;
-  padding: 5px;
+  padding: 6px;
   border-radius: 999px;
-  background: rgba(246, 250, 255, 0.94);
-  border: 1px solid rgba(142, 173, 210, 0.26);
+  background: rgba(249, 245, 239, 0.96);
+  border: 1px solid rgba(184, 172, 156, 0.3);
   color: var(--text);
   font-size: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
 }
 
 .workspace-switcher select {
-  min-width: 190px;
+  min-width: 186px;
   border: 0;
   border-radius: 999px;
+  min-height: 38px;
   padding: 8px 36px 8px 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 255, 0.96)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 238, 0.96)),
     #ffffff;
   color: var(--text);
   font-size: 12px;
@@ -341,8 +347,8 @@ select:focus {
   appearance: none;
   -webkit-appearance: none;
   background-image:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 255, 0.96)),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25 7 8.75l3.5-3.5' stroke='%23133a63' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 238, 0.96)),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25 7 8.75l3.5-3.5' stroke='%2329506b' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat, no-repeat;
   background-position: 0 0, right 12px center;
   background-size: auto, 14px 14px;
@@ -362,29 +368,29 @@ select:focus {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  padding: 5px;
+  gap: 8px;
+  padding: 6px;
   border-radius: 999px;
-  background: rgba(246, 250, 255, 0.94);
-  border: 1px solid rgba(142, 173, 210, 0.26);
+  background: rgba(249, 245, 239, 0.96);
+  border: 1px solid rgba(184, 172, 156, 0.3);
   color: var(--text);
   font-size: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
 }
 
 .session-chip > span {
   padding: 0 12px 0 10px;
-  color: #53657c;
+  color: #5f6b77;
   font-weight: 600;
 }
 
 .session-chip button {
-  min-height: 32px;
-  border: 1px solid rgba(142, 173, 210, 0.2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 255, 0.96));
+  min-height: 34px;
+  border: 1px solid rgba(184, 172, 156, 0.26);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 238, 0.96));
   color: var(--primary-strong);
   border-radius: 999px;
-  padding: 0 14px;
+  padding: 0 15px;
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
@@ -402,21 +408,21 @@ select:focus {
   min-height: 38px;
   padding: 0 16px;
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 650;
   letter-spacing: 0.01em;
 }
 
 .hero-panel .button-secondary {
   background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(146, 176, 216, 0.26);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  border-color: rgba(184, 172, 156, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .hero-panel .button-primary {
-  background: linear-gradient(180deg, #234c78, #173a63);
+  background: linear-gradient(180deg, #315d7c, #234a65);
   box-shadow:
-    0 14px 28px rgba(23, 58, 99, 0.18),
+    0 14px 28px rgba(35, 74, 101, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
@@ -744,13 +750,13 @@ select:focus {
 .panel-card,
 .metrics-panel,
 .dashboard-panel {
-  padding: 18px;
+  padding: 22px;
 }
 
 .metrics-panel {
-  margin: 14px 0;
+  margin: 16px 0;
   display: grid;
-  gap: 12px;
+  gap: 16px;
   overflow: visible;
   z-index: 8;
 }
@@ -767,7 +773,8 @@ select:focus {
 
 .compact-heading h2,
 .compact-dashboard-header h2 {
-  font-size: 18px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
 }
 
 .compact-heading .panel-copy {
@@ -793,12 +800,12 @@ select:focus {
 }
 
 .button {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 38px;
+  padding: 0 16px;
   border: 1px solid transparent;
-  border-radius: 9px;
-  font-size: 12px;
-  font-weight: 700;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 650;
   white-space: nowrap;
   transform: translateY(0);
   box-shadow: 0 0 0 rgba(15, 23, 42, 0);
@@ -812,18 +819,20 @@ select:focus {
 }
 
 .button-primary {
-  background: var(--primary);
+  background: linear-gradient(180deg, #315d7c, #234a65);
   color: #fff;
 }
 
 .button-secondary {
-  background: #e8eef5;
+  background: #f2ece4;
   color: var(--primary-strong);
+  border-color: rgba(184, 172, 156, 0.3);
 }
 
 .button-ghost {
-  background: #f3f6f9;
+  background: rgba(255, 255, 255, 0.8);
   color: #435468;
+  border-color: rgba(184, 172, 156, 0.22);
 }
 
 .button-danger {
@@ -908,20 +917,20 @@ select:focus {
 
 .dashboard-header-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(165px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(172px, 1fr));
+  gap: 12px;
 }
 
 .dashboard-metric {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 58px;
-  padding: 0 14px;
-  border: 1px solid rgba(19, 58, 99, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
+  gap: 14px;
+  min-height: 68px;
+  padding: 0 18px;
+  border: 1px solid rgba(204, 194, 180, 0.46);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 30px rgba(16, 25, 37, 0.04);
   position: relative;
   overflow: visible;
   content-visibility: auto;
@@ -946,7 +955,7 @@ select:focus {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  background: #eef4fa;
+  background: #f2f5f3;
   color: var(--primary);
   flex: 0 0 auto;
   box-shadow:
@@ -981,14 +990,14 @@ select:focus {
 }
 
 .dashboard-metric-copy strong {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #223247;
 }
 
 .dashboard-metric-copy span {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 
@@ -1077,7 +1086,7 @@ select:focus {
 .filter-bar {
   display: grid;
   gap: 14px;
-  margin: 14px 0 12px;
+  margin: 14px 0 16px;
 }
 
 .bulk-toolbar {
@@ -1130,14 +1139,14 @@ select:focus {
 .movement-identifier {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 56px;
-  padding: 0 13px;
-  border: 1px solid rgba(19, 58, 99, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.94);
+  gap: 12px;
+  min-height: 58px;
+  padding: 0 15px;
+  border: 1px solid rgba(204, 194, 180, 0.32);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(251, 248, 243, 0.94));
   color: #223247;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 10px 22px rgba(16, 25, 37, 0.035);
   cursor: pointer;
   text-align: left;
   transition:
@@ -1153,9 +1162,9 @@ select:focus {
 }
 
 .movement-identifier.is-active {
-  border-color: rgba(19, 58, 99, 0.3);
-  box-shadow: 0 12px 24px rgba(19, 58, 99, 0.1);
-  background: linear-gradient(180deg, #ffffff, #f5f9fd);
+  border-color: rgba(41, 80, 107, 0.28);
+  box-shadow: 0 12px 24px rgba(41, 80, 107, 0.06);
+  background: linear-gradient(180deg, #ffffff, #f7f3ee);
 }
 
 .movement-identifier-icon {
@@ -1165,7 +1174,7 @@ select:focus {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  background: #eef4fa;
+  background: #f2f4f0;
   color: var(--primary);
   flex: 0 0 auto;
   box-shadow:
@@ -1201,39 +1210,46 @@ select:focus {
 }
 
 .movement-identifier-copy strong {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
 .movement-identifier-copy span {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted);
 }
 
 .tool-row {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(320px, 1fr);
+  grid-template-columns: minmax(220px, 248px) minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(204, 194, 180, 0.36);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 8px 20px rgba(16, 25, 37, 0.025);
 }
 
 .tool-row select {
   max-width: none;
   width: 100%;
+  background-color: #fffdfa;
 }
 
 .search-input {
   min-width: 0;
   width: 100%;
+  background-color: #fffdfa;
 }
 
 .table-wrap {
   overflow-x: auto;
   overflow-y: visible;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid rgba(204, 194, 180, 0.45);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.96);
   position: relative;
 }
 
@@ -1385,7 +1401,7 @@ select:focus {
 }
 
 .shipment-table thead {
-  background: rgba(239, 245, 251, 0.94);
+  background: rgba(246, 242, 236, 0.96);
 }
 
 .shipment-table th,
@@ -1397,7 +1413,7 @@ select:focus {
 
 .shipment-table th {
   position: static;
-  background: rgba(239, 245, 251, 0.96);
+  background: rgba(246, 242, 236, 0.96);
 }
 
 .shipment-table th.selection-col,
@@ -1410,21 +1426,21 @@ select:focus {
 
 .shipment-table th.selection-col {
   z-index: 3;
-  background: rgba(239, 245, 251, 0.98);
+  background: rgba(246, 242, 236, 0.98);
 }
 
 .dense-table th {
-  padding: 13px 14px;
-  color: #607086;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 15px 16px;
+  color: #7a7a76;
+  font-size: 11.5px;
+  font-weight: 650;
   letter-spacing: 0.01em;
 }
 
 .dense-table td {
-  padding: 18px 14px;
+  padding: 20px 16px;
   font-size: 13px;
-  color: #132033;
+  color: #1b2633;
 }
 
 .header-sort {
@@ -1451,12 +1467,12 @@ select:focus {
 }
 
 .shipment-table tbody tr:hover {
-  background: #fbfcfe;
+  background: #fbf8f3;
 }
 
 .shipment-table tbody tr:hover td.selection-col,
 .shipment-table tbody tr:hover td.identity-col {
-  background: #fbfcfe;
+  background: #fbf8f3;
 }
 
 .interactive-row {
@@ -1464,12 +1480,12 @@ select:focus {
 }
 
 .interactive-row.is-selected {
-  background: rgba(19, 58, 99, 0.04);
+  background: rgba(41, 80, 107, 0.05);
 }
 
 .interactive-row.is-selected td.selection-col,
 .interactive-row.is-selected td.identity-col {
-  background: rgba(19, 58, 99, 0.04);
+  background: rgba(41, 80, 107, 0.05);
 }
 
 .selection-col {
@@ -1485,7 +1501,7 @@ select:focus {
 
 .shipment-table th.identity-col {
   z-index: 3;
-  background: rgba(239, 245, 251, 0.98);
+  background: rgba(246, 242, 236, 0.98);
 }
 
 .selection-col input[type="checkbox"] {
@@ -1591,7 +1607,7 @@ select:focus {
   display: grid;
   justify-items: start;
   align-content: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 166px;
   text-align: left;
 }
@@ -1650,22 +1666,22 @@ select:focus {
 
 .row-display-field {
   display: grid;
-  gap: 6px;
-  min-width: 150px;
+  gap: 5px;
+  min-width: 144px;
 }
 
 .row-display-label {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   text-transform: none;
-  color: #7a889b;
+  color: #8a8379;
 }
 
 .row-display-field strong {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: #1f3045;
+  color: #1f3040;
   line-height: 1.35;
 }
 
@@ -3375,6 +3391,10 @@ select:focus {
     max-width: none;
   }
 
+  .hero-copy-wrap {
+    align-items: stretch;
+  }
+
   .movement-identifiers {
     grid-template-columns: 1fr;
   }
@@ -3476,6 +3496,7 @@ select:focus {
 
   .tool-row {
     justify-content: stretch;
+    grid-template-columns: 1fr;
   }
 
   .tool-row select,

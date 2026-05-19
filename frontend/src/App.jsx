@@ -152,7 +152,7 @@ function formatDocumentStatusSummary(row) {
 
 function formatShipmentDetailSummary(row) {
   const movement = normalizeMovementCategory(row?.movement_category) || "Hi Seas";
-  const location = cleanText(row?.latest_location);
+  const location = formatLocationLabel(row?.latest_location);
 
   if (movement === "Completed") {
     return "This shipment cycle has already been served and closed for the customer.";
@@ -173,6 +173,54 @@ function formatShipmentDetailSummary(row) {
       : "The shipment has reached port and is waiting for the inland handoff.";
   }
   return "The shipment has not yet entered a confirmed inland cycle, so we are treating it as hi seas for now.";
+}
+
+function toLocationTitleCase(value) {
+  const raw = cleanText(value);
+  if (!raw) {
+    return "";
+  }
+
+  return raw
+    .split(" ")
+    .map((word) => {
+      if (!word) {
+        return "";
+      }
+      if (/^[A-Z0-9/-]{2,}$/.test(word) && !/[a-z]/.test(word)) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+function formatLocationLabel(value) {
+  const cleaned = cleanText(value);
+  if (!cleaned) {
+    return "";
+  }
+
+  const parts = cleaned
+    .split(/\s*[|/;]\s*/)
+    .map((part) => part.replace(/^at:\s*/i, "").trim())
+    .filter(Boolean)
+    .filter((part) => !/^\d{1,2}:\d{2}(?::\d{2})?$/.test(part))
+    .filter((part) => !/^at$/i.test(part));
+
+  const normalizedParts = [];
+  const seen = new Set();
+  parts.forEach((part) => {
+    const normalized = part.replace(/\s+/g, " ").trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalizedParts.push(toLocationTitleCase(normalized));
+  });
+
+  return normalizedParts.join(" / ");
 }
 
 function normalizeLooseText(value) {
@@ -3008,7 +3056,7 @@ function App() {
 
         <div className="hero-main">
           <div className="hero-copy-wrap">
-            <h1>Logistics Operations Dashboard</h1>
+            <h1>Tracking Portal</h1>
             <div className="hero-actions compact-actions">
               <ActionButton type="button" tone="secondary" onClick={() => loadDashboard({ silent: true })}>
                 {refreshing ? "Refreshing..." : "Refresh Dashboard"}
@@ -3500,7 +3548,7 @@ function App() {
         <div className="panel-heading compact-heading">
           <div>
             <p className="eyebrow">Overview</p>
-            <h2>Shipment Overview</h2>
+            <h2>Current Shipments</h2>
           </div>
         </div>
         <div className="dashboard-header-metrics">
@@ -3556,7 +3604,7 @@ function App() {
         <div className="dashboard-header compact-dashboard-header">
           <div>
             <p className="eyebrow">Live Dashboard</p>
-            <h2>BL Movement Board</h2>
+            <h2>Shipment Board</h2>
           </div>
           <div className="compact-actions">
             <ActionButton type="button" tone="secondary" onClick={handleDashboardExport}>
@@ -3590,7 +3638,7 @@ function App() {
 
             <input
               className="search-input"
-              placeholder="Search customer, BL, container, location, train"
+              placeholder="Search customer, BL, container, place or train"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -3757,7 +3805,7 @@ function App() {
                           ) : null}
                         </div>
                       </td>
-                      <td>{cleanText(row.latest_location) || "Not available"}</td>
+                      <td>{formatLocationLabel(row.latest_location) || "Not available"}</td>
                       <td className="date-cell">{row.movement_since_date || row.latest_time || "-"}</td>
                       <td>{row.train_no || "-"}</td>
                       <td className="date-cell">{row.departure || "-"}</td>
@@ -3859,7 +3907,7 @@ function App() {
                     </div>
                     <div className="mobile-fact">
                       <span>Current Location</span>
-                      <strong>{cleanText(row.latest_location) || "Not available"}</strong>
+                      <strong>{formatLocationLabel(row.latest_location) || "Not available"}</strong>
                     </div>
                     <div className="mobile-fact">
                       <span>Movement Since</span>
@@ -3950,7 +3998,7 @@ function App() {
                 </div>
                 <div className="action-fact-card action-fact-card-wide">
                   <span>Current Location</span>
-                  <strong>{cleanText(actionRow.latest_location) || "Not available"}</strong>
+                  <strong>{formatLocationLabel(actionRow.latest_location) || "Not available"}</strong>
                 </div>
                 {["completed", "archived"].includes(actionStatus) ? (
                   <div className="action-fact-card">
@@ -4660,7 +4708,7 @@ function App() {
             <div className="audit-overview-grid">
               <article className="audit-overview-card">
                 <span>Latest Location</span>
-                <strong>{cleanText(auditRow.latest_location) || "Awaiting live location"}</strong>
+                <strong>{formatLocationLabel(auditRow.latest_location) || "Awaiting live location"}</strong>
               </article>
               <article className="audit-overview-card">
                 <span>Movement Since</span>
@@ -5303,7 +5351,7 @@ function App() {
                             {formatShipmentStatusLabel(row.shipment_status)}
                           </span>
                         </td>
-                        <td>{row.latest_location || "-"}</td>
+                        <td>{formatLocationLabel(row.latest_location) || "-"}</td>
                         <td>{row.movement_since_date || row.latest_time || "-"}</td>
                       </tr>
                     ))

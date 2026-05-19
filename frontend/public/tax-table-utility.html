@@ -3,19 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ASYCUDA XML/PDF Tax Table Utility</title>
+  <title>Tax Table Utility</title>
   <style>
     :root {
-      --bg: #f6f8fb;
-      --panel: #ffffff;
-      --panel-2: #eef4f8;
-      --text: #17202a;
-      --muted: #667085;
-      --border: #d8e0e8;
-      --accent: #136f63;
-      --accent-2: #19466f;
+      --bg: #f6f2eb;
+      --bg-accent: #ece6dc;
+      --panel: rgba(255, 252, 247, 0.9);
+      --panel-soft: rgba(248, 244, 238, 0.88);
+      --text: #1b2633;
+      --muted: #718091;
+      --border: rgba(204, 194, 180, 0.56);
+      --border-strong: rgba(184, 172, 156, 0.84);
+      --accent: #29506b;
+      --accent-2: #1d3d53;
       --danger: #b42318;
-      --shadow: 0 18px 45px rgba(16, 24, 40, 0.08);
+      --shadow: 0 18px 45px rgba(16, 25, 37, 0.08);
+      --shadow-soft: 0 10px 24px rgba(16, 25, 37, 0.05);
     }
 
     * {
@@ -28,11 +31,14 @@
 
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        radial-gradient(circle at top right, rgba(41, 80, 107, 0.08), transparent 22%),
+        radial-gradient(circle at left top, rgba(197, 179, 149, 0.14), transparent 18%),
+        linear-gradient(180deg, #fcfaf6, var(--bg));
       color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
+      font-family: "SF Pro Display", "Segoe UI Variable", "Segoe UI", Arial, sans-serif;
       font-size: 14px;
-      line-height: 1.45;
+      line-height: 1.5;
     }
 
     .app {
@@ -41,19 +47,20 @@
       grid-template-rows: auto 1fr;
     }
 
-    header {
-      background: #ffffff;
-      border-bottom: 1px solid var(--border);
-    }
-
     .topbar {
-      max-width: 1440px;
+      max-width: 1480px;
       margin: 0 auto;
-      padding: 18px 24px;
+      padding: 14px 18px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 14px;
+      margin-top: 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
     }
 
     .brand {
@@ -64,29 +71,30 @@
     }
 
     .brand-mark {
-      width: 38px;
-      height: 38px;
+      width: 40px;
+      height: 40px;
       display: grid;
       place-items: center;
-      border-radius: 8px;
-      background: var(--accent-2);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #315d7c, #234a65);
       color: #ffffff;
       flex: 0 0 auto;
+      box-shadow: 0 14px 28px rgba(35, 74, 101, 0.18);
     }
 
     .brand h1 {
       margin: 0;
-      font-size: 18px;
+      font-size: 20px;
       line-height: 1.2;
       font-weight: 700;
-      letter-spacing: 0;
-      white-space: nowrap;
+      letter-spacing: -0.02em;
     }
 
     .brand p {
-      margin: 3px 0 0;
+      margin: 4px 0 0;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 13px;
+      max-width: 34ch;
     }
 
     .actions {
@@ -101,22 +109,23 @@
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 12px;
+      padding: 6px 8px 6px 14px;
       border: 1px solid var(--border);
       border-radius: 999px;
-      background: #f8fbfd;
+      background: rgba(249, 245, 239, 0.96);
       color: var(--muted);
       font-size: 12px;
       font-weight: 600;
     }
 
     .workspace-switch select {
-      min-width: 176px;
-      border: 1px solid var(--border);
+      min-width: 168px;
+      border: 0;
       border-radius: 999px;
       background: #ffffff;
       color: var(--text);
-      padding: 8px 34px 8px 12px;
+      min-height: 38px;
+      padding: 8px 34px 8px 14px;
       font-size: 12px;
       font-weight: 600;
       appearance: none;
@@ -134,15 +143,15 @@
     }
 
     main {
-      max-width: 1440px;
+      max-width: 1480px;
       width: 100%;
       margin: 0 auto;
-      padding: 22px 24px 36px;
+      padding: 18px 0 38px;
     }
 
     .workspace {
       display: grid;
-      grid-template-columns: 330px minmax(0, 1fr);
+      grid-template-columns: 320px minmax(0, 1fr);
       gap: 18px;
       align-items: start;
     }
@@ -150,58 +159,61 @@
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: 28px;
       box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
     }
 
     .sidebar {
       position: sticky;
-      top: 18px;
+      top: 20px;
       overflow: hidden;
     }
 
     .upload-zone {
-      padding: 18px;
+      padding: 22px;
       display: grid;
       gap: 14px;
     }
 
     .drop {
-      min-height: 156px;
+      min-height: 154px;
       display: grid;
       place-items: center;
-      padding: 18px;
-      border: 1px dashed #a6b5c5;
-      border-radius: 8px;
-      background: #fbfcfe;
+      padding: 20px;
+      border: 1px dashed rgba(184, 172, 156, 0.9);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 244, 238, 0.82));
       text-align: center;
       cursor: pointer;
-      transition: border-color 140ms ease, background 140ms ease;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
     }
 
     .drop:hover,
     .drop.is-dragging {
       border-color: var(--accent);
-      background: #f2fbf8;
+      background: #f6f8f6;
+      transform: translateY(-1px);
     }
 
     .drop svg {
-      width: 32px;
-      height: 32px;
+      width: 34px;
+      height: 34px;
       color: var(--accent-2);
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
 
     .drop strong {
       display: block;
-      font-size: 14px;
-      margin-bottom: 4px;
+      font-size: 15px;
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
     }
 
     .drop span {
       display: block;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 12.5px;
     }
 
     input[type="file"] {
@@ -217,17 +229,19 @@
       border: 1px solid var(--border);
       background: #ffffff;
       color: var(--text);
-      border-radius: 7px;
-      padding: 9px 12px;
+      border-radius: 999px;
+      padding: 10px 14px;
       font: inherit;
-      font-size: 13px;
-      font-weight: 700;
+      font-size: 12px;
+      font-weight: 650;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       min-height: 38px;
+      box-shadow: 0 0 0 rgba(16, 25, 37, 0);
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
     }
 
     button svg {
@@ -237,9 +251,15 @@
     }
 
     button.primary {
-      background: var(--accent);
+      background: linear-gradient(180deg, #315d7c, #234a65);
       color: #ffffff;
-      border-color: var(--accent);
+      border-color: transparent;
+      box-shadow: 0 14px 28px rgba(35, 74, 101, 0.16);
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-soft);
     }
 
     button:disabled {
@@ -250,15 +270,15 @@
     .button-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 10px;
     }
 
     .meta {
       border-top: 1px solid var(--border);
-      background: var(--panel-2);
-      padding: 16px 18px;
+      background: linear-gradient(180deg, rgba(248, 244, 238, 0.88), rgba(246, 241, 234, 0.68));
+      padding: 16px 22px 18px;
       display: grid;
-      gap: 11px;
+      gap: 10px;
     }
 
     .meta-row {
@@ -266,8 +286,8 @@
       justify-content: space-between;
       gap: 12px;
       font-size: 13px;
-      border-bottom: 1px solid rgba(25, 70, 111, 0.12);
-      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(184, 172, 156, 0.3);
+      padding-bottom: 10px;
     }
 
     .meta-row:last-child {
@@ -280,22 +300,23 @@
     }
 
     .meta-row span:last-child {
-      font-weight: 700;
+      font-weight: 600;
       text-align: right;
     }
 
     .summary {
       display: grid;
-      grid-template-columns: repeat(6, minmax(120px, 1fr));
-      gap: 10px;
-      margin-bottom: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
     }
 
     .stat {
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid rgba(204, 194, 180, 0.42);
+      border-radius: 22px;
+      padding: 14px 16px;
+      box-shadow: var(--shadow-soft);
       min-width: 0;
     }
 
@@ -303,15 +324,16 @@
       display: block;
       color: var(--muted);
       font-size: 12px;
-      margin-bottom: 5px;
+      margin-bottom: 6px;
     }
 
     .stat strong {
       display: block;
-      font-size: 18px;
+      font-size: 20px;
       line-height: 1.2;
       color: var(--text);
       overflow-wrap: anywhere;
+      letter-spacing: -0.02em;
     }
 
     .table-panel {
@@ -319,29 +341,29 @@
     }
 
     .table-toolbar {
-      padding: 12px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
+      padding: 16px 18px;
+      display: grid;
+      gap: 10px;
       border-bottom: 1px solid var(--border);
-      background: #ffffff;
+      background: rgba(255, 252, 247, 0.92);
     }
 
     .table-toolbar input {
-      width: min(360px, 100%);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      padding: 9px 10px;
+      width: 100%;
+      border: 1px solid var(--border-strong);
+      border-radius: 16px;
+      min-height: 46px;
+      padding: 10px 14px;
       font: inherit;
       font-size: 13px;
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.92);
     }
 
     .status {
       color: var(--muted);
       font-size: 13px;
       min-height: 19px;
+      line-height: 1.45;
     }
 
     .status.error {
@@ -352,7 +374,7 @@
     .table-wrap {
       overflow: auto;
       max-height: calc(100vh - 205px);
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.96);
     }
 
     table {
@@ -366,7 +388,7 @@
     td {
       border-right: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
-      padding: 8px 9px;
+      padding: 10px 12px;
       vertical-align: top;
       background: #ffffff;
     }
@@ -375,20 +397,21 @@
       position: sticky;
       top: 0;
       z-index: 2;
-      background: var(--accent-2);
-      color: #ffffff;
-      font-size: 12px;
+      background: rgba(246, 242, 236, 0.98);
+      color: #726d65;
+      font-size: 11.5px;
       text-align: left;
       white-space: nowrap;
-      font-weight: 700;
+      font-weight: 650;
+      letter-spacing: 0.02em;
     }
 
     td {
-      font-size: 12px;
+      font-size: 12.5px;
     }
 
     tbody tr:nth-child(even) td {
-      background: #f9fbfc;
+      background: #fcfaf6;
     }
 
     td.num,
@@ -406,25 +429,25 @@
       position: sticky;
       bottom: 0;
       z-index: 1;
-      background: #dfeef5;
+      background: #efe7dd;
       font-weight: 700;
     }
 
     .empty {
-      min-height: 400px;
+      min-height: 380px;
       display: grid;
       place-items: center;
-      padding: 36px;
+      padding: 40px;
       color: var(--muted);
       text-align: center;
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.95);
     }
 
     .empty svg {
-      width: 42px;
-      height: 42px;
-      color: #8da4b8;
-      margin-bottom: 12px;
+      width: 44px;
+      height: 44px;
+      color: #9a9b97;
+      margin-bottom: 14px;
     }
 
     @media (max-width: 980px) {
@@ -447,12 +470,13 @@
 
     @media (max-width: 640px) {
       .topbar {
-        align-items: flex-start;
         flex-direction: column;
+        align-items: stretch;
+        margin: 16px;
       }
 
       main {
-        padding: 16px;
+        padding: 0 16px 28px;
       }
 
       .summary,
@@ -463,10 +487,6 @@
       .table-toolbar {
         align-items: stretch;
         flex-direction: column;
-      }
-
-      .brand h1 {
-        white-space: normal;
       }
     }
   </style>
@@ -483,8 +503,8 @@
             </svg>
           </div>
           <div>
-            <h1>ASYCUDA XML/PDF Tax Table Utility</h1>
-            <p>Upload customs XML or PDF and generate item-wise duty, ECS, and VAT table.</p>
+            <h1>Tax Table Utility</h1>
+            <p>Choose one ASYCUDA declaration and the clean item-wise table will open here.</p>
           </div>
         </div>
         <div class="actions">
@@ -518,8 +538,8 @@
             <label id="dropZone" class="drop" for="xmlInput">
               <span>
                 <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 16v3h14v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <strong>Select or drop XML/PDF file</strong>
-                <span>ASYCUDA declaration XML or customs declaration PDF</span>
+                <strong>Choose declaration</strong>
+                <span>XML or PDF from ASYCUDA</span>
               </span>
             </label>
             <input id="xmlInput" type="file" accept=".xml,.pdf,text/xml,application/xml,application/pdf">
@@ -527,7 +547,7 @@
               <button id="clearBtn" disabled>Clear</button>
               <button id="chooseBtn">Choose File</button>
             </div>
-            <div id="status" class="status">No file loaded.</div>
+            <div id="status" class="status">Choose a declaration to begin.</div>
           </div>
           <div class="meta">
             <div class="meta-row"><span>File</span><span id="fileName">-</span></div>
@@ -550,14 +570,14 @@
 
           <div class="panel table-panel">
             <div class="table-toolbar">
-              <input id="searchInput" type="search" placeholder="Search item name or HS code" disabled>
-              <div id="tableStatus" class="status">Upload an XML or PDF file to generate the table.</div>
+              <input id="searchInput" type="search" placeholder="Search item, HS code or tariff" disabled>
+              <div id="tableStatus" class="status">Choose a declaration and the item-wise table will appear here.</div>
             </div>
             <div class="table-wrap">
               <div id="emptyState" class="empty">
                 <div>
                   <svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16M4 10h16M4 15h16M4 20h16M8 5v15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                  <div>Your item-wise duty table will appear here.</div>
+                  <div>Your clean item-wise tax table will appear here.</div>
                 </div>
               </div>
               <table id="resultTable" hidden>
