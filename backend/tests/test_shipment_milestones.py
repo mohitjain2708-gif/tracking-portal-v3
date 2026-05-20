@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
 import app.api.routes.shipments as shipments_module
 from app.api.routes.shipments import (
     _group_dashboard_rows,
+    _group_dashboard_rows_from_items,
     _get_refresh_job,
     _run_refresh_all_job,
     _apply_group_status_transition,
@@ -29,6 +30,7 @@ from app.api.routes.shipments import (
     _movement_since_date,
     _normalize_bl_number,
     _should_use_pristine_arrival_override,
+    _shipments_to_dicts,
     _should_ignore_stale_concor_data,
     _should_ignore_stale_ldb_data,
     _should_ignore_stale_pristine_data,
@@ -50,6 +52,45 @@ def _entry(event_name: str, location: str, timestamp: str) -> dict[str, str]:
 
 
 class ShipmentMilestoneTests(unittest.TestCase):
+    def test_group_dashboard_rows_from_items_matches_model_grouping(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1891823",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                birgunj_arrival_date="14-05-2026",
+                latest_time="14-05-2026",
+            ),
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1904849",
+                bl_number="FRE/CCU/0126/976",
+                shipment_status="active",
+                movement_category="On Rail",
+                latest_location="RAXAUL JN., Samastipur",
+                departure="13-05-2026",
+                latest_time="13-05-2026",
+            ),
+            Shipment(
+                customer_name="Solo Customer",
+                container_number="MRKU5509972",
+                bl_number="123456789",
+                shipment_status="active",
+                movement_category="At Port",
+                latest_location="VISAKHAPATNAM",
+                port_arrival_date="22-02-2026",
+                latest_time="22-02-2026",
+            ),
+        ]
+
+        grouped_from_models = _group_dashboard_rows(shipments)
+        grouped_from_items = _group_dashboard_rows_from_items(_shipments_to_dicts(shipments))
+
+        self.assertEqual(grouped_from_models, grouped_from_items)
+
     def test_dashboard_identifiers_count_shipment_groups_not_containers(self) -> None:
         today_text = datetime.now().strftime("%d-%m-%Y")
         recent_rail_text = (datetime.now() - timedelta(days=2)).strftime("%d-%m-%Y")

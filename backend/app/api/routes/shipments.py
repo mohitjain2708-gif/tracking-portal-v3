@@ -2402,6 +2402,10 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
     }
 
 
+def _shipments_to_dicts(shipments: list[Shipment]) -> list[dict[str, Any]]:
+    return [_shipment_to_dict(shipment) for shipment in shipments]
+
+
 def _serialize_source_batches(
     db: Session,
     current_user: User,
@@ -3682,41 +3686,40 @@ def _reconcile_bl_number_normalization_for_user(db: Session, current_user: User)
         db.commit()
 
 
-def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
+def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     suppressed_orphan_keys: set[tuple[str, str]] = set()
     archived_group_keys = {
-        (_clean_container(shipment.container_number), _normalize_bl_number(shipment.bl_number))
-        for shipment in shipments
-        if shipment.shipment_status == "archived"
-        and _clean_container(shipment.container_number)
-        and _normalize_bl_number(shipment.bl_number)
+        (_clean_container(item.get("container_number", "")), _normalize_bl_number(item.get("bl_number", "")))
+        for item in items
+        if item.get("shipment_status") == "archived"
+        and _clean_container(item.get("container_number", ""))
+        and _normalize_bl_number(item.get("bl_number", ""))
     }
     archived_blank_containers = {
-        _clean_container(shipment.container_number)
-        for shipment in shipments
-        if shipment.shipment_status == "archived"
-        and _clean_container(shipment.container_number)
-        and not _normalize_bl_number(shipment.bl_number)
+        _clean_container(item.get("container_number", ""))
+        for item in items
+        if item.get("shipment_status") == "archived"
+        and _clean_container(item.get("container_number", ""))
+        and not _normalize_bl_number(item.get("bl_number", ""))
     }
-    for shipment in shipments:
-        if shipment.shipment_status == "archived":
+    for item in items:
+        if item.get("shipment_status") == "archived":
             continue
-        if _normalize_bl_number(shipment.bl_number):
-            suppressed_orphan_keys.add(_shipment_identity_key(shipment))
+        if _normalize_bl_number(item.get("bl_number", "")):
+            suppressed_orphan_keys.add(_shipment_identity_key(item))
 
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for shipment in shipments:
-        if shipment.shipment_status == "archived":
+    for row in items:
+        if row.get("shipment_status") == "archived":
             continue
-        container_number = _clean_container(shipment.container_number)
-        normalized_bl = _normalize_bl_number(shipment.bl_number)
+        container_number = _clean_container(row.get("container_number", ""))
+        normalized_bl = _normalize_bl_number(row.get("bl_number", ""))
         if normalized_bl and (container_number, normalized_bl) in archived_group_keys:
             continue
         if not normalized_bl and container_number in archived_blank_containers:
             continue
-        if not _normalize_bl_number(shipment.bl_number) and _shipment_identity_key(shipment) in suppressed_orphan_keys:
+        if not normalized_bl and _shipment_identity_key(row) in suppressed_orphan_keys:
             continue
-        row = _shipment_to_dict(shipment)
         normalized_bl = _normalize_bl_number(row.get("bl_number"))
         group_key = f"BL:{normalized_bl}" if normalized_bl else f"SHIP:{row['id']}"
         grouped.setdefault(group_key, []).append(row)
@@ -3819,6 +3822,10 @@ def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
     return rows
 
 
+def _group_dashboard_rows(shipments: list[Shipment]) -> list[dict[str, Any]]:
+    return _group_dashboard_rows_from_items(_shipments_to_dicts(shipments))
+
+
 def _format_customer_count_items(counter: dict[str, int]) -> list[dict[str, Any]]:
     return [
         {"customer_name": name, "shipment_count": count, "container_count": count}
@@ -3912,7 +3919,7 @@ def _shipment_count_summary(shipments: list[Shipment], dashboard_rows: list[dict
 @router.get("")
 def list_shipments(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
-    return [_shipment_to_dict(shipment) for shipment in _get_shipments(db, current_user)]
+    return _shipments_to_dicts(_get_shipments(db, current_user))
 
 
 @router.get("/sources")
@@ -4183,7 +4190,8 @@ def dashboard_bootstrap(
 ):
     _ensure_user_scope_ready(db, current_user)
     shipments = _get_shipments(db, current_user)
-    dashboard_rows = _group_dashboard_rows(shipments)
+    shipment_items = _shipments_to_dicts(shipments)
+    dashboard_rows = _group_dashboard_rows_from_items(shipment_items)
     response = {
         "dashboard": {
             "rows": dashboard_rows,
@@ -4192,7 +4200,7 @@ def dashboard_bootstrap(
         },
     }
     if include_shipments:
-        response["shipments"] = [_shipment_to_dict(shipment) for shipment in shipments]
+        response["shipments"] = shipment_items
     if include_sources:
         response.update(
             {
@@ -4502,10 +4510,11 @@ def update_group_details(
         container_numbers=container_numbers,
         include_archived=True,
     )
-    rows = _group_dashboard_rows(refreshed_shipments)
+    refreshed_items = _shipments_to_dicts(refreshed_shipments)
+    rows = _group_dashboard_rows_from_items(refreshed_items)
     return {
         "updated_count": len(container_numbers),
-        "items": [_shipment_to_dict(shipment) for shipment in refreshed_shipments],
+        "items": refreshed_items,
         "row": rows[0] if rows else None,
     }
 
@@ -5360,8 +5369,8 @@ def system_status(db: Session = Depends(get_db), current_user: User = Depends(ge
 def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     shipment_models = _get_shipments(db, current_user)
-    shipments = [_shipment_to_dict(shipment) for shipment in shipment_models]
-    grouped_rows = _group_dashboard_rows(shipment_models)
+    shipments = _shipments_to_dicts(shipment_models)
+    grouped_rows = _group_dashboard_rows_from_items(shipments)
     movement_counts: dict[str, int] = {}
     refresh_status_counts: dict[str, int] = {}
     for shipment in grouped_rows:
