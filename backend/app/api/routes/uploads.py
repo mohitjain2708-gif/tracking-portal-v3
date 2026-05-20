@@ -36,6 +36,10 @@ async def upload_workbook(
     try:
         inspected = inspect_workbook(str(stored_path))
     except Exception as exc:
+        try:
+            stored_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     upload = UploadSession(

@@ -82,42 +82,48 @@ def save_upload(file_bytes: bytes, destination: Path):
 
 def inspect_workbook(path: str) -> dict:
     workbook = load_workbook(path, data_only=True)
-    sheet_name = detect_best_sheet(workbook)
-    ws = workbook[sheet_name]
-    header_row = detect_header_row(ws)
-    columns = extract_columns(ws, header_row)
-    previews = preview_rows(ws, header_row)
-    return {
-        "sheet_name": sheet_name,
-        "header_row": header_row,
-        "available_columns": columns,
-        "preview_rows": previews,
-    }
+    try:
+        sheet_name = detect_best_sheet(workbook)
+        ws = workbook[sheet_name]
+        header_row = detect_header_row(ws)
+        columns = extract_columns(ws, header_row)
+        previews = preview_rows(ws, header_row)
+        return {
+            "sheet_name": sheet_name,
+            "header_row": header_row,
+            "available_columns": columns,
+            "preview_rows": previews,
+        }
+    finally:
+        workbook.close()
 
 def process_with_mapping(path: str, sheet_name: str, header_row: int, mapping_json: dict) -> dict:
     workbook = load_workbook(path, data_only=True)
-    ws = workbook[sheet_name]
-    available_headers = {}
-    for c in range(1, ws.max_column + 1):
-        title = str(ws.cell(header_row, c).value or "").strip()
-        if title:
-            available_headers[title] = c
+    try:
+        ws = workbook[sheet_name]
+        available_headers = {}
+        for c in range(1, ws.max_column + 1):
+            title = str(ws.cell(header_row, c).value or "").strip()
+            if title:
+                available_headers[title] = c
 
-    output_rows = []
-    for r in range(header_row + 1, ws.max_row + 1):
-        row_output = {}
-        has_any = False
-        for target_field, source_header in mapping_json.items():
-            col_idx = available_headers.get(source_header)
-            value = ws.cell(r, col_idx).value if col_idx else None
-            if value not in (None, ""):
-                has_any = True
-            row_output[target_field] = "" if value is None else str(value)
-        if has_any:
-            output_rows.append(row_output)
+        output_rows = []
+        for r in range(header_row + 1, ws.max_row + 1):
+            row_output = {}
+            has_any = False
+            for target_field, source_header in mapping_json.items():
+                col_idx = available_headers.get(source_header)
+                value = ws.cell(r, col_idx).value if col_idx else None
+                if value not in (None, ""):
+                    has_any = True
+                row_output[target_field] = "" if value is None else str(value)
+            if has_any:
+                output_rows.append(row_output)
 
-    return {
-        "headers": list(mapping_json.keys()),
-        "rows": output_rows,
-        "total_rows": len(output_rows),
-    }
+        return {
+            "headers": list(mapping_json.keys()),
+            "rows": output_rows,
+            "total_rows": len(output_rows),
+        }
+    finally:
+        workbook.close()

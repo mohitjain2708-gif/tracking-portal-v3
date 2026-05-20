@@ -3633,3 +3633,55 @@ select:focus {
   }
 }
 
+
+.app-crash-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: radial-gradient(circle at top, rgba(202, 216, 234, 0.34), transparent 38%), #f6f8fb;
+}
+
+.app-crash-card {
+  max-width: 520px;
+  padding: 36px 34px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(199, 211, 228, 0.7);
+  box-shadow: 0 24px 60px rgba(33, 52, 82, 0.12);
+  color: #213452;
+}
+
+.app-crash-eyebrow {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6e84a3;
+}
+
+.app-crash-card h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2rem, 3vw, 2.4rem);
+  line-height: 1.08;
+}
+
+.app-crash-card p {
+  margin: 0;
+  color: #60738f;
+  line-height: 1.6;
+}
+
+.app-crash-action {
+  margin-top: 22px;
+  min-height: 46px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #204a85, #356cb2);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 14px 30px rgba(32, 74, 133, 0.22);
+}
