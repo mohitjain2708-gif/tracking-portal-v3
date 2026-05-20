@@ -163,6 +163,7 @@ PORT_PATTERNS = [
 ]
 
 _storage_ready = False
+_storage_ready_lock = Lock()
 _refresh_jobs: dict[str, dict[str, Any]] = {}
 _refresh_jobs_lock = Lock()
 _background_refresh_instance_id = uuid4().hex
@@ -2839,13 +2840,33 @@ def _apply_legacy_row(db: Session, shipment: Shipment, row: dict[str, Any], defa
 
 def _bootstrap_shipments_from_legacy_state(db: Session) -> None:
     legacy_rows = _load_state().get("shipments", [])
+    if not legacy_rows:
+        return
+
     default_user_id = _resolve_default_user_id(db)
-    existing_shipments = db.execute(select(Shipment)).scalars().all()
+    legacy_container_numbers = {
+        _clean_container(row.get("container_number"))
+        for row in legacy_rows
+        if _clean_container(row.get("container_number"))
+    }
+    legacy_ids = {
+        row_id
+        for row in legacy_rows
+        for row_id in [row.get("id")]
+        if isinstance(row_id, int)
+    }
+    existing_shipments = []
+    if legacy_container_numbers:
+        existing_shipments = db.execute(
+            select(Shipment).where(Shipment.container_number.in_(sorted(legacy_container_numbers)))
+        ).scalars().all()
     shipments_by_key = {
         (shipment.container_number, _normalize_bl_number(shipment.bl_number), _format_customer_name(shipment.customer_name)): shipment
         for shipment in existing_shipments
     }
-    existing_ids = {shipment.id for shipment in existing_shipments}
+    existing_ids = set(
+        db.execute(select(Shipment.id).where(Shipment.id.in_(sorted(legacy_ids)))).scalars().all()
+    ) if legacy_ids else set()
     touched = False
     for row in legacy_rows:
         container_number = _clean_container(row.get("container_number"))
@@ -2875,9 +2896,12 @@ def _ensure_storage_ready(db: Session) -> None:
     global _storage_ready
     if _storage_ready:
         return
-    _ensure_shipment_columns()
-    _bootstrap_shipments_from_legacy_state(db)
-    _storage_ready = True
+    with _storage_ready_lock:
+        if _storage_ready:
+            return
+        _ensure_shipment_columns()
+        _bootstrap_shipments_from_legacy_state(db)
+        _storage_ready = True
 
 
 def _adopt_demo_shipments_for_user(db: Session, current_user: User) -> None:
@@ -5317,12 +5341,19 @@ def debug_concor_raw(container_number: str, current_user: User = Depends(get_cur
 
 
 @router.get("/system/status")
-def system_status(db: Session = Depends(get_db)):
+def system_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):
     _ensure_storage_ready(db)
     total_shipments = db.execute(select(func.count()).select_from(Shipment)).scalar_one()
     active_shipments = db.execute(select(func.count()).select_from(Shipment).where(Shipment.shipment_status == "active")).scalar_one()
     customer_directory_count = db.execute(select(func.count()).select_from(CustomerDirectory)).scalar_one()
-    return {"status": "running", "total_shipments": total_shipments, "active_shipments": active_shipments, "customer_directory_count": customer_directory_count, "apis_configured": {"ldb": LDB_API_URL, "concor": CONCOR_API_URL}, "cache_enabled": True, "cache_duration_minutes": CACHE_DURATION_MINUTES}
+    return {
+        "status": "running",
+        "total_shipments": total_shipments,
+        "active_shipments": active_shipments,
+        "customer_directory_count": customer_directory_count,
+        "cache_enabled": True,
+        "cache_duration_minutes": CACHE_DURATION_MINUTES,
+    }
 
 
 @router.get("/stats")
