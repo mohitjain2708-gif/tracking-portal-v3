@@ -1135,7 +1135,7 @@ function App() {
   useEffect(() => {
     const { pathname, search } = window.location;
     if (pathname.startsWith("/api/shipments/bl-documents/file")) {
-      window.location.replace(api.getBLDocumentUrl(new URLSearchParams(search).get("bl_number") || "", new URLSearchParams(search).get("document_type") || ""));
+      window.history.replaceState({}, "", "/");
       return;
     }
     if (pathname.startsWith("/api/")) {

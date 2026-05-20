@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,8 +18,38 @@ from app.services.concor_client import fetch_concor
 router = APIRouter()
 
 
+def _fetch_tracking_bundle(container_no: str) -> tuple[str, dict, dict]:
+    ldb_data = fetch_ldb(container_no)
+    concor_data = fetch_concor(container_no)
+    return container_no, ldb_data or {}, concor_data or {}
+
+
 def _enrich_rows(rows: list[dict]) -> list[dict]:
     enriched = []
+    tracking_cache: dict[str, tuple[dict, dict]] = {}
+    container_numbers = []
+
+    for row in rows:
+        container_no = str(row.get("container_number", "") or "").strip()
+        if container_no:
+            container_numbers.append(container_no)
+
+    unique_containers = sorted(set(container_numbers))
+    if unique_containers:
+        max_workers = min(8, len(unique_containers))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(_fetch_tracking_bundle, container_no): container_no
+                for container_no in unique_containers
+            }
+            for future in as_completed(future_map):
+                container_no = future_map[future]
+                try:
+                    _, ldb_data, concor_data = future.result()
+                except Exception as exc:
+                    tracking_cache[container_no] = ({"ldb_error": str(exc)}, {"concor_error": str(exc)})
+                else:
+                    tracking_cache[container_no] = (ldb_data, concor_data)
 
     for row in rows:
         current = dict(row)
@@ -28,18 +60,9 @@ def _enrich_rows(rows: list[dict]) -> list[dict]:
             enriched.append(current)
             continue
 
-        try:
-            ldb_data = fetch_ldb(container_no)
-        except Exception as exc:
-            ldb_data = {"ldb_error": str(exc)}
-
-        try:
-            concor_data = fetch_concor(container_no)
-        except Exception as exc:
-            concor_data = {"concor_error": str(exc)}
-
-        current.update(ldb_data or {})
-        current.update(concor_data or {})
+        ldb_data, concor_data = tracking_cache.get(container_no, ({}, {}))
+        current.update(ldb_data)
+        current.update(concor_data)
         enriched.append(current)
 
     return enriched

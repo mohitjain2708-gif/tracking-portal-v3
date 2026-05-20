@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import database_url as normalized_database_url, engine, get_db
 from app.core.security import hash_password
+from app.deps import get_current_admin
 from app.models.customer_directory import CustomerDirectory
 from app.models.audit_log import AuditLog
 from app.models.shipment import Shipment
@@ -2924,6 +2925,8 @@ def _user_from_access_token(db: Session, access_token: str) -> User:
         raise HTTPException(status_code=401, detail="Missing authentication token")
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
         user_id = int(payload.get("sub"))
     except (JWTError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Invalid authentication token")
@@ -5214,19 +5217,15 @@ def get_bl_document_file(
     document_type: str,
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
-    access_token: str | None = None,
 ):
     _ensure_storage_ready(db)
-    if access_token:
-        current_user = _user_from_access_token(db, access_token)
+    auth_text = _clean_text(authorization)
+    if auth_text.lower().startswith("bearer "):
+        current_user = _user_from_access_token(db, auth_text.split(" ", 1)[1])
+    elif settings.allow_demo_portal_fallback:
+        current_user = db.get(User, _resolve_default_user_id(db))
     else:
-        auth_text = _clean_text(authorization)
-        if auth_text.lower().startswith("bearer "):
-            current_user = _user_from_access_token(db, auth_text.split(" ", 1)[1])
-        elif settings.allow_demo_portal_fallback:
-            current_user = db.get(User, _resolve_default_user_id(db))
-        else:
-            raise HTTPException(status_code=401, detail="Missing authentication token")
+        raise HTTPException(status_code=401, detail="Missing authentication token")
     if not current_user:
         raise HTTPException(status_code=401, detail="User not found")
     _ensure_user_scope_ready(db, current_user)
@@ -5277,20 +5276,19 @@ def open_bl_document_file(
     document_type: str,
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None),
-    access_token: str | None = None,
 ):
-    return get_bl_document_file(bl_number, document_type, db, authorization, access_token)
+    return get_bl_document_file(bl_number, document_type, db, authorization)
 
 
 @router.get("/cache/clear")
-def clear_cache():
+def clear_cache(current_user: User = Depends(get_current_admin)):
     if CACHE_FILE.exists():
         CACHE_FILE.unlink()
     return {"message": "Cache cleared successfully"}
 
 
 @router.get("/cache/stats")
-def cache_stats():
+def cache_stats(current_user: User = Depends(get_current_admin)):
     if CACHE_FILE.exists():
         try:
             cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
@@ -5301,7 +5299,7 @@ def cache_stats():
 
 
 @router.get("/test-container/{container_number}")
-def test_container(container_number: str):
+def test_container(container_number: str, current_user: User = Depends(get_current_admin)):
     container_number = _clean_container(container_number)
     ldb_result = _fetch_ldb(container_number)
     concor_result = _fetch_concor(container_number)
@@ -5309,7 +5307,7 @@ def test_container(container_number: str):
 
 
 @router.get("/debug/concor-raw/{container_number}")
-def debug_concor_raw(container_number: str):
+def debug_concor_raw(container_number: str, current_user: User = Depends(get_current_admin)):
     container_number = _clean_container(container_number)
     try:
         response = requests.post(CONCOR_API_URL, json={"containerNo": [container_number]}, timeout=20, headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0", "Origin": "https://www.concorindia.co.in", "Referer": "https://www.concorindia.co.in/track-n-trace?lang=en"})

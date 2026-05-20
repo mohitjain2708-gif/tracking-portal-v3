@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
 from jose import jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException
@@ -23,6 +25,14 @@ def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
 
 def create_access_token(subject: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload = {"sub": subject, "exp": expire}
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.access_token_expire_minutes)
+    payload = {
+        "sub": subject,
+        "type": "access",
+        "iat": now,
+        "nbf": now,
+        "exp": expire,
+        "jti": uuid4().hex,
+    }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)

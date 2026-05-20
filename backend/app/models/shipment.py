@@ -1,6 +1,6 @@
 ﻿from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -8,6 +8,11 @@ from app.core.database import Base
 
 class Shipment(Base):
     __tablename__ = "shipments"
+    __table_args__ = (
+        Index("ix_shipments_user_status_updated", "user_id", "shipment_status", "updated_at"),
+        Index("ix_shipments_user_bl", "user_id", "bl_number"),
+        Index("ix_shipments_user_container", "user_id", "container_number"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)

@@ -8,8 +8,33 @@ const API_BASE =
 const DEMO_SESSION_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SESSION !== "false" && IS_LOCAL_HOST;
 const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
+const SESSION_TOKEN_KEY = "tp_token";
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const RETRYABLE_METHODS = new Set(["GET", "HEAD"]);
+const BROWSER_SESSION_STORAGE = typeof window !== "undefined" ? window.sessionStorage : null;
+const BROWSER_LOCAL_STORAGE = typeof window !== "undefined" ? window.localStorage : null;
 let portalSessionPromise = null;
 let volatileToken = "";
+
+function readStorageValue(storage) {
+  try {
+    return storage?.getItem(SESSION_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStorageValue(storage, value) {
+  try {
+    if (value) {
+      storage?.setItem(SESSION_TOKEN_KEY, value);
+    } else {
+      storage?.removeItem(SESSION_TOKEN_KEY);
+    }
+  } catch {
+    // ignore storage unavailability
+  }
+}
 
 function normalizeErrorDetail(detail, fallback = "Request failed") {
   if (!detail) {
@@ -41,32 +66,28 @@ function normalizeErrorDetail(detail, fallback = "Request failed") {
 }
 
 function getToken() {
-  try {
-    return localStorage.getItem("tp_token") || volatileToken;
-  } catch {
+  if (volatileToken) {
     return volatileToken;
   }
+  const sessionToken = readStorageValue(BROWSER_SESSION_STORAGE);
+  if (sessionToken) {
+    volatileToken = sessionToken;
+    return sessionToken;
+  }
+  const legacyLocalToken = readStorageValue(BROWSER_LOCAL_STORAGE);
+  if (legacyLocalToken) {
+    volatileToken = legacyLocalToken;
+    writeStorageValue(BROWSER_SESSION_STORAGE, legacyLocalToken);
+    writeStorageValue(BROWSER_LOCAL_STORAGE, "");
+    return legacyLocalToken;
+  }
+  return "";
 }
 
 function setToken(token) {
   volatileToken = token || "";
-  if (token) {
-    try {
-      localStorage.setItem("tp_token", token);
-    } catch {
-      // Fall back to memory-only auth when storage is unavailable.
-    }
-  } else {
-    try {
-      localStorage.removeItem("tp_token");
-    } catch {
-      // ignore storage cleanup issues
-    }
-  }
-}
-
-export function getDocumentAuthToken() {
-  return getToken() || "";
+  writeStorageValue(BROWSER_SESSION_STORAGE, volatileToken);
+  writeStorageValue(BROWSER_LOCAL_STORAGE, "");
 }
 
 export function isDemoSessionEnabled() {
@@ -123,10 +144,42 @@ function decorateRequestError(error, path = "", fallback = "Request failed") {
   return new Error(fallback);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function safeFetch(url, options = {}, path = "") {
+  const method = String(options.method || "GET").toUpperCase();
+  const shouldRetry = RETRYABLE_METHODS.has(method);
+  const timeoutMs = Number(options.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS);
+
+  const execute = async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const mergedSignal = options.signal || controller.signal;
+      return await fetch(url, { ...options, signal: mergedSignal });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
   try {
-    return await fetch(url, options);
+    const response = await execute();
+    if (shouldRetry && [502, 503, 504].includes(response.status)) {
+      await delay(350);
+      return await execute();
+    }
+    return response;
   } catch (error) {
+    if (shouldRetry && isNetworkFailure(error)) {
+      await delay(350);
+      try {
+        return await execute();
+      } catch (retryError) {
+        throw decorateRequestError(retryError, path, "Request failed");
+      }
+    }
     throw decorateRequestError(error, path, "Request failed");
   }
 }
@@ -214,28 +267,6 @@ async function requestBlob(path, options = {}) {
   const response = await safeFetch(`${API_BASE}${path}`, {
     ...options,
     headers,
-  }, path);
-
-  if (!response.ok) {
-    let detail = "Request failed";
-    try {
-      const data = await response.json();
-      detail = normalizeErrorDetail(data?.detail || data?.message, detail);
-    } catch {
-      // ignore json parse issues for non-json responses
-    }
-    throw new Error(detail);
-  }
-
-  return {
-    blob: await response.blob(),
-    contentType: response.headers.get("content-type") || "application/octet-stream",
-  };
-}
-
-async function requestBlobUrl(url, options = {}, path = "") {
-  const response = await safeFetch(url, {
-    ...options,
   }, path);
 
   if (!response.ok) {
@@ -476,13 +507,12 @@ export const api = {
 
   fetchBLDocument: (blNumber, documentType) =>
     ensurePortalSession("/api/shipments/bl-documents/file").then(() =>
-      requestBlobUrl(
-        `${API_BASE}/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}&access_token=${encodeURIComponent(getDocumentAuthToken())}`,
+      requestBlob(
+        `/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}`,
         {},
-        "/api/shipments/bl-documents/file"
       )
     ),
 
   getBLDocumentUrl: (blNumber, documentType) =>
-    `${API_BASE}/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}&access_token=${encodeURIComponent(getDocumentAuthToken())}`,
+    `${API_BASE}/api/shipments/bl-documents/file?bl_number=${encodeURIComponent(blNumber)}&document_type=${encodeURIComponent(documentType)}`,
 };

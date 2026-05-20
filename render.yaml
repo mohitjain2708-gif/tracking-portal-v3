@@ -51,4 +51,8 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: RUNTIME_DIR
-        value: /tmp/tracking-portal-runtime
+        value: /opt/render/project-data/runtime_data
+    disk:
+      name: tracking-portal-v3-data
+      mountPath: /opt/render/project-data
+      sizeGB: 1

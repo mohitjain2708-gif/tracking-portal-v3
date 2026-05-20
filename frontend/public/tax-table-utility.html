@@ -991,12 +991,29 @@
       ...codes.flatMap((code) => [totals.taxValues[code] || 0, '', totals.taxAmounts[code] || 0])
     ];
 
+    const clearNode = (node) => {
+      while (node.firstChild) {
+        node.removeChild(node.firstChild);
+      }
+    };
+
+    const appendCell = (rowEl, tagName, text, options = {}) => {
+      const cell = document.createElement(tagName);
+      cell.textContent = text;
+      if (options.numeric) cell.classList.add('num');
+      if (options.className) cell.classList.add(options.className);
+      rowEl.appendChild(cell);
+      return cell;
+    };
+
     const renderHeader = () => {
       const headers = headersFor();
-      els.head.innerHTML = `<tr>${headers.map((header, index) => {
-        const className = index === 1 || index === 2 ? '' : ' class="num"';
-        return `<th${className}>${escapeHtml(header)}</th>`;
-      }).join('')}</tr>`;
+      clearNode(els.head);
+      const rowEl = document.createElement('tr');
+      headers.forEach((header, index) => {
+        appendCell(rowEl, 'th', header, { numeric: !(index === 1 || index === 2) });
+      });
+      els.head.appendChild(rowEl);
     };
 
     const render = () => {
@@ -1009,37 +1026,35 @@
       });
 
       renderHeader();
-      els.body.innerHTML = rows.map((row) => `
-        <tr>
-          <td class="num">${row.itemNo}</td>
-          <td class="item-name">${escapeHtml(row.itemName)}</td>
-          <td>${escapeHtml(row.hsCode)}</td>
-          <td class="num">${formatPlain(row.quantity)}</td>
-          ${currentTaxCodes.map((code) => {
-            const tax = taxFor(row, code);
-            return `
-              <td class="num">${formatNumber(tax.value)}</td>
-              <td class="num">${formatPlain(tax.percent)}</td>
-              <td class="num">${formatNumber(tax.amount)}</td>
-            `;
-          }).join('')}
-        </tr>
-      `).join('');
+      clearNode(els.body);
+      rows.forEach((row) => {
+        const rowEl = document.createElement('tr');
+        appendCell(rowEl, 'td', String(row.itemNo), { numeric: true });
+        appendCell(rowEl, 'td', row.itemName, { className: 'item-name' });
+        appendCell(rowEl, 'td', row.hsCode);
+        appendCell(rowEl, 'td', formatPlain(row.quantity), { numeric: true });
+        currentTaxCodes.forEach((code) => {
+          const tax = taxFor(row, code);
+          appendCell(rowEl, 'td', formatNumber(tax.value), { numeric: true });
+          appendCell(rowEl, 'td', formatPlain(tax.percent), { numeric: true });
+          appendCell(rowEl, 'td', formatNumber(tax.amount), { numeric: true });
+        });
+        els.body.appendChild(rowEl);
+      });
 
       const totals = totalsFor(rows);
-      els.foot.innerHTML = `
-        <tr>
-          <td></td>
-          <td>TOTAL</td>
-          <td></td>
-          <td class="num">${formatPlain(totals.quantity)}</td>
-          ${currentTaxCodes.map((code) => `
-            <td class="num">${formatNumber(totals.taxValues[code] || 0)}</td>
-            <td></td>
-            <td class="num">${formatNumber(totals.taxAmounts[code] || 0)}</td>
-          `).join('')}
-        </tr>
-      `;
+      clearNode(els.foot);
+      const footRow = document.createElement('tr');
+      appendCell(footRow, 'td', '');
+      appendCell(footRow, 'td', 'TOTAL');
+      appendCell(footRow, 'td', '');
+      appendCell(footRow, 'td', formatPlain(totals.quantity), { numeric: true });
+      currentTaxCodes.forEach((code) => {
+        appendCell(footRow, 'td', formatNumber(totals.taxValues[code] || 0), { numeric: true });
+        appendCell(footRow, 'td', '');
+        appendCell(footRow, 'td', formatNumber(totals.taxAmounts[code] || 0), { numeric: true });
+      });
+      els.foot.appendChild(footRow);
 
       els.tableStatus.textContent = rows.length === currentRows.length
         ? `${rows.length} item rows shown. Tariffs: ${currentTaxCodes.join(', ')}.`
@@ -1083,9 +1098,9 @@
       currentFileBase = 'asycuda-tax-table';
       els.input.value = '';
       els.search.value = '';
-      els.body.innerHTML = '';
-      els.foot.innerHTML = '';
-      els.head.innerHTML = '';
+      clearNode(els.body);
+      clearNode(els.foot);
+      clearNode(els.head);
       els.fileName.textContent = '-';
       els.declaration.textContent = '-';
       els.registration.textContent = '-';
