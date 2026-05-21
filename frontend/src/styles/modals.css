@@ -933,26 +933,27 @@
 
 .audit-container-chips {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
-.audit-container-chip {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(239, 245, 251, 0.95);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.audit-container-chips .container-chip-list,
-.action-modal-container-list .container-chip-list {
-  gap: 10px;
+.audit-container-chips .container-text-list,
+.action-modal-container-list .container-text-list {
+  gap: 8px;
 }
 
 .action-modal-container-list {
-  margin-top: 14px;
+  margin-top: 10px;
+}
+
+.audit-container-chips .container-text-number,
+.action-modal-container-list .container-text-number {
+  font-size: 13px;
+  color: #34485e;
+}
+
+.audit-container-chips .container-text-label,
+.action-modal-container-list .container-text-label {
+  color: #aa7074;
 }
 
 .audit-journal {

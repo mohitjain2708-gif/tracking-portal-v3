@@ -425,6 +425,21 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
 
         <div className="table-wrap dashboard-table-wrap" ref={table.tableWrapRef}>
           <table className="shipment-table dense-table">
+            <colgroup>
+              <col style={{ width: "var(--col-select)" }} />
+              <col style={{ width: "var(--col-customer)" }} />
+              <col style={{ width: "var(--col-containers)" }} />
+              <col style={{ width: "var(--col-bl)" }} />
+              <col style={{ width: "var(--col-status)" }} />
+              <col style={{ width: "var(--col-movement)" }} />
+              <col style={{ width: "var(--col-location)" }} />
+              <col style={{ width: "var(--col-since)" }} />
+              <col style={{ width: "var(--col-train)" }} />
+              <col style={{ width: "var(--col-departure)" }} />
+              <col style={{ width: "var(--col-do-date)" }} />
+              <col style={{ width: "var(--col-doc-status)" }} />
+              <col style={{ width: "var(--col-docs)" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th className="th-center selection-col">

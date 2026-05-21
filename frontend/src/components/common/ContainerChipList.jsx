@@ -21,24 +21,28 @@ export default function ContainerChipList({
   }
 
   return (
-    <div className={`container-chip-collection ${className}`.trim()}>
-      <div className="container-chip-list">
+    <div
+      className={`container-text-collection ${expanded ? "is-expanded" : "is-collapsed"} ${className}`.trim()}
+    >
+      <div className="container-text-list">
         {visibleDetails.map((detail) => {
           const tone = getDestuffingTone(detail.destuffing_label);
           return (
-            <span
+            <div
               key={detail.number}
-              className={`container-chip${tone ? ` is-${tone}` : ""}`}
+              className={`container-text-row${tone ? ` is-${tone}` : ""}`}
             >
-              <span className="container-chip-number">{detail.number}</span>
+              <span className="container-text-number">{detail.number}</span>
               {detail.destuffing_label ? (
-                <span className="container-chip-tag">{detail.destuffing_label}</span>
+                <span className={`container-text-label${tone ? ` is-${tone}` : ""}`}>
+                  {detail.destuffing_label}
+                </span>
               ) : null}
-            </span>
+            </div>
           );
         })}
         {overflowCount > 0 && !expanded ? (
-          <span className="container-chip container-chip-more">+{overflowCount} more</span>
+          <div className="container-text-row container-text-more">+{overflowCount} more containers</div>
         ) : null}
       </div>
       {showOverflowHint && details.length > maxVisible ? (

@@ -498,11 +498,12 @@ html[data-portal-ui="premium"] body {
 
 .premium-card-containers {
   max-width: 32ch;
-  text-align: right;
+  text-align: left;
 }
 
-.premium-card-containers .container-chip-list {
-  justify-content: flex-end;
+.premium-card-containers .container-text-list {
+  justify-items: end;
+  text-align: right;
 }
 
 .premium-row-action-summary {
@@ -511,8 +512,16 @@ html[data-portal-ui="premium"] body {
 }
 
 .premium-shipment-card.is-destuffing-ready {
-  border-color: rgba(93, 169, 242, 0.38);
-  box-shadow: 0 18px 40px rgba(32, 48, 78, 0.05), inset 0 0 0 1px rgba(93, 169, 242, 0.12);
+  border-color: rgba(196, 130, 136, 0.32);
+  box-shadow: 0 18px 40px rgba(32, 48, 78, 0.05), inset 0 0 0 1px rgba(196, 130, 136, 0.12);
+}
+
+.premium-card-containers .container-text-number {
+  color: #3c4f64;
+}
+
+.premium-card-containers .container-text-label {
+  color: #ae7176;
 }
 
 .premium-shipment-facts {
