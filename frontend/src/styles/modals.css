@@ -1,4 +1,4 @@
-﻿.modal-backdrop {
+.modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.4);
@@ -932,9 +932,8 @@
 }
 
 .audit-container-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  gap: 10px;
 }
 
 .audit-container-chip {
@@ -945,6 +944,15 @@
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+}
+
+.audit-container-chips .container-chip-list,
+.action-modal-container-list .container-chip-list {
+  gap: 10px;
+}
+
+.action-modal-container-list {
+  margin-top: 14px;
 }
 
 .audit-journal {

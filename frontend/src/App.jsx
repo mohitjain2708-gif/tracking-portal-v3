@@ -20,6 +20,7 @@ import {
   applyOperationalFieldUpdate,
   applyShipmentOverlayUpdate,
   badgeClass,
+  buildContainerDetails,
   buildGroupedRowsFromShipments,
   cleanText,
   compareLocationByDistance,
@@ -134,6 +135,7 @@ function App() {
   const [documentUploadState, setDocumentUploadState] = useState({});
   const [locationDistanceMap, setLocationDistanceMap] = useState({});
   const [selectedGroupKeys, setSelectedGroupKeys] = useState([]);
+  const [expandedDashboardGroupKeys, setExpandedDashboardGroupKeys] = useState([]);
   const [stickyHeaderActive, setStickyHeaderActive] = useState(false);
   const [stickyHeaderStyle, setStickyHeaderStyle] = useState({ left: 0, width: 0, scrollLeft: 0 });
   const [actionRow, setActionRow] = useState(null);
@@ -276,6 +278,7 @@ function App() {
     setGoogleSheetState(INITIAL_GOOGLE_SHEET_STATE);
     setGoogleSheetLoading(false);
     setSelectedGroupKeys([]);
+    setExpandedDashboardGroupKeys([]);
     setConfirmAction(null);
     setBulkConfirmAction(null);
     setBulkClearanceMap({});
@@ -736,9 +739,11 @@ function App() {
       dashboardRows.map((row) => ({
         ...row,
         movement_category: normalizeMovementCategory(row.movement_category),
+        container_details: buildContainerDetails(row),
         container_numbers: Array.isArray(row.container_numbers) ? row.container_numbers : [],
         container_count:
           Number(row.container_count) ||
+          (Array.isArray(row.container_details) ? row.container_details.length : 0) ||
           (Array.isArray(row.container_numbers) ? row.container_numbers.length : 0),
         movement_diagnostics: normalizeMovementDiagnostics(row.movement_diagnostics),
       })),
@@ -2384,6 +2389,23 @@ function App() {
     setRowContextMenu({ row, x: event.clientX, y: event.clientY });
   }, []);
 
+  const handleActivateDashboardRow = useCallback(
+    (row) => {
+      const rowKey = cleanText(row?.group_key || row?.id);
+      const containerCount = buildContainerDetails(row).length || Number(row?.container_count) || 0;
+      if (!rowKey || containerCount <= 5) {
+        setAuditRow(row);
+        return;
+      }
+      if (expandedDashboardGroupKeys.includes(rowKey)) {
+        setAuditRow(row);
+        return;
+      }
+      setExpandedDashboardGroupKeys((current) => (current.includes(rowKey) ? current : [...current, rowKey]));
+    },
+    [expandedDashboardGroupKeys]
+  );
+
   const handlePrepareBulkComplete = useCallback(() => {
     const nextMap = {};
     selectedRows.forEach((row) => {
@@ -2421,7 +2443,7 @@ function App() {
       onClearSelection: clearSelection,
       onToggleSelectAllVisible: toggleSelectAllVisible,
       onSort: handleSort,
-      onOpenAuditRow: setAuditRow,
+      onOpenAuditRow: handleActivateDashboardRow,
       onOpenRowContextMenu: handleOpenRowContextMenu,
       onToggleGroupSelection: toggleGroupSelection,
       onOpenDocuments: setDocumentRow,
@@ -2430,6 +2452,7 @@ function App() {
       clearSelection,
       handleDashboardExport,
       handleLogout,
+      handleActivateDashboardRow,
       handleOpenRowContextMenu,
       handlePrepareBulkArchive,
       handlePrepareBulkComplete,
@@ -2464,6 +2487,7 @@ function App() {
         stickyHeaderStyle,
         highlightedGroupKey,
         allVisibleSelected,
+        expandedGroupKeys: expandedDashboardGroupKeys,
         sortConfig,
         movementFilters: MOVEMENT_FILTERS,
         shipmentStatusFilters: SHIPMENT_STATUS_FILTERS,
@@ -2476,6 +2500,7 @@ function App() {
       currentUser,
       dashboardIdentifiers,
       demoSessionEnabled,
+      expandedDashboardGroupKeys,
       filteredRows,
       highlightedGroupKey,
       landingActions,

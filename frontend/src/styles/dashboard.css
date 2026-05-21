@@ -1,4 +1,4 @@
-﻿.panel-card,
+.panel-card,
 .metrics-panel,
 .dashboard-panel {
   padding: 22px;
@@ -730,6 +730,10 @@
   cursor: pointer;
 }
 
+.interactive-row.is-destuffing-ready td.identity-col {
+  box-shadow: inset 3px 0 0 rgba(70, 122, 201, 0.26);
+}
+
 .interactive-row.is-selected {
   background: rgba(41, 80, 107, 0.05);
 }
@@ -776,6 +780,7 @@
   display: grid;
   gap: 6px;
   min-width: 220px;
+  min-height: 72px;
 }
 
 .identity-subline {
@@ -784,11 +789,111 @@
   letter-spacing: 0.02em;
 }
 
+.row-action-summary {
+  font-size: 11px;
+  color: #56728f;
+  letter-spacing: 0.01em;
+}
+
 .container-list-cell {
   max-width: 250px;
-  color: #526176;
-  line-height: 1.65;
-  font-size: 12px;
+}
+
+.container-list-cell .container-chip-list {
+  min-height: 72px;
+  align-content: flex-start;
+}
+
+.container-chip-collection {
+  display: grid;
+  gap: 8px;
+}
+
+.container-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.container-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(201, 214, 229, 0.86);
+  background: rgba(247, 250, 253, 0.98);
+  color: #35506e;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.container-chip-number {
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: #314861;
+}
+
+.container-chip-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: rgba(53, 93, 135, 0.1);
+  color: #355d87;
+}
+
+.container-chip.is-factory {
+  border-color: rgba(86, 182, 133, 0.35);
+  background: rgba(241, 250, 245, 0.98);
+}
+
+.container-chip.is-factory .container-chip-tag {
+  background: rgba(86, 182, 133, 0.14);
+  color: #2f7b58;
+}
+
+.container-chip.is-icd {
+  border-color: rgba(93, 169, 242, 0.34);
+  background: rgba(242, 248, 255, 0.98);
+}
+
+.container-chip.is-icd .container-chip-tag {
+  background: rgba(93, 169, 242, 0.16);
+  color: #2f638d;
+}
+
+.container-chip.is-warehouse {
+  border-color: rgba(208, 154, 92, 0.35);
+  background: rgba(253, 248, 241, 0.98);
+}
+
+.container-chip.is-warehouse .container-chip-tag {
+  background: rgba(208, 154, 92, 0.16);
+  color: #8b6133;
+}
+
+.container-chip-more {
+  color: #61778f;
+}
+
+.container-expansion-note,
+.container-empty-label {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #72849a;
+}
+
+.meta-pill-destuffing {
+  border-color: rgba(93, 169, 242, 0.26);
+  background: rgba(239, 246, 255, 0.98);
+  color: #446987;
 }
 
 .th-center {

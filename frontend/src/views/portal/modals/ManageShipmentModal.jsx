@@ -1,6 +1,7 @@
-﻿import ActionButton from "../../../components/common/ActionButton";
+import ActionButton from "../../../components/common/ActionButton";
+import ContainerChipList from "../../../components/common/ContainerChipList";
 import Modal from "../../../components/common/Modal";
-import { cleanText, formatLocationLabel, formatShipmentStatusLabel } from "../../../lib/portalUtils";
+import { cleanText, formatActionSummary, formatLocationLabel, formatShipmentStatusLabel } from "../../../lib/portalUtils";
 
 export default function ManageShipmentModal({
   actionRow,
@@ -40,17 +41,14 @@ export default function ManageShipmentModal({
               <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
                 {actionRow.movement_category || "Hi Seas"}
               </span>
-              {actionRow.action_required ? (
-                <span className="soft-attention-pill" title={actionRow.action_required_reason || "Action required"}>
-                  Action needed
-                </span>
-              ) : null}
+              {formatActionSummary(actionRow) ? <span className="meta-pill meta-pill-destuffing">{formatActionSummary(actionRow)}</span> : null}
               <span className="meta-pill">
                 {actionRow.container_count || actionRow.container_numbers?.length || 1} container
                 {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}
               </span>
               <span className="meta-pill">{actionRow.bl_number ? `BL ${actionRow.bl_number}` : "BL not linked"}</span>
             </div>
+            <ContainerChipList row={actionRow} expanded showOverflowHint={false} className="action-modal-container-list" />
           </div>
 
           <div className="action-modal-facts">

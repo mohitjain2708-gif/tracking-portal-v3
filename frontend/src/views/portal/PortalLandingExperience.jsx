@@ -1,6 +1,7 @@
-﻿import React from "react";
+import React from "react";
 
 import ActionButton from "../../components/common/ActionButton";
+import ContainerChipList from "../../components/common/ContainerChipList";
 import DashboardMetric from "../../components/dashboard/DashboardMetric";
 import MovementIcon from "../../components/dashboard/MovementIcon";
 import MovementIdentifier from "../../components/dashboard/MovementIdentifier";
@@ -8,6 +9,7 @@ import SortableHeader from "../../components/dashboard/SortableHeader";
 import StatCard from "../../components/dashboard/StatCard";
 import {
   badgeClass,
+  formatActionSummary,
   formatDocumentStatusSummary,
   formatLocationLabel,
   formatShipmentStatusLabel,
@@ -129,9 +131,18 @@ function PremiumMetricCard({ metric, MovementIcon }) {
   );
 }
 
+function RowActionSummary({ row, className = "" }) {
+  const summary = formatActionSummary(row);
+  if (!summary) {
+    return null;
+  }
+  return <div className={`row-action-summary ${className}`.trim()}>{summary}</div>;
+}
+
 function PremiumShipmentCard({
   row,
   isSelected,
+  isExpanded,
   onToggleSelection,
   onOpenAuditRow,
   onOpenRowContextMenu,
@@ -143,7 +154,7 @@ function PremiumShipmentCard({
 }) {
   return (
     <article
-      className={`premium-shipment-card ${isSelected ? "is-selected" : ""}`}
+      className={`premium-shipment-card ${isSelected ? "is-selected" : ""} ${row.destuffing_ready ? "is-destuffing-ready" : ""}`}
       onClick={() => onOpenAuditRow(row)}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -163,7 +174,6 @@ function PremiumShipmentCard({
         <div className="premium-card-statuses">
           <span className={badgeClass("status", row.shipment_status)}>{formatShipmentStatusLabel(row.shipment_status)}</span>
           <span className={badgeClass("movement", row.movement_category)}>{row.movement_category || "Hi Seas"}</span>
-          {row.action_required ? <span className="soft-attention-pill">Action needed</span> : null}
         </div>
       </div>
 
@@ -171,11 +181,10 @@ function PremiumShipmentCard({
         <div>
           <h3>{row.customer_name || "Unnamed customer"}</h3>
           <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
+          <RowActionSummary row={row} className="premium-row-action-summary" />
         </div>
         <div className="premium-card-containers">
-          {(row.container_numbers?.length ? row.container_numbers : [row.primary_container_number])
-            .filter(Boolean)
-            .join(", ") || "-"}
+          <ContainerChipList row={row} expanded={isExpanded} />
         </div>
       </div>
 
@@ -463,10 +472,11 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                 table.rows.map((row) => {
                   const rowKey = String(row.group_key || row.id || "").trim();
                   const isSelected = table.selectedGroupKeys.includes(rowKey);
+                  const isExpanded = table.expandedGroupKeys.includes(rowKey);
                   return (
                     <tr
                       key={row.group_key || row.id}
-                      className={`interactive-row ${isSelected ? "is-selected" : ""} ${table.highlightedGroupKey === row.group_key ? "is-freshly-updated" : ""}`}
+                      className={`interactive-row ${isSelected ? "is-selected" : ""} ${table.highlightedGroupKey === row.group_key ? "is-freshly-updated" : ""} ${row.destuffing_ready ? "is-destuffing-ready" : ""}`}
                       onClick={() => actions.onOpenAuditRow(row)}
                       onContextMenu={(event) => {
                         event.preventDefault();
@@ -487,14 +497,11 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                           <div className="identity-subline">
                             {row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}
                           </div>
+                          <RowActionSummary row={row} />
                         </div>
                       </td>
                       <td>
-                        <div className="container-list-cell">
-                          {(row.container_numbers?.length ? row.container_numbers : [row.primary_container_number])
-                            .filter(Boolean)
-                            .join(", ") || "-"}
-                        </div>
+                        <ContainerChipList row={row} expanded={isExpanded} className="container-list-cell" />
                       </td>
                       <td>{row.bl_number || "-"}</td>
                       <td>
@@ -507,11 +514,6 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                           <span className={badgeClass("movement", row.movement_category)}>
                             {row.movement_category || "Hi Seas"}
                           </span>
-                          {row.action_required ? (
-                            <span className="soft-attention-pill" title={row.action_required_reason || "Action required"}>
-                              Action needed
-                            </span>
-                          ) : null}
                         </div>
                       </td>
                       <td>{formatLocationLabel(row.latest_location) || "Not available"}</td>
@@ -717,11 +719,13 @@ function PremiumPortalLandingView({ model, ownerPanel }) {
             {table.rows.map((row) => {
               const rowKey = String(row.group_key || row.id || "").trim();
               const isSelected = table.selectedGroupKeys.includes(rowKey);
+              const isExpanded = table.expandedGroupKeys.includes(rowKey);
               return (
                 <PremiumShipmentCard
                   key={row.group_key || row.id}
                   row={row}
                   isSelected={isSelected}
+                  isExpanded={isExpanded}
                   onToggleSelection={actions.onToggleGroupSelection}
                   onOpenAuditRow={actions.onOpenAuditRow}
                   onOpenRowContextMenu={actions.onOpenRowContextMenu}
@@ -759,6 +763,7 @@ export function buildPortalLandingModel({
   stickyHeaderStyle,
   highlightedGroupKey,
   allVisibleSelected,
+  expandedGroupKeys,
   sortConfig,
   movementFilters,
   shipmentStatusFilters,
@@ -863,6 +868,7 @@ export function buildPortalLandingModel({
       sortConfig,
       selectedGroupKeys,
       allVisibleSelected,
+      expandedGroupKeys,
       stickyHeaderActive,
       stickyHeaderStyle,
       highlightedGroupKey,

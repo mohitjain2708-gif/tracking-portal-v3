@@ -1,4 +1,4 @@
-﻿html[data-portal-ui="premium"] body {
+html[data-portal-ui="premium"] body {
   background:
     radial-gradient(circle at top right, rgba(64, 95, 138, 0.1), transparent 24%),
     radial-gradient(circle at left top, rgba(219, 225, 236, 0.68), transparent 20%),
@@ -499,6 +499,20 @@
 .premium-card-containers {
   max-width: 32ch;
   text-align: right;
+}
+
+.premium-card-containers .container-chip-list {
+  justify-content: flex-end;
+}
+
+.premium-row-action-summary {
+  margin-top: 6px;
+  text-align: left;
+}
+
+.premium-shipment-card.is-destuffing-ready {
+  border-color: rgba(93, 169, 242, 0.38);
+  box-shadow: 0 18px 40px rgba(32, 48, 78, 0.05), inset 0 0 0 1px rgba(93, 169, 242, 0.12);
 }
 
 .premium-shipment-facts {

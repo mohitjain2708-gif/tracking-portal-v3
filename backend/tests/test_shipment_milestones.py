@@ -29,6 +29,7 @@ from app.api.routes.shipments import (
     _movement_category,
     _movement_since_date,
     _normalize_bl_number,
+    _normalize_destuffing_label,
     _should_use_pristine_arrival_override,
     _shipments_to_dicts,
     _should_ignore_stale_concor_data,
@@ -522,6 +523,12 @@ class ShipmentMilestoneTests(unittest.TestCase):
         self.assertEqual(payload["data"]["birgunj_arrival_date"], today_text)
         self.assertEqual(payload["data"]["pristine_booking_date"], today_text)
 
+    def test_pristine_booking_mode_is_normalized_to_known_destuffing_labels(self) -> None:
+        self.assertEqual(_normalize_destuffing_label(" factory destuffing "), "Factory Destuffing")
+        self.assertEqual(_normalize_destuffing_label("ICD Destuffing"), "ICD Destuffing")
+        self.assertEqual(_normalize_destuffing_label("Warehouse Destuffing"), "Warehouse Destuffing")
+        self.assertEqual(_normalize_destuffing_label("Unknown Mode"), "")
+
     def test_build_tracking_payload_keeps_live_source_when_it_is_newer_than_pristine_arrival(self) -> None:
         live_date = datetime.now().strftime("%d-%m-%Y")
         pristine_arrival = (datetime.now() - timedelta(days=2)).strftime("%d-%m-%Y")
@@ -590,6 +597,78 @@ class ShipmentMilestoneTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["action_required"])
         self.assertEqual(rows[0]["action_required_reason"], "Pristine booking date is after Birgunj arrival")
+
+    def test_group_dashboard_rows_mark_destuffing_ready_only_when_all_containers_have_labels(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Cycle Customer",
+                container_number="FFAU7543044",
+                bl_number="BL-DESTUFF-1",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                pristine_booking_mode="Factory Destuffing",
+            ),
+            Shipment(
+                customer_name="Cycle Customer",
+                container_number="MSMU2636596",
+                bl_number="BL-DESTUFF-1",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                pristine_booking_mode="ICD Destuffing",
+            ),
+        ]
+
+        rows = _group_dashboard_rows(shipments)
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["destuffing_ready"])
+        self.assertTrue(rows[0]["action_required"])
+        self.assertEqual(rows[0]["action_required_summary"], "Destuffing follow-through ready")
+        self.assertEqual(
+            rows[0]["container_details"],
+            [
+                {"number": "FFAU7543044", "destuffing_label": "Factory Destuffing"},
+                {"number": "MSMU2636596", "destuffing_label": "ICD Destuffing"},
+            ],
+        )
+
+    def test_group_dashboard_rows_keep_partial_destuffing_at_container_level_without_group_ready(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Cycle Customer",
+                container_number="FFAU7543044",
+                bl_number="BL-DESTUFF-2",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                pristine_booking_mode="Factory Destuffing",
+            ),
+            Shipment(
+                customer_name="Cycle Customer",
+                container_number="MSMU2636596",
+                bl_number="BL-DESTUFF-2",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                pristine_booking_mode="",
+            ),
+        ]
+
+        rows = _group_dashboard_rows(shipments)
+
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]["destuffing_ready"])
+        self.assertFalse(rows[0]["action_required"])
+        self.assertEqual(rows[0]["action_required_summary"], "")
+        self.assertEqual(
+            rows[0]["container_details"],
+            [
+                {"number": "FFAU7543044", "destuffing_label": "Factory Destuffing"},
+                {"number": "MSMU2636596", "destuffing_label": ""},
+            ],
+        )
 
     def test_concor_wgn_signal_marks_shipment_as_on_rail(self) -> None:
         movement = _movement_category(

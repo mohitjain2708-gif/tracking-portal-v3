@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.bootstrap import ensure_owner_account, ensure_user_schema
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password, verify_password
-from app.api.routes.shipments import _earliest_non_empty_date, _shipment_to_dict
+from app.api.routes.shipments import _earliest_non_empty_date, _ensure_storage_ready, _shipment_to_dict
 from app.deps import get_current_admin, get_current_user
 from app.models.audit_log import AuditLog
 from app.models.job import Job
@@ -348,6 +348,7 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
 
 @router.get("/admin/users/{user_id}/shipments")
 def admin_user_shipments(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):
+    _ensure_storage_ready(db)
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

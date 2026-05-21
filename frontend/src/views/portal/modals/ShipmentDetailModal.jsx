@@ -1,9 +1,11 @@
-﻿import ActionButton from "../../../components/common/ActionButton";
+import ActionButton from "../../../components/common/ActionButton";
 import AuditDisclosure from "../../../components/common/AuditDisclosure";
+import ContainerChipList from "../../../components/common/ContainerChipList";
 import Modal from "../../../components/common/Modal";
 import {
   cleanText,
   exportRowsAsCsv,
+  formatActionSummary,
   formatAuditActionLabel,
   formatAuditDetails,
   formatDocumentStatusSummary,
@@ -71,11 +73,7 @@ export default function ShipmentDetailModal({
               <span className={badgeClass("movement", auditRow.movement_category || "Hi Seas")}>
                 {auditRow.movement_category || "Hi Seas"}
               </span>
-              {auditRow.action_required ? (
-                <span className="soft-attention-pill" title={auditRow.action_required_reason || "Action required"}>
-                  Action needed
-                </span>
-              ) : null}
+              {formatActionSummary(auditRow) ? <span className="meta-pill meta-pill-destuffing">{formatActionSummary(auditRow)}</span> : null}
               <span className="meta-pill">
                 {auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)} container
                 {(auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)) === 1 ? "" : "s"}
@@ -198,15 +196,7 @@ export default function ShipmentDetailModal({
             <div className="audit-snapshot-row">
               <div className="audit-kv-block audit-kv-block-compact">
                 <span>Container</span>
-                <div className="audit-container-chips">
-                  {(auditRow.container_numbers?.length ? auditRow.container_numbers : [auditRow.primary_container_number])
-                    .filter(Boolean)
-                    .map((container) => (
-                      <span key={container} className="audit-container-chip">
-                        {container}
-                      </span>
-                    ))}
-                </div>
+                <ContainerChipList row={auditRow} expanded showOverflowHint={false} className="audit-container-chips" />
               </div>
               <dl className="audit-snapshot-facts audit-snapshot-facts-inline">
                 <div>

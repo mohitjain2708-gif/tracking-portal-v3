@@ -1,4 +1,10 @@
-﻿import { MOVEMENT_PRIORITY } from "../constants/portalConstants";
+import { MOVEMENT_PRIORITY } from "../constants/portalConstants";
+
+const DESTUFFING_LABELS = {
+  "factory destuffing": "Factory Destuffing",
+  "icd destuffing": "ICD Destuffing",
+  "warehouse destuffing": "Warehouse Destuffing",
+};
 
 export function cleanText(value) {
   return String(value ?? "")
@@ -9,6 +15,87 @@ export function cleanText(value) {
     .replace(/&#39;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function normalizeDestuffingLabel(value) {
+  return DESTUFFING_LABELS[cleanText(value).toLowerCase()] || "";
+}
+
+export function getDestuffingTone(value) {
+  const normalized = normalizeDestuffingLabel(value);
+  if (normalized === "Factory Destuffing") {
+    return "factory";
+  }
+  if (normalized === "ICD Destuffing") {
+    return "icd";
+  }
+  if (normalized === "Warehouse Destuffing") {
+    return "warehouse";
+  }
+  return "";
+}
+
+export function buildContainerDetails(row) {
+  const details = [];
+  const seen = new Map();
+  const sourceItems = Array.isArray(row?.container_details) && row.container_details.length
+    ? row.container_details
+    : (Array.isArray(row?.container_numbers) ? row.container_numbers : [row?.primary_container_number]).map((number) => ({
+        number,
+        destuffing_label: row?.destuffing_label || row?.pristine_booking_mode || "",
+      }));
+
+  sourceItems.forEach((item) => {
+    const number = cleanText(item?.number || item?.container_number || item).toUpperCase();
+    if (!number) {
+      return;
+    }
+    const nextLabel = normalizeDestuffingLabel(
+      item?.destuffing_label || item?.pristine_booking_mode || item?.booking_mode || ""
+    );
+    const existing = seen.get(number) || { number, destuffing_label: "" };
+    if (nextLabel && !existing.destuffing_label) {
+      existing.destuffing_label = nextLabel;
+    }
+    seen.set(number, existing);
+  });
+
+  seen.forEach((detail) => {
+    details.push(detail);
+  });
+
+  return details.sort((left, right) => left.number.localeCompare(right.number, undefined, { sensitivity: "base" }));
+}
+
+export function getVisibleContainerDetails(row, expanded = false, maxVisible = 5) {
+  const details = buildContainerDetails(row);
+  if (expanded || details.length <= maxVisible) {
+    return details;
+  }
+  return details.slice(0, maxVisible);
+}
+
+export function getContainerOverflowCount(row, maxVisible = 5) {
+  const details = buildContainerDetails(row);
+  return Math.max(0, details.length - maxVisible);
+}
+
+export function isDestuffingReady(row) {
+  const details = buildContainerDetails(row);
+  return details.length > 0 && details.every((detail) => normalizeDestuffingLabel(detail.destuffing_label));
+}
+
+export function formatActionSummary(row) {
+  if (row?.destuffing_ready || isDestuffingReady(row)) {
+    return "Destuffing follow-through ready";
+  }
+  if (cleanText(row?.action_required_summary)) {
+    return cleanText(row.action_required_summary);
+  }
+  if (cleanText(row?.action_required_reason)) {
+    return "Follow-up recommended";
+  }
+  return "";
 }
 
 export function parseContainerInput(value) {
@@ -571,14 +658,22 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         return (right.id || 0) - (left.id || 0);
       });
       const lead = sortedEntries[0];
-      const containerNumbers = Array.from(
-        new Set(sortedEntries.map((item) => cleanText(item.container_number)).filter(Boolean))
-      ).sort();
+      const containerDetails = buildContainerDetails({
+        container_details: sortedEntries.map((item) => ({
+          number: item.container_number,
+          destuffing_label: item.destuffing_label || item.pristine_booking_mode,
+        })),
+      });
+      const containerNumbers = containerDetails.map((item) => item.number);
+      const destuffingReady = containerDetails.length > 0 && containerDetails.every((item) => item.destuffing_label);
+      const legacyActionRequired = sortedEntries.some((item) => item.action_required);
+      const actionRequired = legacyActionRequired || destuffingReady;
       return {
         group_key: groupKey,
         id: lead.id,
         customer_name: cleanText(lead.customer_name) || "-",
         primary_container_number: cleanText(lead.container_number),
+        container_details: containerDetails,
         container_numbers: containerNumbers,
         container_count: containerNumbers.length,
         bl_number: cleanText(lead.bl_number),
@@ -598,10 +693,12 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         last_refresh_status: cleanText(lead.last_refresh_status),
         last_refresh_error: cleanText(lead.last_refresh_error),
         clearance_doc_number: cleanText(lead.clearance_doc_number),
-        action_required: Boolean(sortedEntries.some((item) => item.action_required)),
+        action_required: actionRequired,
         action_required_reason: cleanText(
           sortedEntries.find((item) => cleanText(item.action_required_reason))?.action_required_reason
         ),
+        action_required_summary: destuffingReady ? "Destuffing follow-through ready" : (actionRequired ? "Follow-up recommended" : ""),
+        destuffing_ready: destuffingReady,
         movement_diagnostics: {
           ...normalizeMovementDiagnostics(lead.movement_diagnostics),
           group_scope_summary: `The dashboard is showing the strongest live movement across ${containerNumbers.length || 1} container${containerNumbers.length === 1 ? "" : "s"} in this BL group.`,

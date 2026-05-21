@@ -131,6 +131,7 @@ SHIPMENT_COLUMN_DEFINITIONS = {
     "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "birgunj_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
     "pristine_booking_date": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "pristine_booking_mode": "VARCHAR(64) NOT NULL DEFAULT ''",
     "train_no": "VARCHAR(64) NOT NULL DEFAULT ''",
     "departure": "VARCHAR(32) NOT NULL DEFAULT ''",
     "wagon_loaded_date": "VARCHAR(32) NOT NULL DEFAULT ''",
@@ -172,6 +173,12 @@ _background_refresh_instance_id = uuid4().hex
 _documents_index_cache: dict[str, dict[str, Any]] | None = None
 _documents_index_mtime: float | None = None
 _r2_client = None
+
+DESTUFFING_LABELS = {
+    "factory destuffing": "Factory Destuffing",
+    "icd destuffing": "ICD Destuffing",
+    "warehouse destuffing": "Warehouse Destuffing",
+}
 
 
 def _now_datetime() -> str:
@@ -310,6 +317,11 @@ def _clean_text(value: Any) -> str:
     text_value = unescape(str(value or ""))
     text_value = re.sub(r"<[^>]*>", " ", text_value)
     return re.sub(r"\s+", " ", text_value).strip()
+
+
+def _normalize_destuffing_label(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    return DESTUFFING_LABELS.get(normalized, "")
 
 
 def _sheet_cell_text(value: Any) -> str:
@@ -1823,6 +1835,7 @@ def _fetch_pristine_arrival(container_number: str) -> dict[str, Any] | None:
         return {
             "arrival_date": _format_to_dd_mm_yyyy(arrival_date),
             "booking_date": _format_to_dd_mm_yyyy(_extract_pristine_tracking_field(html_text, "Booking Date")),
+            "booking_mode": _normalize_destuffing_label(_extract_pristine_tracking_field(html_text, "Booking Mode")),
             "empty_date": _format_to_dd_mm_yyyy(_extract_pristine_tracking_field(html_text, "Empty Date")),
             "rake_departure_date": _format_to_dd_mm_yyyy(
                 _extract_pristine_tracking_field(html_text, "Rake Departure Date")
@@ -2465,6 +2478,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "port_arrival_date": shipment.port_arrival_date,
         "birgunj_arrival_date": getattr(shipment, "birgunj_arrival_date", ""),
         "pristine_booking_date": getattr(shipment, "pristine_booking_date", ""),
+        "pristine_booking_mode": _normalize_destuffing_label(getattr(shipment, "pristine_booking_mode", "")),
         "train_no": shipment.train_no,
         "departure": shipment.departure,
         "wagon_loaded_date": getattr(shipment, "wagon_loaded_date", ""),
@@ -2486,6 +2500,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "original_docs_received_date": getattr(shipment, "original_docs_received_date", ""),
         "action_required": action_required,
         "action_required_reason": "Pristine booking date is after Birgunj arrival" if action_required else "",
+        "destuffing_label": _normalize_destuffing_label(getattr(shipment, "pristine_booking_mode", "")),
         "movement_diagnostics": movement_diagnostics,
         "source_type": source_type,
         "source_label": source_label,
@@ -2912,6 +2927,7 @@ def _apply_legacy_row(db: Session, shipment: Shipment, row: dict[str, Any], defa
         "shipment_status": _clean_text(row.get("shipment_status")).lower() or "active",
         "latest_location": _clean_text(row.get("latest_location")),
         "latest_time": _clean_text(row.get("latest_time")),
+        "pristine_booking_mode": _normalize_destuffing_label(row.get("pristine_booking_mode")),
         "train_no": _clean_text(row.get("train_no")),
         "departure": _clean_text(row.get("departure")),
         "rail_status": _clean_text(row.get("rail_status")),
@@ -3104,6 +3120,7 @@ def _build_tracking_payload_from_sources(
         "port_arrival_date": resolved_state.port_arrival_date,
         "birgunj_arrival_date": resolved_state.birgunj_arrival_date,
         "pristine_booking_date": resolved_state.pristine_booking_date,
+        "pristine_booking_mode": _normalize_destuffing_label(pristine_data.get("booking_mode", "")),
         "train_no": resolved_state.train_no,
         "departure": resolved_state.departure,
         "wagon_loaded_date": resolved_state.wagon_loaded_date,
@@ -3154,6 +3171,7 @@ def _apply_tracking_payload(shipment: Shipment, payload: dict[str, Any]) -> Ship
     shipment.port_arrival_date = data.get("port_arrival_date", "") or ""
     shipment.birgunj_arrival_date = data.get("birgunj_arrival_date", "") or ""
     shipment.pristine_booking_date = data.get("pristine_booking_date", "") or ""
+    shipment.pristine_booking_mode = _normalize_destuffing_label(data.get("pristine_booking_mode", "") or "")
     shipment.train_no = data.get("train_no", "") or ""
     shipment.departure = data.get("departure", "") or ""
     shipment.wagon_loaded_date = data.get("wagon_loaded_date", "") or ""
@@ -3778,6 +3796,26 @@ def _reconcile_bl_number_normalization_for_user(db: Session, current_user: User)
         db.commit()
 
 
+def _build_group_container_details(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    by_number: dict[str, dict[str, str]] = {}
+    for item in items:
+        container_number = _clean_container(item.get("container_number", ""))
+        if not container_number:
+            continue
+        detail = by_number.get(container_number) or {"number": container_number, "destuffing_label": ""}
+        normalized_label = _normalize_destuffing_label(
+            item.get("destuffing_label") or item.get("pristine_booking_mode") or ""
+        )
+        if normalized_label and not detail["destuffing_label"]:
+            detail["destuffing_label"] = normalized_label
+        by_number[container_number] = detail
+    return [by_number[number] for number in sorted(by_number)]
+
+
+def _group_destuffing_ready(container_details: list[dict[str, str]]) -> bool:
+    return bool(container_details) and all(_normalize_destuffing_label(item.get("destuffing_label", "")) for item in container_details)
+
+
 def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     suppressed_orphan_keys: set[tuple[str, str]] = set()
     archived_group_keys = {
@@ -3840,7 +3878,17 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
         )
         refresh_lead = refresh_entries[0]
         bl_number = _first_non_empty([item.get("bl_number", "") for item in sorted_entries])
-        container_numbers = sorted({item.get("container_number", "") for item in sorted_entries if item.get("container_number")})
+        container_details = _build_group_container_details(sorted_entries)
+        container_numbers = [item["number"] for item in container_details]
+        legacy_action_required = any(bool(item.get("action_required")) for item in sorted_entries)
+        destuffing_ready = _group_destuffing_ready(container_details)
+        action_required = legacy_action_required or destuffing_ready
+        action_required_reason = _first_non_empty([item.get("action_required_reason", "") for item in sorted_entries])
+        action_required_summary = (
+            "Destuffing follow-through ready"
+            if destuffing_ready
+            else ("Follow-up recommended" if action_required else "")
+        )
         shipment_status = max(
             (item.get("shipment_status") or "archived" for item in sorted_entries),
             key=lambda status: SHIPMENT_STATUS_PRIORITY.get(status, 0),
@@ -3858,10 +3906,8 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
                 f"The dashboard is showing the strongest live movement across {len(container_numbers)} container"
                 f"{'' if len(container_numbers) == 1 else 's'} in this BL group."
             )
-            if any(bool(item.get("action_required")) for item in sorted_entries):
-                lead_diagnostics["action_summary"] = _first_non_empty(
-                    [item.get("action_required_reason", "") for item in sorted_entries]
-                )
+            if action_required_summary:
+                lead_diagnostics["action_summary"] = action_required_summary
         rows.append(
             {
                 "group_key": group_key,
@@ -3869,6 +3915,7 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
                 "customer_name": _first_non_empty([item.get("customer_name", "") for item in sorted_entries]),
                 "primary_container_number": lead.get("container_number", ""),
                 "container_number": lead.get("container_number", ""),
+                "container_details": container_details,
                 "container_numbers": container_numbers,
                 "container_count": len(container_numbers),
                 "bl_number": bl_number,
@@ -3894,8 +3941,10 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
                 "do_date": _first_non_empty([item.get("do_date", "") for item in sorted_entries]),
                 "document_status": _first_non_empty([item.get("document_status", "") for item in sorted_entries]),
                 "original_docs_received_date": _first_non_empty([item.get("original_docs_received_date", "") for item in sorted_entries]),
-                "action_required": any(bool(item.get("action_required")) for item in sorted_entries),
-                "action_required_reason": _first_non_empty([item.get("action_required_reason", "") for item in sorted_entries]),
+                "action_required": action_required,
+                "action_required_reason": action_required_reason,
+                "action_required_summary": action_required_summary,
+                "destuffing_ready": destuffing_ready,
                 "movement_diagnostics": lead_diagnostics,
                 "documents": documents,
                 "documents_complete": bool(bl_number) and all(documents.get(doc_type) for doc_type in VALID_DOCUMENT_TYPES),

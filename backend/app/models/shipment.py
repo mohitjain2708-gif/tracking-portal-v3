@@ -25,6 +25,7 @@ class Shipment(Base):
     port_arrival_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     birgunj_arrival_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     pristine_booking_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    pristine_booking_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     train_no: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     departure: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     wagon_loaded_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
