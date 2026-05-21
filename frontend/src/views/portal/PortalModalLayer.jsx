@@ -59,6 +59,7 @@ export default function PortalModalLayer({
   setDocumentRow,
   setDocumentFiles,
   documentFiles,
+  documentSubmitting,
   documentUploadState,
   handleOpenDocument,
   handleDownloadDocument,
@@ -118,8 +119,17 @@ export default function PortalModalLayer({
   handleChangePassword,
   setPasswordForm,
 }) {
+  const [bulkModalSubmitting, setBulkModalSubmitting] = React.useState(false);
+  const [bulkRowSubmittingKeys, setBulkRowSubmittingKeys] = React.useState({});
   const showGoogleSheetsImportModal =
     Boolean(shipmentImportPreview) && shipmentImportSourceContext?.source_type === "google_sheets";
+
+  React.useEffect(() => {
+    if (!bulkConfirmAction) {
+      setBulkModalSubmitting(false);
+      setBulkRowSubmittingKeys({});
+    }
+  }, [bulkConfirmAction]);
 
   return (
     <>
@@ -198,7 +208,12 @@ export default function PortalModalLayer({
                 ? "Archive selected shipments"
                 : "Delete selected shipments"
           }
-          onClose={() => setBulkConfirmAction(null)}
+          onClose={() => {
+            if (bulkModalSubmitting) {
+              return;
+            }
+            setBulkConfirmAction(null);
+          }}
         >
           {bulkConfirmAction.type === "completed" ? (
             <div className="stack-form bulk-complete-flow">
@@ -218,6 +233,7 @@ export default function PortalModalLayer({
                     </div>
                     <div className="bulk-complete-actions">
                       <input
+                        disabled={Boolean(bulkRowSubmittingKeys[row.group_key])}
                         value={bulkClearanceMap[row.group_key] || ""}
                         onChange={(event) =>
                           setBulkClearanceMap((current) => ({
@@ -230,6 +246,7 @@ export default function PortalModalLayer({
                       <ActionButton
                         type="button"
                         tone="primary"
+                        disabled={Boolean(bulkRowSubmittingKeys[row.group_key])}
                         onClick={async () => {
                           const clearanceDocNumber = cleanText(bulkClearanceMap[row.group_key]);
                           if (!clearanceDocNumber) {
@@ -239,22 +256,31 @@ export default function PortalModalLayer({
                             });
                             return;
                           }
-                          await handleGroupStatusChange(row, "completed", {
-                            clearance_doc_number: clearanceDocNumber,
-                          });
-                          setSelectedGroupKeys((current) => current.filter((groupKey) => groupKey !== row.group_key));
-                          setBulkClearanceMap((current) => {
-                            const next = { ...current };
-                            delete next[row.group_key];
-                            return next;
-                          });
-                          setFeedback({
-                            tone: "success",
-                            text: `${row.customer_name || row.bl_number || "Shipment"} marked complete.`,
-                          });
+                          setBulkRowSubmittingKeys((current) => ({ ...current, [row.group_key]: true }));
+                          try {
+                            await handleGroupStatusChange(row, "completed", {
+                              clearance_doc_number: clearanceDocNumber,
+                            });
+                            setSelectedGroupKeys((current) => current.filter((groupKey) => groupKey !== row.group_key));
+                            setBulkClearanceMap((current) => {
+                              const next = { ...current };
+                              delete next[row.group_key];
+                              return next;
+                            });
+                            setFeedback({
+                              tone: "success",
+                              text: `${row.customer_name || row.bl_number || "Shipment"} marked complete.`,
+                            });
+                          } finally {
+                            setBulkRowSubmittingKeys((current) => {
+                              const next = { ...current };
+                              delete next[row.group_key];
+                              return next;
+                            });
+                          }
                         }}
                       >
-                        Confirm
+                        {bulkRowSubmittingKeys[row.group_key] ? "Saving..." : "Confirm"}
                       </ActionButton>
                     </div>
                   </div>
@@ -270,23 +296,38 @@ export default function PortalModalLayer({
             </div>
           )}
           <div className="modal-actions">
-            <ActionButton type="button" tone="ghost" onClick={() => setBulkConfirmAction(null)}>
+            <ActionButton
+              type="button"
+              tone="ghost"
+              disabled={bulkModalSubmitting}
+              onClick={() => setBulkConfirmAction(null)}
+            >
               {bulkConfirmAction.type === "completed" ? "Done" : "Cancel"}
             </ActionButton>
             {bulkConfirmAction.type !== "completed" ? (
               <ActionButton
                 type="button"
                 tone={bulkConfirmAction.type === "delete" ? "danger" : "primary"}
+                disabled={bulkModalSubmitting}
                 onClick={async () => {
-                  if (bulkConfirmAction.type === "delete") {
-                    await handleBulkDelete();
-                  } else {
-                    await handleBulkStatusChange("archived");
+                  setBulkModalSubmitting(true);
+                  try {
+                    if (bulkConfirmAction.type === "delete") {
+                      await handleBulkDelete();
+                    } else {
+                      await handleBulkStatusChange("archived");
+                    }
+                    setBulkConfirmAction(null);
+                  } finally {
+                    setBulkModalSubmitting(false);
                   }
-                  setBulkConfirmAction(null);
                 }}
               >
-                Confirm
+                {bulkModalSubmitting
+                  ? bulkConfirmAction.type === "delete"
+                    ? "Removing..."
+                    : "Archiving..."
+                  : "Confirm"}
               </ActionButton>
             ) : null}
           </div>
@@ -478,6 +519,9 @@ export default function PortalModalLayer({
         <Modal
           title={`${documentRow.documents_complete ? "Documents" : "Add Documents"} for ${documentRow.bl_number}`}
           onClose={() => {
+            if (documentSubmitting) {
+              return;
+            }
             setDocumentRow(null);
             setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
           }}
@@ -514,6 +558,7 @@ export default function PortalModalLayer({
                 )}
                 <input
                   type="file"
+                  disabled={documentSubmitting}
                   onChange={(event) =>
                     setDocumentFiles((current) => ({
                       ...current,
@@ -537,6 +582,7 @@ export default function PortalModalLayer({
             <ActionButton
               type="button"
               tone="ghost"
+              disabled={documentSubmitting}
               onClick={() => {
                 setDocumentRow(null);
                 setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
@@ -544,8 +590,12 @@ export default function PortalModalLayer({
             >
               Cancel
             </ActionButton>
-            <ActionButton type="button" tone="primary" onClick={handleDocumentSubmit}>
-              {documentRow.documents_complete ? "Save Changes" : "Add Documents"}
+            <ActionButton type="button" tone="primary" disabled={documentSubmitting} onClick={handleDocumentSubmit}>
+              {documentSubmitting
+                ? "Saving..."
+                : documentRow.documents_complete
+                  ? "Save Changes"
+                  : "Add Documents"}
             </ActionButton>
           </div>
         </Modal>

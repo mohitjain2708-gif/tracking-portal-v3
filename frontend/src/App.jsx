@@ -155,6 +155,7 @@ function App() {
     packing_list: null,
     bl_copy: null,
   });
+  const [documentSubmitting, setDocumentSubmitting] = useState(false);
 
   const handleWorkspaceChange = useCallback((event) => {
     const nextWorkspace = cleanText(event.target.value);
@@ -1617,17 +1618,28 @@ function App() {
   );
 
   const handleDocumentUpload = useCallback(
-    async (blNumber, documentType, file) => {
+    async (blNumber, documentType, file, options = {}) => {
+      const { suppressFeedback = false, suppressRefresh = false } = options;
       const stateKey = `${blNumber}:${documentType}`;
       setDocumentUploadState((current) => ({ ...current, [stateKey]: documentType }));
-      setFeedback(null);
+      if (!suppressFeedback) {
+        setFeedback(null);
+      }
 
       try {
         await api.uploadBLDocument(blNumber, documentType, file);
-        setFeedback({ tone: "success", text: `${documentType.replace("_", " ")} uploaded for ${blNumber}.` });
-        void refreshDashboardLight();
+        if (!suppressFeedback) {
+          setFeedback({ tone: "success", text: `${documentType.replace("_", " ")} uploaded for ${blNumber}.` });
+        }
+        if (!suppressRefresh) {
+          void refreshDashboardLight();
+        }
+        return true;
       } catch (error) {
-        setFeedback({ tone: "error", text: error.message || "Document upload failed" });
+        if (!suppressFeedback) {
+          setFeedback({ tone: "error", text: error.message || "Document upload failed" });
+        }
+        throw error;
       } finally {
         setDocumentUploadState((current) => {
           const next = { ...current };
@@ -1821,16 +1833,44 @@ function App() {
       return;
     }
 
+    setDocumentSubmitting(true);
+    setFeedback({
+      tone: "info",
+      text:
+        selectedTypes.length === 1
+          ? "Uploading document..."
+          : `Uploading ${selectedTypes.length} documents...`,
+    });
+
     try {
-      for (const type of selectedTypes) {
-        await handleDocumentUpload(documentRow.bl_number, type, documentFiles[type]);
+      const uploadResults = await Promise.allSettled(
+        selectedTypes.map((type) =>
+          handleDocumentUpload(documentRow.bl_number, type, documentFiles[type], {
+            suppressFeedback: true,
+            suppressRefresh: true,
+          })
+        )
+      );
+      const failedUpload = uploadResults.find((result) => result.status === "rejected");
+      if (failedUpload?.status === "rejected") {
+        throw failedUpload.reason;
       }
       setDocumentFiles({ invoice: null, packing_list: null, bl_copy: null });
       setDocumentRow(null);
-    } catch {
-      // feedback already handled in uploader
+      setFeedback({
+        tone: "success",
+        text:
+          selectedTypes.length === 1
+            ? "Document saved successfully."
+            : "Documents saved successfully.",
+      });
+      void refreshDashboardLight();
+    } catch (error) {
+      setFeedback({ tone: "error", text: error.message || "Document upload failed" });
+    } finally {
+      setDocumentSubmitting(false);
     }
-  }, [documentFiles, documentRow, handleDocumentUpload]);
+  }, [documentFiles, documentRow, handleDocumentUpload, refreshDashboardLight]);
 
   const handleAuthFieldChange = useCallback((field, value) => {
     setAuthForm((current) => ({ ...current, [field]: value }));
@@ -2319,6 +2359,7 @@ function App() {
             setDocumentRow={setDocumentRow}
             setDocumentFiles={setDocumentFiles}
             documentFiles={documentFiles}
+            documentSubmitting={documentSubmitting}
             documentUploadState={documentUploadState}
             handleOpenDocument={handleOpenDocument}
             handleDownloadDocument={handleDownloadDocument}
