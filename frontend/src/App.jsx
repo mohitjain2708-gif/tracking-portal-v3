@@ -136,8 +136,6 @@ function App() {
   const [locationDistanceMap, setLocationDistanceMap] = useState({});
   const [selectedGroupKeys, setSelectedGroupKeys] = useState([]);
   const [expandedDashboardGroupKeys, setExpandedDashboardGroupKeys] = useState([]);
-  const [stickyHeaderActive, setStickyHeaderActive] = useState(false);
-  const [stickyHeaderStyle, setStickyHeaderStyle] = useState({ left: 0, width: 0, scrollLeft: 0 });
   const [actionRow, setActionRow] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
   const [clearancePrompt, setClearancePrompt] = useState(null);
@@ -676,55 +674,6 @@ function App() {
       active = false;
     };
   }, [dashboardRows]);
-
-  useEffect(() => {
-    const handlePosition = () => {
-      const wrap = tableWrapRef.current;
-      if (!wrap) {
-        return;
-      }
-
-      const rect = wrap.getBoundingClientRect();
-      const shouldStick = rect.top <= 12 && rect.bottom >= 120;
-
-      setStickyHeaderActive(shouldStick);
-      setStickyHeaderStyle((current) => ({
-        ...current,
-        left: rect.left,
-        width: rect.width,
-      }));
-    };
-
-    handlePosition();
-    window.addEventListener("scroll", handlePosition, { passive: true });
-    window.addEventListener("resize", handlePosition);
-
-    return () => {
-      window.removeEventListener("scroll", handlePosition);
-      window.removeEventListener("resize", handlePosition);
-    };
-  }, []);
-
-  useEffect(() => {
-    const wrap = tableWrapRef.current;
-    if (!wrap) {
-      return undefined;
-    }
-
-    const handleHorizontalScroll = () => {
-      setStickyHeaderStyle((current) => ({
-        ...current,
-        scrollLeft: wrap.scrollLeft,
-      }));
-    };
-
-    handleHorizontalScroll();
-    wrap.addEventListener("scroll", handleHorizontalScroll, { passive: true });
-
-    return () => {
-      wrap.removeEventListener("scroll", handleHorizontalScroll);
-    };
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -2483,8 +2432,6 @@ function App() {
         selectedGroupKeys,
         filteredRows,
         loading,
-        stickyHeaderActive,
-        stickyHeaderStyle,
         highlightedGroupKey,
         allVisibleSelected,
         expandedGroupKeys: expandedDashboardGroupKeys,
@@ -2514,8 +2461,6 @@ function App() {
       shipmentCounts,
       shipmentStatusFilter,
       sortConfig,
-      stickyHeaderActive,
-      stickyHeaderStyle,
       tableWrapRef,
     ]
   );

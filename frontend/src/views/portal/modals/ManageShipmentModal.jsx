@@ -1,7 +1,7 @@
 import ActionButton from "../../../components/common/ActionButton";
 import ContainerChipList from "../../../components/common/ContainerChipList";
 import Modal from "../../../components/common/Modal";
-import { cleanText, formatActionSummary, formatLocationLabel, formatShipmentStatusLabel } from "../../../lib/portalUtils";
+import { cleanText, formatLocationLabel, formatShipmentStatusLabel } from "../../../lib/portalUtils";
 
 export default function ManageShipmentModal({
   actionRow,
@@ -41,7 +41,6 @@ export default function ManageShipmentModal({
               <span className={badgeClass("movement", actionRow.movement_category || "Hi Seas")}>
                 {actionRow.movement_category || "Hi Seas"}
               </span>
-              {formatActionSummary(actionRow) ? <span className="meta-pill meta-pill-destuffing">{formatActionSummary(actionRow)}</span> : null}
               <span className="meta-pill">
                 {actionRow.container_count || actionRow.container_numbers?.length || 1} container
                 {(actionRow.container_count || actionRow.container_numbers?.length || 1) === 1 ? "" : "s"}

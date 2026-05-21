@@ -5,7 +5,6 @@ import Modal from "../../../components/common/Modal";
 import {
   cleanText,
   exportRowsAsCsv,
-  formatActionSummary,
   formatAuditActionLabel,
   formatAuditDetails,
   formatDocumentStatusSummary,
@@ -37,6 +36,7 @@ export default function ShipmentDetailModal({
   saveDocumentDraft,
   auditControlsExpanded,
   setAuditControlsExpanded,
+  handleRefreshGroup,
 }) {
   if (!auditRow) {
     return null;
@@ -49,6 +49,15 @@ export default function ShipmentDetailModal({
       size="wide"
       actions={
         <>
+          <ActionButton
+            type="button"
+            tone="ghost"
+            onClick={async () => {
+              await handleRefreshGroup(auditRow);
+            }}
+          >
+            Refresh Shipment
+          </ActionButton>
           <ActionButton
             type="button"
             tone="secondary"
@@ -73,7 +82,6 @@ export default function ShipmentDetailModal({
               <span className={badgeClass("movement", auditRow.movement_category || "Hi Seas")}>
                 {auditRow.movement_category || "Hi Seas"}
               </span>
-              {formatActionSummary(auditRow) ? <span className="meta-pill meta-pill-destuffing">{formatActionSummary(auditRow)}</span> : null}
               <span className="meta-pill">
                 {auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)} container
                 {(auditRow.container_numbers?.length || (auditRow.primary_container_number ? 1 : 0)) === 1 ? "" : "s"}

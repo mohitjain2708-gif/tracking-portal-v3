@@ -184,7 +184,7 @@ function PremiumShipmentCard({
           <RowActionSummary row={row} className="premium-row-action-summary" />
         </div>
         <div className="premium-card-containers">
-          <ContainerChipList row={row} expanded={isExpanded} />
+          <ContainerChipList row={row} expanded={isExpanded} showOverflowHint={false} labelVariant="short" />
         </div>
       </div>
 
@@ -396,33 +396,6 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
           </section>
         ) : null}
 
-        {table.stickyHeaderActive && (
-          <div
-            className="dashboard-floating-head"
-            style={{ left: `${table.stickyHeaderStyle.left}px`, width: `${table.stickyHeaderStyle.width}px` }}
-            aria-hidden="true"
-          >
-            <div
-              className="dashboard-floating-head-grid"
-              style={{ transform: `translateX(-${table.stickyHeaderStyle.scrollLeft}px)` }}
-            >
-              <div className="th-center">Select</div>
-              <div>Customer</div>
-              <div>Containers</div>
-              <div>BL</div>
-              <div>Status</div>
-              <div>Movement</div>
-              <div>Latest Location</div>
-              <div>Movement Since</div>
-              <div>Train No</div>
-              <div>Departure</div>
-              <div>DO Date</div>
-              <div>Document Status</div>
-              <div className="th-center">Documents</div>
-            </div>
-          </div>
-        )}
-
         <div className="table-wrap dashboard-table-wrap" ref={table.tableWrapRef}>
           <table className="shipment-table dense-table">
             <colgroup>
@@ -516,7 +489,13 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                         </div>
                       </td>
                       <td>
-                        <ContainerChipList row={row} expanded={isExpanded} className="container-list-cell" />
+                        <ContainerChipList
+                          row={row}
+                          expanded={isExpanded}
+                          className="container-list-cell"
+                          showOverflowHint={false}
+                          labelVariant="short"
+                        />
                       </td>
                       <td>{row.bl_number || "-"}</td>
                       <td>
@@ -774,8 +753,6 @@ export function buildPortalLandingModel({
   selectedGroupKeys,
   filteredRows,
   loading,
-  stickyHeaderActive,
-  stickyHeaderStyle,
   highlightedGroupKey,
   allVisibleSelected,
   expandedGroupKeys,
@@ -884,8 +861,6 @@ export function buildPortalLandingModel({
       selectedGroupKeys,
       allVisibleSelected,
       expandedGroupKeys,
-      stickyHeaderActive,
-      stickyHeaderStyle,
       highlightedGroupKey,
       tableWrapRef,
     },

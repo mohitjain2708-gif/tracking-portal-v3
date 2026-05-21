@@ -751,6 +751,7 @@ export default function PortalModalLayer({
         saveDocumentDraft={saveDocumentDraft}
         auditControlsExpanded={auditControlsExpanded}
         setAuditControlsExpanded={setAuditControlsExpanded}
+        handleRefreshGroup={handleRefreshGroup}
       />
 
       {shipmentImportReviewOpen && (
