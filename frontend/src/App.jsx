@@ -157,6 +157,78 @@ function App() {
   });
   const [documentSubmitting, setDocumentSubmitting] = useState(false);
 
+  const resetSessionScopedUiState = useCallback(() => {
+    if (trackingRefreshPollRef.current) {
+      window.clearInterval(trackingRefreshPollRef.current);
+      trackingRefreshPollRef.current = null;
+    }
+
+    setAuthMode("login");
+    setAuthSubmitting(false);
+    setAuthForm({ email: "", password: "", confirmPassword: "" });
+    setActiveIntakePanel(null);
+    setManualForm(INITIAL_FORM);
+    setCustomerSuggestions([]);
+    setShipmentImportFile(null);
+    setShipmentImportPreview(null);
+    setShipmentImportMapping(INITIAL_MAPPING);
+    setShipmentImporting(false);
+    setShipmentImportReviewRows([]);
+    setShipmentImportReviewSummary(null);
+    setShipmentImportReviewOpen(false);
+    setShipmentImportSourceContext(null);
+    setSourceBatchDetail(null);
+    setGoogleSheetState(INITIAL_GOOGLE_SHEET_STATE);
+    setGoogleSheetLoading(false);
+    setSelectedGroupKeys([]);
+    setConfirmAction(null);
+    setBulkConfirmAction(null);
+    setBulkClearanceMap({});
+    setClearancePrompt(null);
+    setClearanceDocNumber("");
+    setActionRow(null);
+    setActionReturnRow(null);
+    setQuickEditRow(null);
+    setRowContextMenu(null);
+    setAuditRow(null);
+    setAuditEntries([]);
+    setAuditJournalExpanded(false);
+    setAuditRelatedCyclesExpanded(false);
+    setAuditControlsExpanded(false);
+    setEditReturnRow(null);
+    setEditRow(null);
+    setEditSubmitting(false);
+    setEditForm(INITIAL_FORM);
+    setFieldSavingKeys({});
+    setHighlightedGroupKey("");
+    setOperationalDrafts({});
+    setDocumentRow(null);
+    setDocumentFiles({
+      invoice: null,
+      packing_list: null,
+      bl_copy: null,
+    });
+    setDocumentUploadState({});
+    setDocumentSubmitting(false);
+    setRecordsView(null);
+    setRecordsSearch("");
+    setRecordsMovementFilter("All");
+    setOwnerUserShipments(null);
+    setOwnerDeleteUser(null);
+    setOwnerDeletingUser(false);
+    setAdminLoading(false);
+    setAdminResetState({ userId: 0, password: "" });
+    setAdminResetSubmitting(false);
+    setPasswordModalOpen(false);
+    setPasswordForm(INITIAL_PASSWORD_FORM);
+    setPasswordSubmitting(false);
+    setTrackingRefreshActive(false);
+    setTrackingRefreshProgress(0);
+    setLoading(false);
+    setRefreshing(false);
+    setShipmentListLoading(false);
+  }, []);
+
   const handleWorkspaceChange = useCallback((event) => {
     const nextWorkspace = cleanText(event.target.value);
     if (nextWorkspace === "tax-table") {
@@ -205,6 +277,7 @@ function App() {
           return;
         }
         api.logout();
+        resetSessionScopedUiState();
         setCurrentUser(null);
         setIsAuthenticated(false);
       })
@@ -218,7 +291,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [demoSessionEnabled]);
+  }, [demoSessionEnabled, resetSessionScopedUiState]);
 
   useEffect(() => {
     setPasswordModalOpen(Boolean(currentUser?.password_reset_required));
@@ -350,6 +423,7 @@ function App() {
       } catch (error) {
         if (!demoSessionEnabled && /authentication|unauthorized|missing authentication token/i.test(error.message || "")) {
           api.logout();
+          resetSessionScopedUiState();
           setCurrentUser(null);
           setIsAuthenticated(false);
         }
@@ -365,7 +439,7 @@ function App() {
 
     dashboardLoadPromiseRef.current = requestPromise;
     return requestPromise;
-  }, [authChecked, demoSessionEnabled, isAuthenticated]);
+  }, [authChecked, demoSessionEnabled, isAuthenticated, resetSessionScopedUiState]);
 
   const refreshDashboardLight = useCallback(
     () => loadDashboard({ silent: true, includeSources: false }),
@@ -1909,6 +1983,7 @@ function App() {
 
   const handleLogout = useCallback(() => {
     api.logout();
+    resetSessionScopedUiState();
     setCurrentUser(null);
     setAdminOverview(null);
     setIsAuthenticated(false);
@@ -1926,7 +2001,7 @@ function App() {
       railed_out_this_week_customers: [],
     });
     setFeedback({ tone: "success", text: "Signed out successfully." });
-  }, []);
+  }, [resetSessionScopedUiState]);
 
   const handlePasswordFieldChange = useCallback((field, value) => {
     setPasswordForm((current) => ({ ...current, [field]: value }));
