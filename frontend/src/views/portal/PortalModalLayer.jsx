@@ -161,18 +161,26 @@ export default function PortalModalLayer({
               tone={confirmAction.type === "delete" ? "danger" : "primary"}
               disabled={confirmAction.type === "archived" && !cleanText(confirmAction.row?.clearance_doc_number)}
               onClick={async () => {
-                if (confirmAction.type === "delete") {
-                  await handleGroupDelete(confirmAction.row);
-                } else if (confirmAction.type === "completed") {
-                  setClearancePrompt(confirmAction.row);
-                  setClearanceDocNumber("");
-                } else {
-                  await handleGroupStatusChange(confirmAction.row, confirmAction.type);
-                  if (confirmAction.type === "delete") {
-                    closeActionModal();
-                  }
+                const nextAction = confirmAction;
+                if (!nextAction) {
+                  return;
                 }
+
+                if (nextAction.type === "completed") {
+                  setClearancePrompt(nextAction.row);
+                  setClearanceDocNumber("");
+                  setConfirmAction(null);
+                  return;
+                }
+
                 setConfirmAction(null);
+
+                if (nextAction.type === "delete") {
+                  await handleGroupDelete(nextAction.row);
+                  closeActionModal();
+                } else {
+                  await handleGroupStatusChange(nextAction.row, nextAction.type);
+                }
               }}
             >
               Confirm
@@ -319,11 +327,26 @@ export default function PortalModalLayer({
               type="button"
               tone="primary"
               onClick={async () => {
-                await handleGroupStatusChange(clearancePrompt, "completed", {
-                  clearance_doc_number: clearanceDocNumber.trim(),
-                });
+                const trimmedDocNumber = clearanceDocNumber.trim();
+                if (!trimmedDocNumber) {
+                  setFeedback({
+                    tone: "error",
+                    text: "Add a clearance document number before marking this BL complete.",
+                  });
+                  return;
+                }
+
+                const nextPrompt = clearancePrompt;
                 setClearancePrompt(null);
                 setClearanceDocNumber("");
+
+                if (!nextPrompt) {
+                  return;
+                }
+
+                await handleGroupStatusChange(nextPrompt, "completed", {
+                  clearance_doc_number: trimmedDocNumber,
+                });
               }}
             >
               Save and Complete

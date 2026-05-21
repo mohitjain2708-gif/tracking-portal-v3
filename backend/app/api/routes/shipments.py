@@ -3349,11 +3349,11 @@ def _resolve_group_shipments(
         base_query = base_query.where(Shipment.shipment_status != "archived")
 
     if normalized_bl:
-        return [
-            shipment
-            for shipment in db.execute(base_query).scalars()
-            if _normalize_bl_number(shipment.bl_number) == normalized_bl
-        ]
+        return list(
+            db.execute(
+                base_query.where(Shipment.bl_number == normalized_bl)
+            ).scalars()
+        )
 
     cleaned_containers = [
         _clean_container(value)
@@ -3369,11 +3369,11 @@ def _resolve_group_shipments(
     derived_bl = _first_non_empty([shipment.bl_number for shipment in matched_shipments])
     normalized_derived_bl = _normalize_bl_number(derived_bl)
     if normalized_derived_bl:
-        return [
-            shipment
-            for shipment in db.execute(base_query).scalars()
-            if _normalize_bl_number(shipment.bl_number) == normalized_derived_bl
-        ]
+        return list(
+            db.execute(
+                base_query.where(Shipment.bl_number == normalized_derived_bl)
+            ).scalars()
+        )
     return matched_shipments
 
 

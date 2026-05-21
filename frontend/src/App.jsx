@@ -1641,7 +1641,17 @@ function App() {
 
   const handleGroupStatusChange = useCallback(
     async (row, shipmentStatus, extra = {}) => {
-      setFeedback(null);
+      setFeedback({
+        tone: "info",
+        text:
+          shipmentStatus === "active"
+            ? cleanText(row?.shipment_status).toLowerCase() === "archived"
+              ? "Returning shipment to the live dashboard..."
+              : "Reopening shipment..."
+            : shipmentStatus === "completed"
+              ? "Saving clearance document and marking shipment complete..."
+              : "Archiving shipment...",
+      });
       try {
         const data = await api.updateShipmentGroupStatus({
           bl_number: row.bl_number,
