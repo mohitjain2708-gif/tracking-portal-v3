@@ -603,17 +603,20 @@ def _detect_import_duplicates(
 
 def _read_sheet(file_path: Path, preferred_sheet: str | None = None) -> tuple[str, int, list[str], list[dict[str, Any]], list[list[Any]], list[str]]:
     workbook = load_workbook(file_path, data_only=True)
-    sheet = _select_sheet_by_name(workbook, preferred_sheet)
-    rows = _sheet_rows_with_merged_fill(sheet)
-    if not rows:
-        raise HTTPException(status_code=400, detail="Excel file is empty")
-    header_row, headers = _pick_header_row(rows)
-    preview_rows: list[dict[str, Any]] = []
-    for row in rows[header_row : header_row + 5]:
-        record = _build_row_object(headers, list(row))
-        if any(str(value).strip() for value in record.values()):
-            preview_rows.append(record)
-    return sheet.title, header_row, headers, preview_rows, rows, list(workbook.sheetnames)
+    try:
+        sheet = _select_sheet_by_name(workbook, preferred_sheet)
+        rows = _sheet_rows_with_merged_fill(sheet)
+        if not rows:
+            raise HTTPException(status_code=400, detail="Excel file is empty")
+        header_row, headers = _pick_header_row(rows)
+        preview_rows: list[dict[str, Any]] = []
+        for row in rows[header_row : header_row + 5]:
+            record = _build_row_object(headers, list(row))
+            if any(str(value).strip() for value in record.values()):
+                preview_rows.append(record)
+        return sheet.title, header_row, headers, preview_rows, rows, list(workbook.sheetnames)
+    finally:
+        workbook.close()
 
 
 def _score_sheet_relevance(sheet_name: str, rows: list[list[Any]]) -> tuple[int, int, int, int]:
@@ -4043,10 +4046,13 @@ def preview_google_sheets_source(payload: dict, db: Session = Depends(get_db), c
     worksheet_name = _clean_text(payload.get("worksheet_name"))
     workbook_bytes, parsed = _download_google_sheet_workbook(source_url)
     workbook = load_workbook(filename=BytesIO(workbook_bytes), data_only=True)
-    sheet_title = _fetch_google_sheet_title(source_url) or _sheet_title_from_workbook(workbook, parsed)
-    available_sheets = list(workbook.sheetnames)
-    if not available_sheets:
-        raise HTTPException(status_code=400, detail="Google Sheet does not contain any readable worksheets")
+    try:
+        sheet_title = _fetch_google_sheet_title(source_url) or _sheet_title_from_workbook(workbook, parsed)
+        available_sheets = list(workbook.sheetnames)
+        if not available_sheets:
+            raise HTTPException(status_code=400, detail="Google Sheet does not contain any readable worksheets")
+    finally:
+        workbook.close()
 
     token = f"{uuid4().hex}.xlsx"
     file_path = TEMP_IMPORT_DIR / token

@@ -35,6 +35,44 @@ class ShipmentsRouteHardeningTests(unittest.TestCase):
         dependency_calls = [dependency.call for dependency in route.dependant.dependencies]
         self.assertIn(get_current_admin, dependency_calls)
 
+    def test_read_sheet_closes_workbook_after_preview_extraction(self) -> None:
+        original_load_workbook = shipments_module.load_workbook
+        original_select_sheet_by_name = shipments_module._select_sheet_by_name
+        original_sheet_rows_with_merged_fill = shipments_module._sheet_rows_with_merged_fill
+        original_pick_header_row = shipments_module._pick_header_row
+        original_build_row_object = shipments_module._build_row_object
+        closed = {"value": False}
+
+        class FakeSheet:
+            title = "Tracking"
+
+        class FakeWorkbook:
+            sheetnames = ["Tracking"]
+
+            def close(self):
+                closed["value"] = True
+
+        try:
+            shipments_module.load_workbook = lambda *args, **kwargs: FakeWorkbook()
+            shipments_module._select_sheet_by_name = lambda workbook, preferred_sheet: FakeSheet()
+            shipments_module._sheet_rows_with_merged_fill = lambda sheet: [
+                ["Container", "BL"],
+                ["MSBU1891823", "FRE/CCU/0126/976"],
+            ]
+            shipments_module._pick_header_row = lambda rows: (0, ["Container", "BL"])
+            shipments_module._build_row_object = lambda headers, row: dict(zip(headers, row))
+
+            result = shipments_module._read_sheet(Path("ignored.xlsx"))
+
+            self.assertEqual(result[0], "Tracking")
+            self.assertTrue(closed["value"])
+        finally:
+            shipments_module.load_workbook = original_load_workbook
+            shipments_module._select_sheet_by_name = original_select_sheet_by_name
+            shipments_module._sheet_rows_with_merged_fill = original_sheet_rows_with_merged_fill
+            shipments_module._pick_header_row = original_pick_header_row
+            shipments_module._build_row_object = original_build_row_object
+
 
 if __name__ == "__main__":
     unittest.main()
