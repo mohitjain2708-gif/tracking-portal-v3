@@ -125,6 +125,16 @@ export default function PortalModalLayer({
   const [bulkRowSubmittingKeys, setBulkRowSubmittingKeys] = React.useState({});
   const showGoogleSheetsImportModal =
     Boolean(shipmentImportPreview) && shipmentImportSourceContext?.source_type === "google_sheets";
+  const importProgressStageOrder = ["validate", "import", "refresh", "complete"];
+  const currentImportStageIndex = Math.max(
+    0,
+    importProgressStageOrder.indexOf(shipmentImportProgress?.stageKey || "validate")
+  );
+  const importProgressStages = [
+    { key: "validate", label: "Validate" },
+    { key: "import", label: "Import" },
+    { key: "refresh", label: "Refresh" },
+  ];
 
   React.useEffect(() => {
     if (!bulkConfirmAction) {
@@ -918,12 +928,35 @@ export default function PortalModalLayer({
           onClose={() => {}}
           dismissible={false}
         >
-          <div className="import-progress-shell">
-            {shipmentImportSourceContext?.source_type !== "google_sheets" ? <ImportProgressGraphic /> : null}
-            <p className="panel-copy">
+          <div className="import-progress-shell import-progress-shell-refined">
+            {shipmentImportSourceContext?.source_type !== "google_sheets" ? (
+              <ImportProgressGraphic completed={Boolean(shipmentImportProgress.completed)} />
+            ) : null}
+            <div className="import-progress-stage-row">
+              {importProgressStages.map((stage, index) => {
+                const isActive = currentImportStageIndex === index && !shipmentImportProgress.completed;
+                const isComplete = currentImportStageIndex > index || shipmentImportProgress.completed;
+                return (
+                  <span
+                    key={stage.key}
+                    className={`import-stage-pill${isActive ? " is-active" : ""}${isComplete ? " is-complete" : ""}`}
+                  >
+                    <span className="import-stage-dot" />
+                    {stage.label}
+                  </span>
+                );
+              })}
+              {shipmentImportProgress.completed ? (
+                <span className="import-stage-pill import-stage-pill-success is-complete">
+                  <span className="import-stage-dot" />
+                  Complete
+                </span>
+              ) : null}
+            </div>
+            <p className="panel-copy import-progress-summary">
               {shipmentImportProgress.message || "Please keep this window open while the workbook is added to the portal."}
             </p>
-            <div className="progress-banner-copy">
+            <div className="progress-banner-copy import-progress-copy">
               <strong>{shipmentImportProgress.title || "Importing shipments"}</strong>
               <span>{Math.round(Number(shipmentImportProgress.progress) || 0)}%</span>
             </div>
@@ -933,9 +966,27 @@ export default function PortalModalLayer({
                 style={{ width: `${Math.max(6, Math.min(100, Number(shipmentImportProgress.progress) || 0))}%` }}
               />
             </div>
-            <p className="muted-text import-progress-note">
-              We are validating the workbook, checking duplicates, and updating your live shipment board.
-            </p>
+            {shipmentImportProgress.completed ? (
+              <div className="import-progress-complete-strip" role="status" aria-live="polite">
+                <span className="import-progress-complete-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" focusable="false">
+                    <path
+                      d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span>{shipmentImportProgress.completionText || "Shipment rows added successfully."}</span>
+              </div>
+            ) : (
+              <p className="muted-text import-progress-note">
+                We are validating the workbook, checking duplicates, and updating your live shipment board.
+              </p>
+            )}
           </div>
         </Modal>
       ) : null}

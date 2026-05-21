@@ -53,6 +53,9 @@ const INITIAL_IMPORT_PROGRESS = Object.freeze({
   title: "",
   message: "",
   progress: 0,
+  stageKey: "validate",
+  completed: false,
+  completionText: "",
 });
 
 const EXPIRED_IMPORT_PREVIEW_MESSAGE =
@@ -184,7 +187,7 @@ function App() {
   }, []);
 
   const setShipmentImportProgressStage = useCallback(
-    ({ title, message, progress, maxProgress = progress }) => {
+    ({ title, message, progress, maxProgress = progress, stageKey = "validate" }) => {
       if (shipmentImportProgressTimerRef.current) {
         window.clearInterval(shipmentImportProgressTimerRef.current);
         shipmentImportProgressTimerRef.current = null;
@@ -195,6 +198,9 @@ function App() {
         title: title || current.title || "Importing shipments",
         message: message || current.message || "",
         progress: Math.max(Number(current.progress) || 0, Number(progress) || 0),
+        stageKey,
+        completed: false,
+        completionText: "",
       }));
 
       const normalizedMax = Number(maxProgress) || 0;
@@ -227,6 +233,23 @@ function App() {
     },
     []
   );
+
+  const completeShipmentImportProgress = useCallback(({ completionText, message }) => {
+    if (shipmentImportProgressTimerRef.current) {
+      window.clearInterval(shipmentImportProgressTimerRef.current);
+      shipmentImportProgressTimerRef.current = null;
+    }
+
+    setShipmentImportProgress({
+      active: true,
+      title: "Shipments added",
+      message: message || "Your workbook has been added to the live dashboard.",
+      progress: 100,
+      stageKey: "complete",
+      completed: true,
+      completionText: completionText || "Shipment rows added successfully.",
+    });
+  }, []);
 
   const resetSessionScopedUiState = useCallback(() => {
     if (trackingRefreshPollRef.current) {
@@ -1486,6 +1509,7 @@ function App() {
         message: "Checking the workbook for invalid rows, blank entries, and duplicates before anything is added.",
         progress: 18,
         maxProgress: 46,
+        stageKey: "validate",
       });
       const review = await validateShipmentImportRows();
       if ((review.invalid_count || 0) > 0) {
@@ -1505,6 +1529,7 @@ function App() {
         message: "Adding the verified shipment rows to your workspace now.",
         progress: 62,
         maxProgress: 88,
+        stageKey: "import",
       });
       const data = await api.confirmShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
@@ -1520,8 +1545,14 @@ function App() {
         message: "Refreshing the live dashboard with your newly added shipments.",
         progress: 94,
         maxProgress: 98,
+        stageKey: "refresh",
       });
       await loadDashboard({ silent: true });
+      completeShipmentImportProgress({
+        completionText: formatImportCompletionText(data),
+        message: "The workbook has been added cleanly. We are settling the final state before closing.",
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 950));
       resetShipmentImportState();
       setFeedback({
         tone: "success",
@@ -1546,7 +1577,18 @@ function App() {
     } finally {
       setShipmentImporting(false);
     }
-    }, [clearShipmentImportProgress, loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, shipmentImportSourceContext, setShipmentImportProgressStage, validateShipmentImportRows]);
+  }, [
+    clearShipmentImportProgress,
+    completeShipmentImportProgress,
+    loadDashboard,
+    resetShipmentImportState,
+    shipmentImportMapping,
+    shipmentImportPreview,
+    shipmentImportReviewRows,
+    shipmentImportSourceContext,
+    setShipmentImportProgressStage,
+    validateShipmentImportRows,
+  ]);
 
   const handleImportReviewRecheck = useCallback(async () => {
     setShipmentImporting(true);
@@ -1558,6 +1600,7 @@ function App() {
         message: "Reviewing the corrected rows before they are added.",
         progress: 22,
         maxProgress: 48,
+        stageKey: "validate",
       });
       const review = await validateShipmentImportRows(shipmentImportReviewRows);
       setShipmentImportReviewSummary(review);
@@ -1576,6 +1619,7 @@ function App() {
         message: "Adding the corrected shipment rows to your workspace now.",
         progress: 66,
         maxProgress: 88,
+        stageKey: "import",
       });
       const data = await api.confirmShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
@@ -1591,8 +1635,14 @@ function App() {
         message: "Refreshing the live dashboard with the new shipment rows.",
         progress: 94,
         maxProgress: 98,
+        stageKey: "refresh",
       });
       await loadDashboard({ silent: true });
+      completeShipmentImportProgress({
+        completionText: formatImportCompletionText(data),
+        message: "The workbook has been added cleanly. We are settling the final state before closing.",
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 950));
       resetShipmentImportState();
       setFeedback({
         tone: "success",
@@ -1619,15 +1669,16 @@ function App() {
     }
   }, [
     clearShipmentImportProgress,
+    completeShipmentImportProgress,
     loadDashboard,
-      resetShipmentImportState,
-      shipmentImportMapping,
-      shipmentImportPreview,
-      shipmentImportReviewRows,
-      shipmentImportSourceContext,
-      setShipmentImportProgressStage,
-      validateShipmentImportRows,
-    ]);
+    resetShipmentImportState,
+    shipmentImportMapping,
+    shipmentImportPreview,
+    shipmentImportReviewRows,
+    shipmentImportSourceContext,
+    setShipmentImportProgressStage,
+    validateShipmentImportRows,
+  ]);
 
   const handleRefreshAllTracking = useCallback(async () => {
     setFeedback(null);

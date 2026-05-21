@@ -1,35 +1,27 @@
-export default function ImportProgressGraphic() {
+export default function ImportProgressGraphic({ completed = false }) {
   return (
     <div className="import-progress-visual" aria-hidden="true">
       <svg
-        className="import-progress-graphic"
-        viewBox="0 0 720 240"
+        className="import-progress-graphic import-progress-graphic-light"
+        viewBox="0 0 720 220"
         role="img"
         focusable="false"
       >
         <defs>
-          <linearGradient id="importProgressPanel" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#101a28" />
-            <stop offset="100%" stopColor="#17263a" />
+          <linearGradient id="importSurface" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#EEF4FB" />
+            <stop offset="100%" stopColor="#E3EBF5" />
           </linearGradient>
-          <linearGradient id="importProgressLine" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="rgba(95, 129, 174, 0.26)" />
-            <stop offset="100%" stopColor="rgba(95, 129, 174, 0.58)" />
+          <linearGradient id="excelPanel" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#33C66A" />
+            <stop offset="100%" stopColor="#14984A" />
           </linearGradient>
-          <linearGradient id="importProgressGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#55b6ff" />
-            <stop offset="100%" stopColor="#a5ddff" />
+          <linearGradient id="portalPanel" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#68CAFF" />
+            <stop offset="100%" stopColor="#2F6DD8" />
           </linearGradient>
-          <linearGradient id="excelIcon" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#31c36a" />
-            <stop offset="100%" stopColor="#0f8d43" />
-          </linearGradient>
-          <linearGradient id="portalIcon" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#4ec2ff" />
-            <stop offset="100%" stopColor="#2457c9" />
-          </linearGradient>
-          <filter id="importGlow" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="8" result="blur" />
+          <filter id="dotGlowLight" x="-100%" y="-100%" width="300%" height="300%">
+            <feGaussianBlur stdDeviation="7" result="blur" />
             <feMerge>
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
@@ -37,57 +29,35 @@ export default function ImportProgressGraphic() {
           </filter>
         </defs>
 
-        <rect x="8" y="8" width="704" height="224" rx="28" fill="url(#importProgressPanel)" />
-        <rect x="8" y="8" width="704" height="224" rx="28" fill="none" stroke="rgba(255,255,255,0.08)" />
+        <rect x="8" y="8" width="704" height="204" rx="28" fill="url(#importSurface)" />
+        <rect x="8" y="8" width="704" height="204" rx="28" fill="none" stroke="#D2DEEA" />
 
-        <g transform="translate(56 52)">
-          <rect x="0" y="0" width="108" height="132" rx="24" fill="url(#excelIcon)" />
-          <rect x="22" y="22" width="64" height="88" rx="16" fill="rgba(8, 29, 17, 0.24)" />
-          <rect x="36" y="36" width="36" height="60" rx="10" fill="rgba(255,255,255,0.88)" />
-          <path
-            d="M45 50 L63 82 M63 50 L45 82"
-            stroke="#19a64f"
-            strokeWidth="7"
-            strokeLinecap="round"
-          />
-          <path
-            d="M72 36 L86 50 L86 96"
-            fill="none"
-            stroke="rgba(255,255,255,0.34)"
-            strokeWidth="4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+        <g transform="translate(66 72)">
+          <rect x="0" y="0" width="108" height="92" rx="24" fill="url(#excelPanel)" />
+          <rect x="36" y="26" width="38" height="48" rx="12" fill="#F9FCF9" opacity="0.97" />
+          <path d="M45 38L65 62M65 38L45 62" stroke="#14994A" strokeWidth="7" strokeLinecap="round" />
         </g>
 
-        <g transform="translate(548 52)">
-          <rect x="0" y="0" width="120" height="132" rx="28" fill="url(#portalIcon)" />
-          <rect x="18" y="20" width="84" height="92" rx="20" fill="rgba(255,255,255,0.94)" />
-          <rect x="26" y="30" width="68" height="18" rx="9" fill="rgba(36, 87, 201, 0.18)" />
-          <rect x="26" y="58" width="46" height="34" rx="12" fill="rgba(36, 87, 201, 0.12)" />
-          <rect x="78" y="58" width="16" height="34" rx="8" fill="rgba(36, 87, 201, 0.2)" />
-          <circle cx="44" cy="75" r="8" fill="rgba(36, 87, 201, 0.8)" />
-          <path
-            d="M52 76 H86"
-            stroke="rgba(36, 87, 201, 0.34)"
-            strokeWidth="6"
-            strokeLinecap="round"
-          />
+        <g transform="translate(546 72)">
+          <rect x="0" y="0" width="120" height="92" rx="28" fill="url(#portalPanel)" />
+          <rect x="33" y="20" width="54" height="52" rx="16" fill="#FAFCFF" opacity="0.98" />
+          <rect x="42" y="30" width="36" height="14" rx="7" fill="#CDD9EF" />
+          <circle cx="54" cy="51" r="8" fill="#4C70D6" />
+          <path d="M63 51H83" stroke="#A8BBE8" strokeWidth="6" strokeLinecap="round" />
         </g>
 
         <path
-          d="M196 118 H526"
-          stroke="url(#importProgressLine)"
+          d="M212 118H520"
+          stroke="#7C98B8"
           strokeWidth="4"
+          strokeDasharray="2 18"
           strokeLinecap="round"
-          strokeDasharray="1 18"
         />
 
-        <g filter="url(#importGlow)">
-          <circle className="import-progress-dot import-progress-dot-1" cx="260" cy="118" r="10" fill="url(#importProgressGlow)" />
-          <circle className="import-progress-dot import-progress-dot-2" cx="334" cy="118" r="9" fill="url(#importProgressGlow)" />
-          <circle className="import-progress-dot import-progress-dot-3" cx="410" cy="118" r="8" fill="url(#importProgressGlow)" />
-          <circle className="import-progress-dot import-progress-dot-4" cx="486" cy="118" r="7" fill="url(#importProgressGlow)" />
+        <g filter="url(#dotGlowLight)">
+          <circle className={`import-progress-dot import-progress-dot-1${completed ? " is-complete" : ""}`} cx="316" cy="118" r="12" fill="#74BCFF" />
+          <circle className={`import-progress-dot import-progress-dot-2${completed ? " is-complete" : ""}`} cx="396" cy="114" r="12" fill="#74BCFF" />
+          <circle className={`import-progress-dot import-progress-dot-3${completed ? " is-complete" : ""}`} cx="476" cy="118" r="12" fill="#74BCFF" />
         </g>
       </svg>
     </div>
