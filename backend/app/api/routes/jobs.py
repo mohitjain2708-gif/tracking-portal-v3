@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.services.ldb_client import fetch_ldb
 from app.services.concor_client import fetch_concor
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _fetch_tracking_bundle(container_no: str) -> tuple[str, dict, dict]:
@@ -66,6 +68,24 @@ def _enrich_rows(rows: list[dict]) -> list[dict]:
         enriched.append(current)
 
     return enriched
+
+
+def _persist_failed_job_state(db: Session, job_id: int, upload_id: int, error_message: str) -> Job | None:
+    db.rollback()
+    job = db.get(Job, job_id)
+    upload = db.get(UploadSession, upload_id)
+
+    if job:
+        job.status = "failed"
+        job.result_json = None
+        job.error_message = error_message
+    if upload:
+        upload.status = "failed"
+
+    db.commit()
+    if job:
+        db.refresh(job)
+    return job
 
 
 @router.post("/process", response_model=JobResponse)
@@ -130,15 +150,21 @@ def process_job(
 
         job.status = "completed"
         job.result_json = result
+        job.error_message = None
         upload.status = "processed"
         db.commit()
         db.refresh(job)
 
     except Exception as exc:
-        job.status = "failed"
-        job.error_message = str(exc)
-        db.commit()
-        db.refresh(job)
+        logger.exception(
+            "Job processing failed",
+            extra={"job_id": getattr(job, "id", None), "upload_id": getattr(upload, "id", None)},
+        )
+        error_message = str(exc) or "Job processing failed"
+        failed_job = _persist_failed_job_state(db, job.id, upload.id, error_message)
+        if failed_job is None:
+            raise
+        job = failed_job
 
     return JobResponse(
         id=job.id,
