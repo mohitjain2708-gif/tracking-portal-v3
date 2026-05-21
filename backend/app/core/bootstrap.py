@@ -4,7 +4,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 
 OWNER_EMAIL = "owner@trackingportal.app"
@@ -26,9 +26,13 @@ def ensure_user_schema(db: Session) -> None:
 def ensure_owner_account(db: Session) -> str:
     ensure_user_schema(db)
     owner = db.execute(select(User).where(User.email == OWNER_EMAIL)).scalar_one_or_none()
-    password_hash = hash_password(OWNER_PASSWORD)
     if not owner:
-        owner = User(email=OWNER_EMAIL, password_hash=password_hash, is_admin=True, password_reset_required=False)
+        owner = User(
+            email=OWNER_EMAIL,
+            password_hash=hash_password(OWNER_PASSWORD),
+            is_admin=True,
+            password_reset_required=False,
+        )
         db.add(owner)
         db.commit()
         return OWNER_EMAIL
@@ -37,8 +41,9 @@ def ensure_owner_account(db: Session) -> str:
     if not owner.is_admin:
         owner.is_admin = True
         updated = True
-    if owner.password_hash != password_hash:
-        owner.password_hash = password_hash
+    password_hash = str(owner.password_hash or "").strip()
+    if not password_hash or not verify_password(OWNER_PASSWORD, password_hash):
+        owner.password_hash = hash_password(OWNER_PASSWORD)
         updated = True
     if owner.password_reset_required:
         owner.password_reset_required = False
