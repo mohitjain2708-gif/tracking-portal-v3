@@ -1,5 +1,6 @@
 import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { api, isDemoSessionEnabled } from "./api";
+import PortalLandingExperience, { buildPortalLandingModel } from "./views/portal/PortalLandingExperience";
 
 const INITIAL_FORM = {
   customer_name: "",
@@ -3013,6 +3014,262 @@ function App() {
     };
   }, [auditRow]);
 
+  const handleOpenRowContextMenu = useCallback((row, event) => {
+    setRowContextMenu({ row, x: event.clientX, y: event.clientY });
+  }, []);
+
+  const handlePrepareBulkComplete = useCallback(() => {
+    const nextMap = {};
+    selectedRows.forEach((row) => {
+      nextMap[row.group_key] = row.clearance_doc_number || "";
+    });
+    setBulkClearanceMap(nextMap);
+    setBulkConfirmAction({ type: "completed" });
+  }, [selectedRows]);
+
+  const handlePrepareBulkArchive = useCallback(() => {
+    setBulkConfirmAction({ type: "archived" });
+  }, []);
+
+  const handlePrepareBulkDelete = useCallback(() => {
+    setBulkConfirmAction({ type: "delete" });
+  }, []);
+
+  const landingRenderers = useMemo(
+    () => ({
+      ActionButton,
+      DashboardMetric,
+      MovementIdentifier,
+      SortableHeader,
+      MovementIcon,
+      StatCard,
+      badgeClass,
+      formatLocationLabel,
+      formatDocumentStatusSummary,
+      formatShipmentStatusLabel,
+    }),
+    []
+  );
+
+  const landingActions = useMemo(
+    () => ({
+      onWorkspaceChange: handleWorkspaceChange,
+      onOpenPassword: () => setPasswordModalOpen(true),
+      onLogout: handleLogout,
+      onRefreshDashboard: () => loadDashboard({ silent: true }),
+      onRefreshTracking: handleRefreshAllTracking,
+      onToggleAutoRefresh: (checked) => setAutoRefresh(checked),
+      onOpenCompleted: () => setRecordsView("completed"),
+      onOpenArchived: () => setRecordsView("archived"),
+      onMovementFilterChange: setMovementFilter,
+      onShipmentStatusFilterChange: setShipmentStatusFilter,
+      onSearchChange: setSearch,
+      onExportDashboard: handleDashboardExport,
+      onPrepareBulkComplete: handlePrepareBulkComplete,
+      onPrepareBulkArchive: handlePrepareBulkArchive,
+      onPrepareBulkDelete: handlePrepareBulkDelete,
+      onClearSelection: clearSelection,
+      onToggleSelectAllVisible: toggleSelectAllVisible,
+      onSort: handleSort,
+      onOpenAuditRow: setAuditRow,
+      onOpenRowContextMenu: handleOpenRowContextMenu,
+      onToggleGroupSelection: toggleGroupSelection,
+      onOpenDocuments: setDocumentRow,
+    }),
+    [
+      clearSelection,
+      handleDashboardExport,
+      handleLogout,
+      handleOpenRowContextMenu,
+      handlePrepareBulkArchive,
+      handlePrepareBulkComplete,
+      handlePrepareBulkDelete,
+      handleRefreshAllTracking,
+      handleSort,
+      handleWorkspaceChange,
+      loadDashboard,
+      toggleGroupSelection,
+      toggleSelectAllVisible,
+    ]
+  );
+
+  const portalLandingModel = useMemo(
+    () =>
+      buildPortalLandingModel({
+        demoSessionEnabled,
+        currentUser,
+        refreshing,
+        autoRefresh,
+        shipmentCounts,
+        dashboardIdentifiers,
+        movementCounts,
+        movementFilter,
+        shipmentStatusFilter,
+        search,
+        selectedRows,
+        selectedGroupKeys,
+        filteredRows,
+        loading,
+        stickyHeaderActive,
+        stickyHeaderStyle,
+        highlightedGroupKey,
+        allVisibleSelected,
+        sortConfig,
+        movementFilters: MOVEMENT_FILTERS,
+        shipmentStatusFilters: SHIPMENT_STATUS_FILTERS,
+        tableWrapRef,
+        actions: landingActions,
+      }),
+    [
+      allVisibleSelected,
+      autoRefresh,
+      currentUser,
+      dashboardIdentifiers,
+      demoSessionEnabled,
+      filteredRows,
+      highlightedGroupKey,
+      landingActions,
+      loading,
+      movementCounts,
+      movementFilter,
+      refreshing,
+      search,
+      selectedGroupKeys,
+      selectedRows,
+      shipmentCounts,
+      shipmentStatusFilter,
+      sortConfig,
+      stickyHeaderActive,
+      stickyHeaderStyle,
+      tableWrapRef,
+    ]
+  );
+
+  const ownerPanel = currentUser?.is_admin ? (
+    <section className="surface owner-panel">
+      <div className="panel-heading compact-heading owner-panel-heading">
+        <div>
+          <p className="eyebrow">Owner View</p>
+          <h2>Portal oversight</h2>
+          <p className="panel-copy">A quiet view of users, shipment volume, and recent portal activity.</p>
+        </div>
+        <ActionButton type="button" tone="secondary" onClick={refreshAdminOverview} disabled={adminLoading}>
+          {adminLoading ? "Refreshing..." : "Refresh owner view"}
+        </ActionButton>
+      </div>
+
+      <div className="owner-metric-grid">
+        <DashboardMetric label="Users" value={adminOverview?.metrics?.total_users || 0} />
+        <DashboardMetric label="Live Shipments" value={adminOverview?.metrics?.live_shipments || 0} />
+        <DashboardMetric label="Completed" value={adminOverview?.metrics?.completed_shipments || 0} />
+        <DashboardMetric label="Archived" value={adminOverview?.metrics?.archived_shipments || 0} />
+      </div>
+
+      <div className="owner-grid">
+        <section className="owner-card">
+          <div className="owner-card-head">
+            <h3>People in the portal</h3>
+            <p>See who has signed up and reset access when someone needs help getting back in.</p>
+          </div>
+          <div className="owner-user-list">
+            {(adminOverview?.users || []).length === 0 ? (
+              <div className="empty-state-panel">No users yet.</div>
+            ) : (
+              (adminOverview?.users || []).map((user) => (
+                <article key={user.id} className="owner-user-row">
+                  <div className="owner-user-copy">
+                    <strong>{user.email}</strong>
+                    <span>
+                      Joined {user.created_at ? formatDateTimeLabel(user.created_at) : "date not recorded"}
+                    </span>
+                    <span>
+                      Last active{" "}
+                      {user.last_activity_at ? formatDateTimeLabel(user.last_activity_at) : "no activity yet"}
+                    </span>
+                    <span>
+                      Last sign in{" "}
+                      {user.last_login_at ? formatDateTimeLabel(user.last_login_at) : "not recorded yet"}
+                    </span>
+                    <span>
+                      {user.shipment_count || 0} shipments, {user.source_batch_count || 0} imports
+                      {user.password_reset_required ? " | password needs to be changed" : ""}
+                    </span>
+                  </div>
+                  {!user.is_admin ? (
+                    <div className="owner-user-actions">
+                      <div className="owner-user-quick-actions">
+                        <ActionButton
+                          type="button"
+                          tone="secondary"
+                          compact
+                          disabled={ownerUserShipmentsLoading}
+                          onClick={() => handleViewOwnerUserShipments(user)}
+                        >
+                          {ownerUserShipmentsLoading && ownerUserShipments?.user?.id === user.id
+                            ? "Opening..."
+                            : "View shipments"}
+                        </ActionButton>
+                        <ActionButton
+                          type="button"
+                          tone="danger"
+                          compact
+                          onClick={() => setOwnerDeleteUser(user)}
+                        >
+                          Remove user
+                        </ActionButton>
+                      </div>
+                      <div className="owner-password-reset">
+                        <input
+                          type="password"
+                          placeholder="Temporary password"
+                          value={adminResetState.userId === user.id ? adminResetState.password : ""}
+                          onChange={(event) =>
+                            setAdminResetState({ userId: user.id, password: event.target.value })
+                          }
+                        />
+                        <ActionButton
+                          type="button"
+                          tone="ghost"
+                          disabled={adminResetSubmitting}
+                          onClick={() => handleAdminResetPassword(user.id)}
+                        >
+                          Reset password
+                        </ActionButton>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="meta-pill">Owner</span>
+                  )}
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="owner-card">
+          <div className="owner-card-head">
+            <h3>Recent activity</h3>
+            <p>Recent changes across the portal, shown in plain language.</p>
+          </div>
+          <div className="owner-activity-list">
+            {(adminOverview?.recent_activity || []).length === 0 ? (
+              <div className="empty-state-panel">No recent activity yet.</div>
+            ) : (
+              (adminOverview?.recent_activity || []).map((entry) => (
+                <article key={entry.id} className="owner-activity-row">
+                  <strong>{formatAuditActionLabel(entry.action)}</strong>
+                  <span>{entry.email || "Unknown user"}</span>
+                  <span>{entry.bl_number || entry.container_number || "Portal activity"}</span>
+                  <span>{formatDateTimeLabel(entry.created_at)}</span>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  ) : null;
+
   if (!authChecked) {
     return <main className="app-shell loading-shell">Loading portal...</main>;
   }
@@ -3033,196 +3290,11 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="surface hero-panel">
-        <div className="hero-toolbar">
-          <label className="workspace-switcher" aria-label="Switch workspace">
-            <select value="tracking" onChange={handleWorkspaceChange}>
-              <option value="tracking">Tracking Portal</option>
-              <option value="tax-table">Tax Table Utility</option>
-            </select>
-          </label>
-          {!demoSessionEnabled && currentUser ? (
-            <div className="session-chip">
-              <span>{currentUser.email}</span>
-              <button type="button" onClick={() => setPasswordModalOpen(true)}>
-                Change password
-              </button>
-              <button type="button" onClick={handleLogout}>
-                Sign Out
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="hero-main">
-          <div className="hero-copy-wrap">
-            <h1>Tracking Portal</h1>
-            <div className="hero-actions compact-actions">
-              <ActionButton type="button" tone="secondary" onClick={() => loadDashboard({ silent: true })}>
-                {refreshing ? "Refreshing..." : "Refresh Dashboard"}
-              </ActionButton>
-              <ActionButton type="button" tone="primary" onClick={handleRefreshAllTracking}>
-                Refresh Live Shipments
-              </ActionButton>
-              <label className="toggle-card hero-toggle">
-                <span className="toggle-copy">
-                  <strong>Auto Refresh</strong>
-                  <span>Every 5 minutes</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(event) => setAutoRefresh(event.target.checked)}
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {currentUser?.is_admin ? (
-        <section className="surface owner-panel">
-          <div className="panel-heading compact-heading owner-panel-heading">
-            <div>
-              <p className="eyebrow">Owner View</p>
-              <h2>Portal oversight</h2>
-              <p className="panel-copy">A quiet view of users, shipment volume, and recent portal activity.</p>
-            </div>
-            <ActionButton type="button" tone="secondary" onClick={refreshAdminOverview} disabled={adminLoading}>
-              {adminLoading ? "Refreshing..." : "Refresh owner view"}
-            </ActionButton>
-          </div>
-
-          <div className="owner-metric-grid">
-            <DashboardMetric label="Users" value={adminOverview?.metrics?.total_users || 0} />
-            <DashboardMetric label="Live Shipments" value={adminOverview?.metrics?.live_shipments || 0} />
-            <DashboardMetric label="Completed" value={adminOverview?.metrics?.completed_shipments || 0} />
-            <DashboardMetric label="Archived" value={adminOverview?.metrics?.archived_shipments || 0} />
-          </div>
-
-          <div className="owner-grid">
-            <section className="owner-card">
-              <div className="owner-card-head">
-                <h3>People in the portal</h3>
-                <p>See who has signed up and reset access when someone needs help getting back in.</p>
-              </div>
-              <div className="owner-user-list">
-                {(adminOverview?.users || []).length === 0 ? (
-                  <div className="empty-state-panel">No users yet.</div>
-                ) : (
-                  (adminOverview?.users || []).map((user) => (
-                    <article key={user.id} className="owner-user-row">
-                      <div className="owner-user-copy">
-                        <strong>{user.email}</strong>
-                        <span>
-                          Joined {user.created_at ? formatDateTimeLabel(user.created_at) : "date not recorded"}
-                        </span>
-                        <span>
-                          Last active{" "}
-                          {user.last_activity_at ? formatDateTimeLabel(user.last_activity_at) : "no activity yet"}
-                        </span>
-                        <span>
-                          Last sign in{" "}
-                          {user.last_login_at ? formatDateTimeLabel(user.last_login_at) : "not recorded yet"}
-                        </span>
-                        <span>
-                          {user.shipment_count || 0} shipments, {user.source_batch_count || 0} imports
-                          {user.password_reset_required ? " | password needs to be changed" : ""}
-                        </span>
-                      </div>
-                      {!user.is_admin ? (
-                        <div className="owner-user-actions">
-                          <div className="owner-user-quick-actions">
-                            <ActionButton
-                              type="button"
-                              tone="secondary"
-                              compact
-                              disabled={ownerUserShipmentsLoading}
-                              onClick={() => handleViewOwnerUserShipments(user)}
-                            >
-                              {ownerUserShipmentsLoading && ownerUserShipments?.user?.id === user.id
-                                ? "Opening..."
-                                : "View shipments"}
-                            </ActionButton>
-                            <ActionButton
-                              type="button"
-                              tone="danger"
-                              compact
-                              onClick={() => setOwnerDeleteUser(user)}
-                            >
-                              Remove user
-                            </ActionButton>
-                          </div>
-                          <div className="owner-password-reset">
-                            <input
-                              type="password"
-                              placeholder="Temporary password"
-                              value={adminResetState.userId === user.id ? adminResetState.password : ""}
-                              onChange={(event) =>
-                                setAdminResetState({ userId: user.id, password: event.target.value })
-                              }
-                            />
-                            <ActionButton
-                              type="button"
-                              tone="ghost"
-                              disabled={adminResetSubmitting}
-                              onClick={() => handleAdminResetPassword(user.id)}
-                            >
-                              Reset password
-                            </ActionButton>
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="meta-pill">Owner</span>
-                      )}
-                    </article>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="owner-card">
-              <div className="owner-card-head">
-                <h3>Recent activity</h3>
-                <p>Recent changes across the portal, shown in plain language.</p>
-              </div>
-              <div className="owner-activity-list">
-                {(adminOverview?.recent_activity || []).length === 0 ? (
-                  <div className="empty-state-panel">No recent activity yet.</div>
-                ) : (
-                  (adminOverview?.recent_activity || []).map((entry) => (
-                    <article key={entry.id} className="owner-activity-row">
-                      <strong>{formatAuditActionLabel(entry.action)}</strong>
-                      <span>{entry.email || "Unknown user"}</span>
-                      <span>{entry.bl_number || entry.container_number || "Portal activity"}</span>
-                      <span>{formatDateTimeLabel(entry.created_at)}</span>
-                    </article>
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
-        </section>
-      ) : null}
-
-      <section className="stats-grid">
-        <StatCard label="Total Shipments" value={shipmentCounts.total} helperText="Across all shipment groups" motionIndex={0} />
-        <StatCard label="Active" value={shipmentCounts.active} helperText="Currently on the live board" motionIndex={1} />
-        <StatCard
-          label="Completed"
-          value={shipmentCounts.completed}
-          helperText="Open completion history"
-          onClick={() => setRecordsView("completed")}
-          motionIndex={2}
-        />
-        <StatCard
-          label="Archived"
-          value={shipmentCounts.archived}
-          helperText="Open archive register"
-          onClick={() => setRecordsView("archived")}
-          motionIndex={3}
-        />
-      </section>
+      <PortalLandingExperience
+        model={portalLandingModel}
+        renderers={landingRenderers}
+        ownerPanel={ownerPanel}
+      />
 
         {trackingRefreshActive && (
           <section className="surface progress-banner" aria-live="polite">
