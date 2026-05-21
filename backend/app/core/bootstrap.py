@@ -1,4 +1,5 @@
 import json
+from threading import Lock
 
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
@@ -9,18 +10,35 @@ from app.models.user import User
 
 OWNER_EMAIL = "owner@trackingportal.app"
 OWNER_PASSWORD = "PortalOwner@2026"
+_user_schema_ready_bind_ids: set[int] = set()
+_user_schema_lock = Lock()
+
+
+def _bind_identity(db: Session) -> int:
+    bind = db.get_bind()
+    return id(bind)
 
 
 def ensure_user_schema(db: Session) -> None:
-    inspector = inspect(db.bind)
-    columns = {column["name"] for column in inspector.get_columns("users")}
-    if "is_admin" not in columns:
-        db.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
-        db.commit()
-        columns.add("is_admin")
-    if "password_reset_required" not in columns:
-        db.execute(text("ALTER TABLE users ADD COLUMN password_reset_required BOOLEAN NOT NULL DEFAULT 0"))
-        db.commit()
+    bind_id = _bind_identity(db)
+    if bind_id in _user_schema_ready_bind_ids:
+        return
+
+    with _user_schema_lock:
+        if bind_id in _user_schema_ready_bind_ids:
+            return
+
+        inspector = inspect(db.bind)
+        columns = {column["name"] for column in inspector.get_columns("users")}
+        if "is_admin" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
+            db.commit()
+            columns.add("is_admin")
+        if "password_reset_required" not in columns:
+            db.execute(text("ALTER TABLE users ADD COLUMN password_reset_required BOOLEAN NOT NULL DEFAULT 0"))
+            db.commit()
+
+        _user_schema_ready_bind_ids.add(bind_id)
 
 
 def ensure_owner_account(db: Session) -> str:

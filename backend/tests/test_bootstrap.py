@@ -12,6 +12,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.bootstrap import OWNER_EMAIL, OWNER_PASSWORD, ensure_owner_account
+import app.core.bootstrap as bootstrap_module
 from app.core.database import Base
 from app.core.security import hash_password, verify_password
 from app.models.user import User
@@ -19,6 +20,7 @@ from app.models.user import User
 
 class BootstrapTests(unittest.TestCase):
     def setUp(self) -> None:
+        bootstrap_module._user_schema_ready_bind_ids.clear()
         self.engine = create_engine(
             "sqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -38,6 +40,7 @@ class BootstrapTests(unittest.TestCase):
         self.db.close()
         Base.metadata.drop_all(bind=self.engine)
         self.engine.dispose()
+        bootstrap_module._user_schema_ready_bind_ids.clear()
 
     def test_ensure_owner_account_preserves_valid_password_hash(self) -> None:
         existing_hash = hash_password(OWNER_PASSWORD)
@@ -76,6 +79,30 @@ class BootstrapTests(unittest.TestCase):
         self.assertTrue(verify_password(OWNER_PASSWORD, refreshed.password_hash))
         self.assertTrue(refreshed.is_admin)
         self.assertFalse(refreshed.password_reset_required)
+
+    def test_ensure_user_schema_skips_repeat_introspection_for_same_bind(self) -> None:
+        original_inspect = bootstrap_module.inspect
+        calls = {"count": 0}
+
+        class FakeInspector:
+            def get_columns(self, table_name):
+                calls["count"] += 1
+                return [
+                    {"name": "id"},
+                    {"name": "email"},
+                    {"name": "password_hash"},
+                    {"name": "is_admin"},
+                    {"name": "password_reset_required"},
+                ]
+
+        try:
+            bootstrap_module.inspect = lambda bind: FakeInspector()
+            bootstrap_module.ensure_user_schema(self.db)
+            bootstrap_module.ensure_user_schema(self.db)
+        finally:
+            bootstrap_module.inspect = original_inspect
+
+        self.assertEqual(calls["count"], 1)
 
 
 if __name__ == "__main__":
