@@ -3,14 +3,14 @@ from pathlib import Path
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.bootstrap import ensure_owner_account, ensure_user_schema
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password, verify_password
-from app.api.routes.shipments import _shipment_to_dict
+from app.api.routes.shipments import _earliest_non_empty_date, _shipment_to_dict
 from app.deps import get_current_admin, get_current_user
 from app.models.audit_log import AuditLog
 from app.models.job import Job
@@ -103,8 +103,8 @@ def _group_owner_shipments(shipments: list[Shipment]) -> list[dict]:
                 "movement_category": lead.get("movement_category", ""),
                 "latest_location": lead.get("latest_location", ""),
                 "latest_time": lead.get("latest_time", ""),
-                "movement_since_date": min(
-                    [item.get("movement_since_date", "") for item in entries if item.get("movement_since_date", "")] or [""]
+                "movement_since_date": _earliest_non_empty_date(
+                    [item.get("movement_since_date", "") for item in entries]
                 ),
                 "container_numbers": container_numbers,
                 "container_count": len(container_numbers),
@@ -239,7 +239,6 @@ def admin_reset_password(
 @router.get("/admin/overview")
 def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):
     users = list(db.execute(select(User).order_by(User.created_at.desc())).scalars())
-    user_ids = [user.id for user in users]
 
     shipment_counts = {
         user_id: count
@@ -280,6 +279,19 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
     recent_audit_entries = list(
         db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(12)).scalars()
     )
+    shipment_metrics_row = db.execute(
+        select(
+            func.count(Shipment.id),
+            func.sum(case((Shipment.shipment_status == "active", 1), else_=0)),
+            func.sum(case((Shipment.shipment_status == "completed", 1), else_=0)),
+            func.sum(case((Shipment.shipment_status == "archived", 1), else_=0)),
+        )
+    ).one()
+    total_shipments, live_shipments, completed_shipments, archived_shipments = [
+        int(value or 0) for value in shipment_metrics_row
+    ]
+    source_batch_count = int(db.execute(select(func.count(ShipmentBatch.id))).scalar() or 0)
+    audit_event_count = int(db.execute(select(func.count(AuditLog.id))).scalar() or 0)
 
     return {
         "owner": {
@@ -288,18 +300,12 @@ def admin_overview(db: Session = Depends(get_db), current_user: User = Depends(g
         "metrics": {
             "total_users": len(users),
             "admin_users": len([user for user in users if user.is_admin]),
-            "total_shipments": int(db.execute(select(func.count(Shipment.id))).scalar() or 0),
-            "live_shipments": int(
-                db.execute(select(func.count(Shipment.id)).where(Shipment.shipment_status == "active")).scalar() or 0
-            ),
-            "completed_shipments": int(
-                db.execute(select(func.count(Shipment.id)).where(Shipment.shipment_status == "completed")).scalar() or 0
-            ),
-            "archived_shipments": int(
-                db.execute(select(func.count(Shipment.id)).where(Shipment.shipment_status == "archived")).scalar() or 0
-            ),
-            "source_batches": int(db.execute(select(func.count(ShipmentBatch.id))).scalar() or 0),
-            "audit_events": int(db.execute(select(func.count(AuditLog.id))).scalar() or 0),
+            "total_shipments": total_shipments,
+            "live_shipments": live_shipments,
+            "completed_shipments": completed_shipments,
+            "archived_shipments": archived_shipments,
+            "source_batches": source_batch_count,
+            "audit_events": audit_event_count,
         },
         "users": [
             {
