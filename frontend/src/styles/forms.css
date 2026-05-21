@@ -1,0 +1,80 @@
+﻿.stack-form {
+  display: grid;
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field-label,
+.mapping-field span {
+  font-weight: 600;
+  font-size: 12px;
+  color: #364152;
+}
+
+.mapping-grid,
+.audit-form-grid,
+.document-form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.mapping-field,
+.audit-field,
+.document-field {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-field span,
+.document-field span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.inline-field-control {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(255, 255, 255, 0.98);
+  padding: 0 12px;
+  font: inherit;
+  color: var(--text);
+}
+
+.inline-field-control:focus {
+  outline: none;
+  border-color: rgba(13, 59, 102, 0.32);
+  box-shadow: 0 0 0 3px rgba(13, 59, 102, 0.08);
+}
+
+.field-help {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stack-form textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.stack-form textarea:focus {
+  outline: 2px solid rgba(13, 59, 102, 0.18);
+  outline-offset: 0;
+  border-color: rgba(13, 59, 102, 0.36);
+}

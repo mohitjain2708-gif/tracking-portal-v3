@@ -1,5 +1,17 @@
-import React from "react";
+﻿import React from "react";
 
+import ActionButton from "../../components/common/ActionButton";
+import DashboardMetric from "../../components/dashboard/DashboardMetric";
+import MovementIcon from "../../components/dashboard/MovementIcon";
+import MovementIdentifier from "../../components/dashboard/MovementIdentifier";
+import SortableHeader from "../../components/dashboard/SortableHeader";
+import StatCard from "../../components/dashboard/StatCard";
+import {
+  badgeClass,
+  formatDocumentStatusSummary,
+  formatLocationLabel,
+  formatShipmentStatusLabel,
+} from "../../lib/portalUtils";
 import { UIPreferenceSegmentedControl, useUIPreference } from "../../ui/UIPreferenceContext";
 
 const SORT_LABELS = {
@@ -225,18 +237,7 @@ function PremiumShipmentCard({
   );
 }
 
-function ClassicPortalLandingView({ model, renderers, ownerPanel }) {
-  const {
-    ActionButton,
-    DashboardMetric,
-    MovementIdentifier,
-    SortableHeader,
-    MovementIcon,
-    StatCard,
-    badgeClass,
-    formatLocationLabel,
-    formatDocumentStatusSummary,
-  } = renderers;
+function ClassicPortalLandingView({ model, ownerPanel }) {
   const { hero, session, stats, metrics, filters, bulk, table, actions } = model;
 
   return (
@@ -558,15 +559,7 @@ function ClassicPortalLandingView({ model, renderers, ownerPanel }) {
   );
 }
 
-function PremiumPortalLandingView({ model, renderers, ownerPanel }) {
-  const {
-    ActionButton,
-    MovementIcon,
-    badgeClass,
-    formatLocationLabel,
-    formatDocumentStatusSummary,
-    formatShipmentStatusLabel,
-  } = renderers;
+function PremiumPortalLandingView({ model, ownerPanel }) {
   const { hero, session, stats, metrics, filters, bulk, table, actions } = model;
 
   return (
@@ -879,12 +872,13 @@ export function buildPortalLandingModel({
   };
 }
 
-export default function PortalLandingExperience({ model, renderers, ownerPanel = null }) {
+export default function PortalLandingExperience({ model, ownerPanel = null }) {
   const { preference } = useUIPreference();
 
   if (preference === "premium") {
-    return <PremiumPortalLandingView model={model} renderers={renderers} ownerPanel={ownerPanel} />;
+    return <PremiumPortalLandingView model={model} ownerPanel={ownerPanel} />;
   }
 
-  return <ClassicPortalLandingView model={model} renderers={renderers} ownerPanel={ownerPanel} />;
+  return <ClassicPortalLandingView model={model} ownerPanel={ownerPanel} />;
 }
+

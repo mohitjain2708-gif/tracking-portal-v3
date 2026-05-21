@@ -1,0 +1,33 @@
+﻿html[data-portal-ui="classic"] body {
+  background:
+    radial-gradient(circle at top right, rgba(41, 80, 107, 0.08), transparent 22%),
+    radial-gradient(circle at left top, rgba(197, 179, 149, 0.14), transparent 18%),
+    linear-gradient(180deg, #fcfaf6, var(--bg));
+}
+
+html[data-portal-ui="classic"] .surface {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+html[data-portal-ui="classic"] .hero-panel {
+  background:
+    radial-gradient(circle at top right, rgba(207, 219, 232, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(255, 252, 248, 0.99), rgba(249, 245, 239, 0.96));
+  border-color: rgba(184, 172, 156, 0.24);
+  box-shadow:
+    var(--shadow-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+html[data-portal-ui="classic"] .metrics-panel,
+html[data-portal-ui="classic"] .dashboard-panel,
+html[data-portal-ui="classic"] .panel-card {
+  background: var(--surface);
+}
+
+html[data-portal-ui="classic"] .movement-identifier.is-active {
+  border-color: rgba(41, 80, 107, 0.28);
+  box-shadow: 0 12px 24px rgba(41, 80, 107, 0.06);
+  background: linear-gradient(180deg, #ffffff, #f7f3ee);
+}

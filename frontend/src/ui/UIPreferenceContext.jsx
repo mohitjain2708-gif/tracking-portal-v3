@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+﻿import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 const UI_PREFERENCE_STORAGE_KEY = "tracking-portal-ui-preference";
 const DEFAULT_UI_PREFERENCE = "classic";
@@ -91,3 +91,4 @@ export function UIPreferenceSegmentedControl({ className = "", label = "Interfac
     </div>
   );
 }
+
