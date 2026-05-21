@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import app.api.routes.shipments as shipments_module
 from app.core.database import Base
 from app.deps import get_current_admin
 from app.models.shipment import Shipment
+from app.models.upload_session import UploadSession
 from app.models.user import User
 
 
@@ -138,6 +140,42 @@ class ShipmentsRouteHardeningTests(unittest.TestCase):
         )
 
         self.assertEqual({shipment.container_number for shipment in resolved}, {"MRKU5778966", "MRKU5778967"})
+
+    def test_resolve_import_workbook_uses_upload_session_stored_path_when_temp_file_is_missing(self) -> None:
+        with tempfile.NamedTemporaryFile(
+            suffix=".xlsx",
+            dir=shipments_module.IMPORT_WORKBOOK_DIR,
+            delete=False,
+        ) as workbook_file:
+            workbook_path = Path(workbook_file.name)
+            workbook_file.write(b"placeholder workbook bytes")
+        upload = UploadSession(
+            user_id=self.user.id,
+            original_filename="shipments.xlsx",
+            stored_path=str(workbook_path),
+            detected_sheet="Tracking",
+            detected_header_row=1,
+            available_columns_json=["Container Number"],
+            preview_rows_json=[{"container_number": "MRKU5778966"}],
+            status="preview_ready",
+        )
+        self.db.add(upload)
+        self.db.commit()
+        self.db.refresh(upload)
+
+        try:
+            resolved_path, resolved_upload = shipments_module._resolve_import_workbook(
+                self.db,
+                self.user,
+                "missing-token.xlsx",
+                upload_session_id=upload.id,
+            )
+        finally:
+            workbook_path.unlink(missing_ok=True)
+
+        self.assertEqual(resolved_path, workbook_path)
+        self.assertIsNotNone(resolved_upload)
+        self.assertEqual(resolved_upload.id, upload.id)
 
 
 if __name__ == "__main__":

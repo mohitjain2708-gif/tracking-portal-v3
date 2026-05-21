@@ -47,6 +47,22 @@ import {
 
 const OwnerPanel = lazy(() => import("./views/portal/OwnerPanel"));
 const PortalModalLayer = lazy(() => import("./views/portal/PortalModalLayer"));
+
+const INITIAL_IMPORT_PROGRESS = Object.freeze({
+  active: false,
+  title: "",
+  message: "",
+  progress: 0,
+});
+
+const EXPIRED_IMPORT_PREVIEW_MESSAGE =
+  "This workbook preview expired before the import finished. Please upload the file again and continue.";
+
+function isExpiredImportPreviewError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("temporary import file not found") || message.includes("import preview expired");
+}
+
 function App() {
   const demoSessionEnabled = isDemoSessionEnabled();
   const tableWrapRef = useRef(null);
@@ -99,6 +115,7 @@ function App() {
   const [shipmentImportReviewRows, setShipmentImportReviewRows] = useState([]);
   const [shipmentImportReviewSummary, setShipmentImportReviewSummary] = useState(null);
   const [shipmentImportReviewOpen, setShipmentImportReviewOpen] = useState(false);
+  const [shipmentImportProgress, setShipmentImportProgress] = useState(INITIAL_IMPORT_PROGRESS);
   const [sourceBatches, setSourceBatches] = useState([]);
   const [sourceBatchDetail, setSourceBatchDetail] = useState(null);
   const [sourceMappings, setSourceMappings] = useState([]);
@@ -123,6 +140,7 @@ function App() {
   const [trackingRefreshActive, setTrackingRefreshActive] = useState(false);
   const [trackingRefreshProgress, setTrackingRefreshProgress] = useState(0);
   const trackingRefreshPollRef = useRef(null);
+  const shipmentImportProgressTimerRef = useRef(null);
   const dashboardLoadPromiseRef = useRef(null);
   const shipmentListLoadPromiseRef = useRef(null);
   const rowHighlightTimeoutRef = useRef(null);
@@ -157,6 +175,59 @@ function App() {
   });
   const [documentSubmitting, setDocumentSubmitting] = useState(false);
 
+  const clearShipmentImportProgress = useCallback(() => {
+    if (shipmentImportProgressTimerRef.current) {
+      window.clearInterval(shipmentImportProgressTimerRef.current);
+      shipmentImportProgressTimerRef.current = null;
+    }
+    setShipmentImportProgress(INITIAL_IMPORT_PROGRESS);
+  }, []);
+
+  const setShipmentImportProgressStage = useCallback(
+    ({ title, message, progress, maxProgress = progress }) => {
+      if (shipmentImportProgressTimerRef.current) {
+        window.clearInterval(shipmentImportProgressTimerRef.current);
+        shipmentImportProgressTimerRef.current = null;
+      }
+
+      setShipmentImportProgress((current) => ({
+        active: true,
+        title: title || current.title || "Importing shipments",
+        message: message || current.message || "",
+        progress: Math.max(Number(current.progress) || 0, Number(progress) || 0),
+      }));
+
+      const normalizedMax = Number(maxProgress) || 0;
+      if (normalizedMax <= (Number(progress) || 0)) {
+        return;
+      }
+
+      shipmentImportProgressTimerRef.current = window.setInterval(() => {
+        setShipmentImportProgress((current) => {
+          if (!current.active) {
+            return current;
+          }
+
+          const nextProgress = Math.min(normalizedMax, (Number(current.progress) || 0) + 2);
+          if (nextProgress >= normalizedMax && shipmentImportProgressTimerRef.current) {
+            window.clearInterval(shipmentImportProgressTimerRef.current);
+            shipmentImportProgressTimerRef.current = null;
+          }
+
+          if (nextProgress === current.progress) {
+            return current;
+          }
+
+          return {
+            ...current,
+            progress: nextProgress,
+          };
+        });
+      }, 520);
+    },
+    []
+  );
+
   const resetSessionScopedUiState = useCallback(() => {
     if (trackingRefreshPollRef.current) {
       window.clearInterval(trackingRefreshPollRef.current);
@@ -176,6 +247,7 @@ function App() {
     setShipmentImportReviewRows([]);
     setShipmentImportReviewSummary(null);
     setShipmentImportReviewOpen(false);
+    clearShipmentImportProgress();
     setShipmentImportSourceContext(null);
     setSourceBatchDetail(null);
     setGoogleSheetState(INITIAL_GOOGLE_SHEET_STATE);
@@ -233,6 +305,13 @@ function App() {
     const nextWorkspace = cleanText(event.target.value);
     if (nextWorkspace === "tax-table") {
       window.location.assign("/tax-table-utility.html");
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (shipmentImportProgressTimerRef.current) {
+      window.clearInterval(shipmentImportProgressTimerRef.current);
+      shipmentImportProgressTimerRef.current = null;
     }
   }, []);
 
@@ -853,6 +932,10 @@ function App() {
         return;
       }
 
+      if (shipmentImportProgress.active) {
+        return;
+      }
+
       if (rowContextMenu) {
         setRowContextMenu(null);
         return;
@@ -941,6 +1024,7 @@ function App() {
     quickEditRow,
     recordsView,
     rowContextMenu,
+    shipmentImportProgress,
     shipmentImportReviewOpen,
     sourceBatchDetail,
   ]);
@@ -1349,6 +1433,7 @@ function App() {
 
       return api.validateShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
+        upload_session_id: shipmentImportPreview.upload_session_id,
         mapping_json: shipmentImportMapping,
         row_overrides: rowOverrides,
       });
@@ -1376,8 +1461,9 @@ function App() {
     setShipmentImportReviewRows([]);
     setShipmentImportReviewSummary(null);
     setShipmentImportReviewOpen(false);
+    clearShipmentImportProgress();
     setShipmentImportSourceContext(null);
-  }, []);
+  }, [clearShipmentImportProgress]);
 
   const handleShipmentImportConfirm = useCallback(async () => {
     if (!shipmentImportPreview) {
@@ -1392,10 +1478,18 @@ function App() {
 
     setShipmentImporting(true);
     setFeedback(null);
+    let importResult = null;
 
     try {
+      setShipmentImportProgressStage({
+        title: "Preparing import",
+        message: "Checking the workbook for invalid rows, blank entries, and duplicates before anything is added.",
+        progress: 18,
+        maxProgress: 46,
+      });
       const review = await validateShipmentImportRows();
       if ((review.invalid_count || 0) > 0) {
+        clearShipmentImportProgress();
         setShipmentImportReviewRows(review.invalid_rows || []);
         setShipmentImportReviewSummary(review);
         setShipmentImportReviewOpen(true);
@@ -1406,33 +1500,69 @@ function App() {
         return;
       }
 
+      setShipmentImportProgressStage({
+        title: "Importing shipments",
+        message: "Adding the verified shipment rows to your workspace now.",
+        progress: 62,
+        maxProgress: 88,
+      });
       const data = await api.confirmShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
+        upload_session_id: shipmentImportPreview.upload_session_id,
         mapping_json: shipmentImportMapping,
         row_overrides: shipmentImportReviewRows,
         source_context: shipmentImportSourceContext,
       });
+      importResult = data;
 
+      setShipmentImportProgressStage({
+        title: "Finalizing import",
+        message: "Refreshing the live dashboard with your newly added shipments.",
+        progress: 94,
+        maxProgress: 98,
+      });
+      await loadDashboard({ silent: true });
       resetShipmentImportState();
       setFeedback({
         tone: "success",
         text: formatImportCompletionText(data),
       });
-      await loadDashboard({ silent: true });
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Shipment import failed" });
+      clearShipmentImportProgress();
+      if (importResult) {
+        resetShipmentImportState();
+        setFeedback({
+          tone: "warning",
+          text: `${formatImportCompletionText(importResult)} The live board could not refresh automatically, so please refresh the dashboard once to see the new rows.`,
+        });
+        return;
+      }
+      if (isExpiredImportPreviewError(error)) {
+        resetShipmentImportState();
+        setFeedback({ tone: "error", text: EXPIRED_IMPORT_PREVIEW_MESSAGE });
+      } else {
+        setFeedback({ tone: "error", text: error.message || "Shipment import failed" });
+      }
     } finally {
       setShipmentImporting(false);
     }
-    }, [loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, shipmentImportSourceContext, validateShipmentImportRows]);
+    }, [clearShipmentImportProgress, loadDashboard, resetShipmentImportState, shipmentImportMapping, shipmentImportPreview, shipmentImportReviewRows, shipmentImportSourceContext, setShipmentImportProgressStage, validateShipmentImportRows]);
 
   const handleImportReviewRecheck = useCallback(async () => {
     setShipmentImporting(true);
     setFeedback(null);
+    let importResult = null;
     try {
+      setShipmentImportProgressStage({
+        title: "Rechecking workbook",
+        message: "Reviewing the corrected rows before they are added.",
+        progress: 22,
+        maxProgress: 48,
+      });
       const review = await validateShipmentImportRows(shipmentImportReviewRows);
       setShipmentImportReviewSummary(review);
       if ((review.invalid_count || 0) > 0) {
+        clearShipmentImportProgress();
         setShipmentImportReviewRows(review.invalid_rows || []);
         setFeedback({
           tone: "warning",
@@ -1441,31 +1571,61 @@ function App() {
         return;
       }
 
+      setShipmentImportProgressStage({
+        title: "Importing shipments",
+        message: "Adding the corrected shipment rows to your workspace now.",
+        progress: 66,
+        maxProgress: 88,
+      });
       const data = await api.confirmShipmentImport({
         temp_file_token: shipmentImportPreview.temp_file_token,
+        upload_session_id: shipmentImportPreview.upload_session_id,
         mapping_json: shipmentImportMapping,
         row_overrides: shipmentImportReviewRows,
         source_context: shipmentImportSourceContext,
       });
+      importResult = data;
 
+      setShipmentImportProgressStage({
+        title: "Finalizing import",
+        message: "Refreshing the live dashboard with the new shipment rows.",
+        progress: 94,
+        maxProgress: 98,
+      });
+      await loadDashboard({ silent: true });
       resetShipmentImportState();
       setFeedback({
         tone: "success",
         text: formatImportCompletionText(data),
       });
-      await loadDashboard({ silent: true });
     } catch (error) {
-      setFeedback({ tone: "error", text: error.message || "Import review failed" });
+      clearShipmentImportProgress();
+      if (importResult) {
+        resetShipmentImportState();
+        setFeedback({
+          tone: "warning",
+          text: `${formatImportCompletionText(importResult)} The live board could not refresh automatically, so please refresh the dashboard once to see the new rows.`,
+        });
+        return;
+      }
+      if (isExpiredImportPreviewError(error)) {
+        resetShipmentImportState();
+        setFeedback({ tone: "error", text: EXPIRED_IMPORT_PREVIEW_MESSAGE });
+      } else {
+        setFeedback({ tone: "error", text: error.message || "Import review failed" });
+      }
     } finally {
       setShipmentImporting(false);
     }
   }, [
+    clearShipmentImportProgress,
     loadDashboard,
       resetShipmentImportState,
       shipmentImportMapping,
       shipmentImportPreview,
       shipmentImportReviewRows,
       shipmentImportSourceContext,
+      setShipmentImportProgressStage,
       validateShipmentImportRows,
     ]);
 
@@ -2312,6 +2472,7 @@ function App() {
     Boolean(documentRow) ||
     Boolean(recordsView) ||
     Boolean(auditRow) ||
+    Boolean(shipmentImportProgress.active) ||
     Boolean(shipmentImportReviewOpen) ||
     (Boolean(shipmentImportPreview) && shipmentImportSourceContext?.source_type === "google_sheets") ||
     Boolean(sourceBatchDetail) ||
@@ -2461,6 +2622,7 @@ function App() {
             shipmentImportReviewOpen={shipmentImportReviewOpen}
             setShipmentImportReviewOpen={setShipmentImportReviewOpen}
             shipmentImporting={shipmentImporting}
+            shipmentImportProgress={shipmentImportProgress}
             handleImportReviewRecheck={handleImportReviewRecheck}
             shipmentImportReviewSummary={shipmentImportReviewSummary}
             shipmentImportReviewRows={shipmentImportReviewRows}

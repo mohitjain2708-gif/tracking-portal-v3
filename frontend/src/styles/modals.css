@@ -1064,6 +1064,52 @@
   gap: 14px;
 }
 
+.import-progress-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.import-progress-visual {
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(19, 58, 99, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 18px 32px rgba(15, 23, 42, 0.08);
+}
+
+.import-progress-graphic {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.import-progress-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.import-progress-dot-1 {
+  animation: import-dot-float 1.8s ease-in-out infinite;
+}
+
+.import-progress-dot-2 {
+  animation: import-dot-float 1.8s ease-in-out 0.18s infinite;
+}
+
+.import-progress-dot-3 {
+  animation: import-dot-float 1.8s ease-in-out 0.36s infinite;
+}
+
+.import-progress-dot-4 {
+  animation: import-dot-float 1.8s ease-in-out 0.54s infinite;
+}
+
+.import-progress-note {
+  margin: 0;
+}
+
 .document-form-grid {
   display: grid;
   gap: 12px;
@@ -1453,4 +1499,16 @@
 
 .interactive-row.is-freshly-updated td {
   animation: row-success-wash 0.92s var(--motion-ease) both;
+}
+
+@keyframes import-dot-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(0.96);
+    opacity: 0.82;
+  }
+  45% {
+    transform: translateY(-6px) scale(1.08);
+    opacity: 1;
+  }
 }

@@ -424,6 +424,7 @@ export const api = {
     return request("/api/shipments/import-preview", {
       method: "POST",
       body: formData,
+      timeoutMs: 60000,
     });
   },
 
@@ -431,6 +432,7 @@ export const api = {
     request("/api/shipments/import-confirm", {
       method: "POST",
       body: JSON.stringify(payload),
+      timeoutMs: 90000,
     }),
 
   listShipmentSources: () => request("/api/shipments/sources"),
@@ -461,6 +463,7 @@ export const api = {
     request("/api/shipments/import-validate", {
       method: "POST",
       body: JSON.stringify(payload),
+      timeoutMs: 60000,
     }),
 
   refreshAllTracking: () =>

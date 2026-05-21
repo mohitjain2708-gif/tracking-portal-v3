@@ -57,6 +57,7 @@ RUNTIME_DIR = Path(settings.runtime_dir).expanduser()
 if not RUNTIME_DIR.is_absolute():
     RUNTIME_DIR = (BASE_DIR / RUNTIME_DIR).resolve()
 TEMP_IMPORT_DIR = RUNTIME_DIR / "temp_imports"
+IMPORT_WORKBOOK_DIR = RUNTIME_DIR / "import_workbooks"
 STATE_FILE = RUNTIME_DIR / "shipment_state.json"
 CACHE_FILE = RUNTIME_DIR / "tracking_cache.json"
 REFRESH_JOBS_FILE = RUNTIME_DIR / "refresh_jobs.json"
@@ -73,6 +74,7 @@ STALE_PORTAL_RECORD_DAYS = STALE_SOURCE_DAYS
 
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+IMPORT_WORKBOOK_DIR.mkdir(parents=True, exist_ok=True)
 BL_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 LDB_API_URL = "https://www.ldb.co.in/api/ldb/container/search"
@@ -617,6 +619,93 @@ def _read_sheet(file_path: Path, preferred_sheet: str | None = None) -> tuple[st
         return sheet.title, header_row, headers, preview_rows, rows, list(workbook.sheetnames)
     finally:
         workbook.close()
+
+
+def _create_import_workbook_file(file_bytes: bytes, suffix: str) -> tuple[str, Path]:
+    normalized_suffix = _clean_text(suffix).lower()
+    if normalized_suffix not in {".xlsx", ".xlsm"}:
+        normalized_suffix = ".xlsx"
+    token = f"{uuid4().hex}{normalized_suffix}"
+    file_path = IMPORT_WORKBOOK_DIR / token
+    file_path.write_bytes(file_bytes)
+    return token, file_path
+
+
+def _load_import_upload_session(
+    db: Session,
+    current_user: User,
+    upload_session_id: Any = 0,
+    stored_path: Path | None = None,
+) -> UploadSession | None:
+    try:
+        normalized_upload_session_id = int(upload_session_id or 0)
+    except (TypeError, ValueError):
+        normalized_upload_session_id = 0
+
+    if normalized_upload_session_id > 0:
+        upload_session = db.get(UploadSession, normalized_upload_session_id)
+        if upload_session and upload_session.user_id == current_user.id:
+            return upload_session
+
+    if stored_path is None:
+        return None
+
+    return db.execute(
+        select(UploadSession).where(
+            UploadSession.user_id == current_user.id,
+            UploadSession.stored_path == str(stored_path),
+        )
+    ).scalar_one_or_none()
+
+
+def _resolve_import_workbook(
+    db: Session,
+    current_user: User,
+    token: str,
+    upload_session_id: Any = 0,
+) -> tuple[Path, UploadSession | None]:
+    upload_session = _load_import_upload_session(db, current_user, upload_session_id=upload_session_id)
+    candidate_paths: list[Path] = []
+
+    if token:
+        candidate_paths.extend([TEMP_IMPORT_DIR / token, IMPORT_WORKBOOK_DIR / token])
+
+    if upload_session and _clean_text(upload_session.stored_path):
+        candidate_paths.append(Path(upload_session.stored_path))
+
+    checked_paths: set[str] = set()
+    for candidate in candidate_paths:
+        normalized_candidate = str(candidate)
+        if normalized_candidate in checked_paths:
+            continue
+        checked_paths.add(normalized_candidate)
+
+        if not candidate.exists():
+            continue
+
+        if upload_session is None:
+            upload_session = _load_import_upload_session(db, current_user, stored_path=candidate)
+
+        return candidate, upload_session
+
+    raise HTTPException(
+        status_code=404,
+        detail="Import preview expired. Please upload the workbook again before importing.",
+    )
+
+
+def _cleanup_import_workbook(file_path: Path, upload_session: UploadSession | None = None) -> None:
+    cleanup_paths = {file_path}
+    if upload_session and _clean_text(upload_session.stored_path):
+        cleanup_paths.add(Path(upload_session.stored_path))
+
+    for cleanup_path in cleanup_paths:
+        if not cleanup_path.exists():
+            continue
+        try:
+            cleanup_path.unlink()
+        except OSError as exc:
+            logger.warning("Unable to delete import workbook %s: %s", cleanup_path, exc)
 
 
 def _score_sheet_relevance(sheet_name: str, rows: list[list[Any]]) -> tuple[int, int, int, int]:
@@ -4054,9 +4143,7 @@ def preview_google_sheets_source(payload: dict, db: Session = Depends(get_db), c
     finally:
         workbook.close()
 
-    token = f"{uuid4().hex}.xlsx"
-    file_path = TEMP_IMPORT_DIR / token
-    file_path.write_bytes(workbook_bytes)
+    token, file_path = _create_import_workbook_file(workbook_bytes, ".xlsx")
 
     selected_sheet = worksheet_name or available_sheets[0]
     sheet_name, header_row, headers, preview_rows, _rows, _available_sheets = _read_sheet(file_path, selected_sheet)
@@ -4665,9 +4752,7 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
             status_code=413,
             detail=f"Workbook exceeds the {settings.max_upload_mb} MB upload limit.",
         )
-    token = f"{uuid4().hex}{suffix}"
-    file_path = TEMP_IMPORT_DIR / token
-    file_path.write_bytes(file_bytes)
+    token, file_path = _create_import_workbook_file(file_bytes, suffix)
     sheet_name, header_row, headers, preview_rows, _rows, available_sheets = _read_sheet(file_path)
     session = UploadSession(
         user_id=current_user.id,
@@ -4714,19 +4799,17 @@ async def import_preview(file: UploadFile = File(...), db: Session = Depends(get
 async def import_confirm(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     token = _clean_text(payload.get("temp_file_token"))
+    upload_session_id = payload.get("upload_session_id")
     mapping_json = payload.get("mapping_json") or {}
     source_context = payload.get("source_context") or {}
-    if not token:
-        raise HTTPException(status_code=400, detail="temp_file_token is required")
-    file_path = TEMP_IMPORT_DIR / token
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Temporary import file not found")
-    upload_session = db.execute(
-        select(UploadSession).where(
-            UploadSession.user_id == current_user.id,
-            UploadSession.stored_path == str(file_path),
-        )
-    ).scalar_one_or_none()
+    if not token and not upload_session_id:
+        raise HTTPException(status_code=400, detail="temp_file_token or upload_session_id is required")
+    file_path, upload_session = _resolve_import_workbook(
+        db,
+        current_user,
+        token,
+        upload_session_id=upload_session_id,
+    )
     customer_col = _clean_text(mapping_json.get("customer_name"))
     container_col = _clean_text(mapping_json.get("container_number"))
     bl_col = _clean_text(mapping_json.get("bl_number"))
@@ -4959,10 +5042,7 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
         },
     )
     db.commit()
-    try:
-        file_path.unlink()
-    except OSError as exc:
-        logger.warning("Unable to delete temporary import file %s: %s", file_path, exc)
+    _cleanup_import_workbook(file_path, upload_session)
     return {
         "imported_count": imported_count,
         "duplicate_count": duplicate_count,
@@ -4981,13 +5061,17 @@ async def import_confirm(payload: dict, db: Session = Depends(get_db), current_u
 async def import_validate(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_portal_user)):
     _ensure_user_scope_ready(db, current_user)
     token = _clean_text(payload.get("temp_file_token"))
+    upload_session_id = payload.get("upload_session_id")
     mapping_json = payload.get("mapping_json") or {}
     row_overrides = payload.get("row_overrides") or []
-    if not token:
-        raise HTTPException(status_code=400, detail="temp_file_token is required")
-    file_path = TEMP_IMPORT_DIR / token
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Temporary import file not found")
+    if not token and not upload_session_id:
+        raise HTTPException(status_code=400, detail="temp_file_token or upload_session_id is required")
+    file_path, upload_session = _resolve_import_workbook(
+        db,
+        current_user,
+        token,
+        upload_session_id=upload_session_id,
+    )
 
     customer_col = _clean_text(mapping_json.get("customer_name"))
     container_col = _clean_text(mapping_json.get("container_number"))
@@ -4995,12 +5079,6 @@ async def import_validate(payload: dict, db: Session = Depends(get_db), current_
     if not container_col:
         raise HTTPException(status_code=400, detail="Container Number mapping is required")
 
-    upload_session = db.execute(
-        select(UploadSession).where(
-            UploadSession.user_id == current_user.id,
-            UploadSession.stored_path == str(file_path),
-        )
-    ).scalar_one_or_none()
     selected_sheet = upload_session.detected_sheet if upload_session else None
     _sheet_name, header_row, headers, _preview_rows, rows, _available_sheets = _read_sheet(file_path, selected_sheet)
     header_index = header_row - 1

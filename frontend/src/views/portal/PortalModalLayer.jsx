@@ -1,5 +1,6 @@
 import React from "react";
 import ActionButton from "../../components/common/ActionButton";
+import ImportProgressGraphic from "../../components/common/ImportProgressGraphic";
 import Modal from "../../components/common/Modal";
 import {
   DOCUMENT_FIELDS,
@@ -86,6 +87,7 @@ export default function PortalModalLayer({
   shipmentImportReviewOpen,
   setShipmentImportReviewOpen,
   shipmentImporting,
+  shipmentImportProgress,
   handleImportReviewRecheck,
   shipmentImportReviewSummary,
   shipmentImportReviewRows,
@@ -909,6 +911,34 @@ export default function PortalModalLayer({
           </div>
         </Modal>
       )}
+
+      {shipmentImportProgress?.active ? (
+        <Modal
+          title={shipmentImportProgress.title || "Importing shipments"}
+          onClose={() => {}}
+          dismissible={false}
+        >
+          <div className="import-progress-shell">
+            {shipmentImportSourceContext?.source_type !== "google_sheets" ? <ImportProgressGraphic /> : null}
+            <p className="panel-copy">
+              {shipmentImportProgress.message || "Please keep this window open while the workbook is added to the portal."}
+            </p>
+            <div className="progress-banner-copy">
+              <strong>{shipmentImportProgress.title || "Importing shipments"}</strong>
+              <span>{Math.round(Number(shipmentImportProgress.progress) || 0)}%</span>
+            </div>
+            <div className="progress-track" aria-hidden="true">
+              <span
+                className="progress-fill"
+                style={{ width: `${Math.max(6, Math.min(100, Number(shipmentImportProgress.progress) || 0))}%` }}
+              />
+            </div>
+            <p className="muted-text import-progress-note">
+              We are validating the workbook, checking duplicates, and updating your live shipment board.
+            </p>
+          </div>
+        </Modal>
+      ) : null}
 
       {sourceBatchDetail && (
         <Modal title={`Import Batch #${sourceBatchDetail.id}`} onClose={() => setSourceBatchDetail(null)} size="wide">
