@@ -10,10 +10,15 @@ const DEMO_EMAIL = "demo@example.com";
 const DEMO_PASSWORD = "change-me-local";
 const SESSION_TOKEN_KEY = "tp_token";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const AUTH_REQUEST_TIMEOUT_MS = 45000;
+const SERVICE_WARM_TIMEOUT_MS = 45000;
+const SERVICE_WARM_CACHE_MS = 180000;
 const RETRYABLE_METHODS = new Set(["GET", "HEAD"]);
 const BROWSER_SESSION_STORAGE = typeof window !== "undefined" ? window.sessionStorage : null;
 const BROWSER_LOCAL_STORAGE = typeof window !== "undefined" ? window.localStorage : null;
 let portalSessionPromise = null;
+let serviceWarmPromise = null;
+let serviceLastReadyAt = 0;
 let volatileToken = "";
 
 function readStorageValue(storage) {
@@ -94,6 +99,43 @@ export function isDemoSessionEnabled() {
   return DEMO_SESSION_ENABLED;
 }
 
+export async function preflightPortalService({ force = false } = {}) {
+  if (DEMO_SESSION_ENABLED) {
+    return { reachable: true, warmed: false };
+  }
+
+  const now = Date.now();
+  if (!force && serviceLastReadyAt && now - serviceLastReadyAt < SERVICE_WARM_CACHE_MS) {
+    return { reachable: true, warmed: false };
+  }
+
+  if (!serviceWarmPromise) {
+    serviceWarmPromise = safeFetch(
+      `${API_BASE}/api/health`,
+      { timeoutMs: SERVICE_WARM_TIMEOUT_MS },
+      "/api/auth/login"
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(
+            normalizeErrorDetail(data?.detail, getFriendlyServiceMessage("/api/auth/login"))
+          );
+        }
+        serviceLastReadyAt = Date.now();
+        return { reachable: true, warmed: true };
+      })
+      .catch((error) => {
+        throw decorateRequestError(error, "/api/auth/login", "Portal service check failed");
+      })
+      .finally(() => {
+        serviceWarmPromise = null;
+      });
+  }
+
+  return serviceWarmPromise;
+}
+
 function isNetworkFailure(error) {
   const message = String(error?.message || "").toLowerCase();
   return (
@@ -110,7 +152,7 @@ function getFriendlyServiceMessage(path = "") {
   const normalizedPath = String(path || "").toLowerCase();
 
   if (normalizedPath.includes("/api/auth/login") || normalizedPath.includes("/api/auth/register")) {
-    return "We couldn't reach the portal service just now. It may be restarting. Please try signing in again in a few seconds.";
+    return "We couldn't reach the portal service just now. It may be restarting, or the data service may be temporarily unavailable. Please try signing in again shortly.";
   }
 
   if (normalizedPath.includes("/refresh-all") || normalizedPath.includes("/refresh-group") || normalizedPath.includes("/refresh-one")) {
@@ -130,6 +172,10 @@ function getFriendlyServiceMessage(path = "") {
 
 function decorateRequestError(error, path = "", fallback = "Request failed") {
   if (error instanceof Error && error.name === "AbortError") {
+    const normalizedPath = String(path || "").toLowerCase();
+    if (normalizedPath.includes("/api/auth/")) {
+      return new Error("The secure portal is taking longer than usual to wake up. Please try signing in again in a few seconds.");
+    }
     return new Error("The request took too long. Please try again.");
   }
 
@@ -203,12 +249,14 @@ async function ensurePortalSession(path = "") {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
+      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     }, "/api/auth/login")
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data?.access_token) {
           throw new Error(normalizeErrorDetail(data?.detail || data?.message, "Portal session failed"));
         }
+        serviceLastReadyAt = Date.now();
         setToken(data.access_token);
         return data.access_token;
       })
@@ -291,8 +339,10 @@ export const api = {
     request("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(payload),
+      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     }).then((data) => {
       if (data?.access_token) {
+        serviceLastReadyAt = Date.now();
         setToken(data.access_token);
       }
       return data;
@@ -302,14 +352,19 @@ export const api = {
     request("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
+      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     }).then((data) => {
       if (data?.access_token) {
+        serviceLastReadyAt = Date.now();
         setToken(data.access_token);
       }
       return data;
     }),
 
-  me: () => request("/api/auth/me"),
+  me: () =>
+    request("/api/auth/me", {
+      timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+    }),
   changePassword: (payload) =>
     request("/api/auth/change-password", {
       method: "POST",

@@ -1,5 +1,5 @@
 ﻿import React, { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { api, isDemoSessionEnabled } from "./api";
+import { api, isDemoSessionEnabled, preflightPortalService } from "./api";
 import {
   DOCUMENT_FIELDS,
   DOCUMENT_STATUS_OPTIONS,
@@ -75,6 +75,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authServiceState, setAuthServiceState] = useState("idle");
   const [authForm, setAuthForm] = useState({ email: "", password: "", confirmPassword: "" });
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM);
@@ -399,6 +400,34 @@ function App() {
   useEffect(() => {
     setPasswordModalOpen(Boolean(currentUser?.password_reset_required));
   }, [currentUser]);
+
+  useEffect(() => {
+    if (demoSessionEnabled || isAuthenticated) {
+      setAuthServiceState("idle");
+      return undefined;
+    }
+
+    let active = true;
+    setAuthServiceState("warming");
+
+    preflightPortalService()
+      .then(() => {
+        if (!active) {
+          return;
+        }
+        setAuthServiceState("ready");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setAuthServiceState("slow");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [demoSessionEnabled, isAuthenticated]);
 
   useEffect(() => {
     let active = true;
@@ -2125,6 +2154,13 @@ function App() {
       }
 
       setAuthSubmitting(true);
+        setFeedback({
+          tone: "info",
+          text:
+            authMode === "login"
+              ? "Connecting to the secure portal. If the backend is waking up or the data service is recovering, this can take up to a minute."
+              : "Creating your portal account. If the backend is waking up or the data service is recovering, this can take up to a minute.",
+        });
       try {
         if (authMode === "login") {
           await api.login({ email: authForm.email.trim().toLowerCase(), password: authForm.password });
@@ -2135,6 +2171,7 @@ function App() {
         setCurrentUser(user);
         setIsAuthenticated(true);
         setAuthChecked(true);
+        setAuthServiceState("ready");
         setAuthForm({ email: "", password: "", confirmPassword: "" });
         await refreshDashboardLight();
       } catch (error) {
@@ -2513,6 +2550,7 @@ function App() {
         form={authForm}
         loading={authSubmitting}
         feedback={feedback}
+        serviceState={authServiceState}
         onModeChange={() => setAuthMode((current) => (current === "login" ? "register" : "login"))}
         onFieldChange={handleAuthFieldChange}
         onSubmit={handleAuthSubmit}

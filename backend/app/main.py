@@ -7,24 +7,30 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from app.api.routes import auth, uploads, templates, jobs, shipments
 from app.core.bootstrap import seed_test_users
 from app.core.config import settings
-from app.core.database import Base, SessionLocal, engine
+from app.core.database import Base, SessionLocal, engine, is_database_available
 
 logger = logging.getLogger(__name__)
+
+DATABASE_UNAVAILABLE_MESSAGE = "The portal database is temporarily unavailable. Please try again shortly."
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.validate_runtime_settings()
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
     try:
-        seed_test_users(db)
-    finally:
-        db.close()
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            seed_test_users(db)
+        finally:
+            db.close()
+    except OperationalError:
+        logger.exception("Database unavailable during application startup")
     yield
 
 
@@ -55,6 +61,16 @@ async def apply_security_headers(request: Request, call_next):
     start = time.perf_counter()
     try:
         response = await call_next(request)
+    except OperationalError:
+        logger.warning(
+            "Database unavailable while handling request",
+            extra={"request_id": request_id, "path": request.url.path},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"detail": DATABASE_UNAVAILABLE_MESSAGE},
+            headers={"X-Request-ID": request_id, "Retry-After": "30"},
+        )
     except Exception:
         logger.exception("Unhandled API error", extra={"request_id": request_id, "path": request.url.path})
         return JSONResponse(
@@ -78,4 +94,16 @@ async def apply_security_headers(request: Request, call_next):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "environment": settings.app_env}
+    database_ready, _database_error = is_database_available()
+    if not database_ready:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "environment": settings.app_env,
+                "database": "unavailable",
+                "detail": DATABASE_UNAVAILABLE_MESSAGE,
+            },
+            headers={"Retry-After": "30"},
+        )
+    return {"status": "ok", "environment": settings.app_env, "database": "ok"}

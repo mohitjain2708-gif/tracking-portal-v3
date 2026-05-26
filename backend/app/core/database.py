@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.core.config import settings
@@ -31,6 +32,19 @@ SessionLocal = sessionmaker(
     future=True,
 )
 Base = declarative_base()
+
+
+def ping_database() -> None:
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+
+
+def is_database_available() -> tuple[bool, str]:
+    try:
+        ping_database()
+    except OperationalError as exc:
+        return False, str(exc)
+    return True, ""
 
 def get_db():
     db = SessionLocal()

@@ -27,6 +27,29 @@
   line-height: 1.5;
 }
 
+.auth-service-note {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(41, 80, 107, 0.12);
+  background: rgba(246, 250, 255, 0.92);
+  color: #5f738c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-service-note-warming {
+  border-color: rgba(82, 126, 173, 0.18);
+  background: rgba(240, 247, 255, 0.94);
+  color: #4e6885;
+}
+
+.auth-service-note-slow {
+  border-color: rgba(191, 125, 132, 0.18);
+  background: rgba(255, 246, 246, 0.94);
+  color: #8f5f66;
+}
+
 .auth-form {
   display: grid;
   gap: 14px;
@@ -81,6 +104,12 @@
   background: var(--danger-soft);
   border-color: rgba(180, 35, 24, 0.16);
   color: var(--danger);
+}
+
+.feedback-info {
+  background: rgba(241, 247, 255, 0.94);
+  border-color: rgba(82, 126, 173, 0.18);
+  color: #4f6a86;
 }
 
 .surface {

@@ -1,18 +1,29 @@
-﻿export default function AuthScreen({
+export default function AuthScreen({
   mode,
   form,
   loading,
   feedback,
+  serviceState,
   onModeChange,
   onFieldChange,
   onSubmit,
 }) {
+  const serviceHint =
+    serviceState === "warming"
+      ? "Secure portal is waking up in the background. First sign-in can take a little longer."
+      : serviceState === "slow"
+        ? "The secure portal is responding slowly right now. Sign-in will keep waiting longer than usual."
+        : "";
+
   return (
     <main className="auth-shell">
       <section className="auth-card">
         <p className="eyebrow">Secure Access</p>
         <h1>Shipment Manager Portal</h1>
         <p className="auth-copy">Sign in to work in your own shipment workspace.</p>
+        {serviceHint ? (
+          <div className={`auth-service-note auth-service-note-${serviceState}`}>{serviceHint}</div>
+        ) : null}
         <form className="auth-form" onSubmit={onSubmit}>
           <label>
             <span>Email</span>
@@ -50,7 +61,7 @@
             </label>
           )}
           <button type="submit" className="button button-primary auth-submit" disabled={loading}>
-            {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
+            {loading ? "Connecting..." : mode === "login" ? "Sign In" : "Create Account"}
           </button>
         </form>
         {feedback ? <div className={`feedback feedback-${feedback.tone}`}>{feedback.text}</div> : null}
@@ -64,4 +75,3 @@
     </main>
   );
 }
-
