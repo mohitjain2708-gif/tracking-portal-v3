@@ -20,7 +20,7 @@ DATABASE_UNAVAILABLE_MESSAGE = "The portal database is temporarily unavailable. 
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app_instance: FastAPI):
     settings.validate_runtime_settings()
     try:
         Base.metadata.create_all(bind=engine)
@@ -29,12 +29,15 @@ async def lifespan(_: FastAPI):
             seed_test_users(db)
         finally:
             db.close()
-    except OperationalError:
+        app_instance.state.database_startup_error = ""
+    except Exception as exc:
+        app_instance.state.database_startup_error = str(exc)
         logger.exception("Database unavailable during application startup")
     yield
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.state.database_startup_error = ""
 
 cors_origins = settings.cors_origins_list or ["http://localhost:5173", "http://127.0.0.1:5173"]
 
