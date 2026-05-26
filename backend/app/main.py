@@ -32,7 +32,10 @@ async def lifespan(app_instance: FastAPI):
         app_instance.state.database_startup_error = ""
     except Exception as exc:
         app_instance.state.database_startup_error = str(exc)
-        logger.exception("Database unavailable during application startup")
+        logger.warning(
+            "Database unavailable during application startup; API is running in degraded mode",
+            extra={"startup_error": str(exc)},
+        )
     yield
 
 
@@ -93,6 +96,11 @@ async def apply_security_headers(request: Request, call_next):
     if request.url.path.startswith("/api/auth"):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.get("/api/live")
+def live():
+    return {"status": "alive", "environment": settings.app_env}
 
 
 @app.get("/api/health")

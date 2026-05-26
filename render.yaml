@@ -6,7 +6,7 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     autoDeploy: true
-    healthCheckPath: /api/health
+    healthCheckPath: /api/live
     envVars:
       - key: APP_ENV
         value: testing
