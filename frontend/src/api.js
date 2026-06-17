@@ -450,6 +450,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  updateShipmentGroupBlStatus: (payload) =>
+    request("/api/shipments/actions/group/bl-status", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   updateBulkShipmentGroupStatus: (payload) =>
     request("/api/shipments/actions/bulk/status", {
       method: "PATCH",

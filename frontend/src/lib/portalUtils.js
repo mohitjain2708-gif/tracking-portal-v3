@@ -387,6 +387,7 @@ export function applyOperationalFieldUpdate(current, updates = {}) {
   }
   return {
     ...current,
+    bl_surrender_status: updates.bl_surrender_status ?? current.bl_surrender_status ?? "",
     clearance_doc_number: updates.clearance_doc_number ?? current.clearance_doc_number ?? "",
     do_date: updates.do_date ?? current.do_date ?? "",
     document_status: updates.document_status ?? current.document_status ?? "",
@@ -420,12 +421,13 @@ export function formatImportCompletionText(data) {
 
 export function formatAuditActionLabel(value) {
   const action = cleanText(value).toLowerCase();
-  const custom = {
-    shipment_group_refreshed: "Shipment group refreshed",
-    shipment_all_refreshed: "All active shipments refreshed",
-    shipment_imported: "Shipment import completed",
-    shipment_status_updated: "Shipment status updated",
-    shipment_group_restored: "Shipment restored to live dashboard",
+    const custom = {
+      shipment_group_refreshed: "Shipment group refreshed",
+      shipment_all_refreshed: "All active shipments refreshed",
+      shipment_imported: "Shipment import completed",
+      shipment_status_updated: "Shipment status updated",
+      shipment_bl_status_updated: "BL status updated",
+      shipment_group_restored: "Shipment restored to live dashboard",
     shipment_group_deleted: "Shipment group removed",
     shipment_document_uploaded: "Document submitted",
     shipment_orphans_reconciled: "Legacy duplicates cleaned",
@@ -471,6 +473,11 @@ export function formatAuditDetails(details) {
       return `${details.refreshed_count} shipments refreshed: ${details.container_numbers.join(", ")}`;
     }
     return `Containers: ${details.container_numbers.join(", ")}`;
+  }
+
+  if (details.bl_surrender_status !== undefined) {
+    const label = formatBlSurrenderStatusLabel(details.bl_surrender_status);
+    return label ? `${label} saved for this shipment cycle.` : "BL surrender status cleared.";
   }
 
   if (typeof details.deleted_count === "number") {
@@ -573,6 +580,31 @@ export function badgeClass(type, value) {
   return `badge badge-${type} badge-${type}-${key || "unknown"}`;
 }
 
+export function normalizeBlSurrenderStatus(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) {
+    return "";
+  }
+  if (text === "surrendered" || text === "bl surrendered") {
+    return "surrendered";
+  }
+  if (text === "pending" || text === "bl surrender pending" || text === "surrender pending") {
+    return "pending";
+  }
+  return "";
+}
+
+export function formatBlSurrenderStatusLabel(value) {
+  const normalized = normalizeBlSurrenderStatus(value);
+  if (normalized === "surrendered") {
+    return "BL Surrendered";
+  }
+  if (normalized === "pending") {
+    return "BL Surrender Pending";
+  }
+  return "";
+}
+
 export function compareDateStrings(left, right) {
   const toValue = (value) => {
     const text = cleanText(value);
@@ -668,6 +700,9 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
       const destuffingReady = containerDetails.length > 0 && containerDetails.every((item) => item.destuffing_label);
       const legacyActionRequired = sortedEntries.some((item) => item.action_required);
       const actionRequired = legacyActionRequired || destuffingReady;
+      const blSurrenderStatus = normalizeBlSurrenderStatus(
+        sortedEntries.find((item) => normalizeBlSurrenderStatus(item.bl_surrender_status))?.bl_surrender_status
+      );
       return {
         group_key: groupKey,
         id: lead.id,
@@ -677,6 +712,7 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         container_numbers: containerNumbers,
         container_count: containerNumbers.length,
         bl_number: cleanText(lead.bl_number),
+        bl_surrender_status: blSurrenderStatus,
         shipment_status: cleanText(lead.shipment_status) || "active",
         movement_category: lead.movement_category || "Hi Seas",
         latest_location: cleanText(lead.latest_location),

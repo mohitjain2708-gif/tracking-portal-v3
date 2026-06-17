@@ -38,7 +38,12 @@ from app.models.shipment import Shipment
 from app.models.shipment_source import RawSourceRow, ShipmentBatch, ShipmentSource, SourceMappingProfile, SourceConnection
 from app.models.upload_session import UploadSession
 from app.models.user import User
-from app.schemas.shipment import ShipmentCreateRequest, ShipmentGroupUpdateRequest, ShipmentStatusUpdateRequest
+from app.schemas.shipment import (
+    ShipmentCreateRequest,
+    ShipmentGroupBlStatusUpdateRequest,
+    ShipmentGroupUpdateRequest,
+    ShipmentStatusUpdateRequest,
+)
 from app.services.shipment_state import (
     MAX_SAME_CYCLE_BACKWARD_DRIFT_DAYS,
     STALE_SOURCE_DAYS,
@@ -126,6 +131,7 @@ CUSTOMER_IGNORE_TOKENS = BUSINESS_SUFFIXES | {
 }
 
 SHIPMENT_COLUMN_DEFINITIONS = {
+    "bl_surrender_status": "VARCHAR(32) NOT NULL DEFAULT ''",
     "latest_location": "TEXT NOT NULL DEFAULT ''",
     "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
     "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
@@ -1151,6 +1157,17 @@ def _normalize_document_status(value: Any) -> str:
         return "Copy"
     if text_value == "original":
         return "Original"
+    return ""
+
+
+def _normalize_bl_surrender_status(value: Any) -> str:
+    text_value = _clean_text(value).lower()
+    if not text_value:
+        return ""
+    if text_value in {"surrendered", "bl surrendered"}:
+        return "surrendered"
+    if text_value in {"pending", "bl surrender pending", "surrender pending"}:
+        return "pending"
     return ""
 
 
@@ -2471,6 +2488,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "customer_name": _format_customer_name(shipment.customer_name),
         "container_number": shipment.container_number,
         "bl_number": shipment.bl_number,
+        "bl_surrender_status": _normalize_bl_surrender_status(getattr(shipment, "bl_surrender_status", "")),
         "shipment_status": shipment.shipment_status,
         "latest_location": effective_location,
         "latest_time": shipment.latest_time,
@@ -3691,6 +3709,7 @@ def _shipment_record_identity(shipment: Shipment) -> tuple[str, str, str, str]:
 
 def _shipment_quality_score(shipment: Shipment) -> int:
     fields = [
+        shipment.bl_surrender_status,
         shipment.latest_location,
         shipment.latest_time,
         shipment.port_arrival_date,
@@ -3722,6 +3741,7 @@ def _shipment_quality_score(shipment: Shipment) -> int:
 
 def _merge_shipment_record(preferred: Shipment, duplicate: Shipment) -> None:
     merge_fields = [
+        "bl_surrender_status",
         "latest_location",
         "latest_time",
         "port_arrival_date",
@@ -3878,6 +3898,9 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
         )
         refresh_lead = refresh_entries[0]
         bl_number = _first_non_empty([item.get("bl_number", "") for item in sorted_entries])
+        bl_surrender_status = _normalize_bl_surrender_status(
+            _first_non_empty([item.get("bl_surrender_status", "") for item in sorted_entries])
+        )
         container_details = _build_group_container_details(sorted_entries)
         container_numbers = [item["number"] for item in container_details]
         legacy_action_required = any(bool(item.get("action_required")) for item in sorted_entries)
@@ -3919,6 +3942,7 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
                 "container_numbers": container_numbers,
                 "container_count": len(container_numbers),
                 "bl_number": bl_number,
+                "bl_surrender_status": bl_surrender_status,
                 "shipment_status": shipment_status,
                 "movement_category": lead.get("movement_category") or "Hi Seas",
                 "latest_location": _first_non_empty([item.get("latest_location", "") for item in sorted_entries]),
@@ -4562,6 +4586,9 @@ def update_group_details(
     normalized_do_date = _normalize_manual_date(payload.do_date)
     normalized_document_status = _normalize_document_status(payload.document_status)
     normalized_original_docs_received_date = _normalize_manual_date(payload.original_docs_received_date)
+    normalized_bl_surrender_status = _normalize_bl_surrender_status(
+        _first_non_empty([shipment.bl_surrender_status for shipment in target_shipments])
+    )
     if normalized_document_status != "Original":
         normalized_original_docs_received_date = ""
     if normalized_document_status == "Original" and not normalized_original_docs_received_date:
@@ -4607,6 +4634,7 @@ def update_group_details(
                 customer_name=canonical_customer,
                 container_number=container_number,
                 bl_number=normalized_bl,
+                bl_surrender_status=normalized_bl_surrender_status,
                 shipment_status=active_status,
                 movement_category="Hi Seas",
                 source_type="manual",
@@ -4616,6 +4644,7 @@ def update_group_details(
         else:
             shipment.customer_name = canonical_customer
             shipment.bl_number = normalized_bl
+        shipment.bl_surrender_status = normalized_bl_surrender_status
         shipment.clearance_doc_number = normalized_clearance_doc_number
         shipment.do_date = normalized_do_date
         shipment.document_status = normalized_document_status
@@ -4637,6 +4666,7 @@ def update_group_details(
             "container_numbers": container_numbers,
             "previous_bl_number": previous_bl,
             "next_bl_number": normalized_bl,
+            "bl_surrender_status": normalized_bl_surrender_status,
             "clearance_doc_number": normalized_clearance_doc_number,
             "do_date": normalized_do_date,
             "document_status": normalized_document_status,
@@ -4656,6 +4686,60 @@ def update_group_details(
     rows = _group_dashboard_rows_from_items(refreshed_items)
     return {
         "updated_count": len(container_numbers),
+        "items": refreshed_items,
+        "row": rows[0] if rows else None,
+    }
+
+
+@router.patch("/actions/group/bl-status")
+def update_group_bl_surrender_status(
+    payload: ShipmentGroupBlStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    raw_status = _clean_text(payload.bl_surrender_status)
+    normalized_status = _normalize_bl_surrender_status(payload.bl_surrender_status)
+    if raw_status and not normalized_status:
+        raise HTTPException(status_code=400, detail="Invalid BL surrender status")
+
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.bl_number,
+        container_numbers=payload.container_numbers,
+        include_archived=True,
+    )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+
+    for shipment in shipments:
+        shipment.bl_surrender_status = normalized_status
+
+    effective_bl_number = _first_non_empty([shipment.bl_number for shipment in shipments])
+    effective_container_numbers = sorted(
+        {_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)}
+    )
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_bl_status_updated",
+        bl_number=effective_bl_number,
+        container_number=effective_container_numbers[0] if effective_container_numbers else "",
+        shipment_status=_first_non_empty([shipment.shipment_status for shipment in shipments]),
+        details={
+            "bl_surrender_status": normalized_status,
+            "container_numbers": effective_container_numbers,
+        },
+    )
+    db.commit()
+
+    refreshed_items = _shipments_to_dicts(shipments)
+    rows = _group_dashboard_rows_from_items(refreshed_items)
+    return {
+        "updated": True,
+        "count": len(shipments),
+        "bl_surrender_status": normalized_status,
         "items": refreshed_items,
         "row": rows[0] if rows else None,
     }

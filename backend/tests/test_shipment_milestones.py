@@ -20,6 +20,7 @@ from app.api.routes.shipments import (
     _get_refresh_job,
     _run_refresh_all_job,
     _apply_group_status_transition,
+    update_group_bl_surrender_status,
     _build_tracking_payload,
     _containers_from_import_row,
     _dashboard_identifiers,
@@ -41,6 +42,7 @@ from app.api.routes.shipments import (
 import app.models  # noqa: F401
 from app.core.database import Base
 from app.models.shipment import Shipment
+from app.schemas.shipment import ShipmentGroupBlStatusUpdateRequest
 from app.models.user import User
 
 
@@ -91,6 +93,35 @@ class ShipmentMilestoneTests(unittest.TestCase):
         grouped_from_items = _group_dashboard_rows_from_items(_shipments_to_dicts(shipments))
 
         self.assertEqual(grouped_from_models, grouped_from_items)
+
+    def test_group_dashboard_rows_include_bl_surrender_status(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1891823",
+                bl_number="FRE/CCU/0126/976",
+                bl_surrender_status="pending",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                latest_time="14-05-2026",
+            ),
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1904849",
+                bl_number="FRE/CCU/0126/976",
+                bl_surrender_status="pending",
+                shipment_status="active",
+                movement_category="On Rail",
+                latest_location="RAXAUL JN., Samastipur",
+                latest_time="13-05-2026",
+            ),
+        ]
+
+        grouped_rows = _group_dashboard_rows(shipments)
+
+        self.assertEqual(len(grouped_rows), 1)
+        self.assertEqual(grouped_rows[0]["bl_surrender_status"], "pending")
 
     def test_dashboard_identifiers_count_shipment_groups_not_containers(self) -> None:
         today_text = datetime.now().strftime("%d-%m-%Y")
@@ -251,6 +282,55 @@ class ShipmentMilestoneTests(unittest.TestCase):
             ["MSBU1891823", "MSBU1904849", "MSMU3793687"],
         )
         self.assertTrue(all(shipment.shipment_status == "active" for shipment in restored))
+
+        db.close()
+        engine.dispose()
+
+    def test_update_group_bl_surrender_status_updates_full_cycle(self) -> None:
+        engine = create_engine("sqlite:///:memory:", future=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(engine)
+
+        db = SessionLocal()
+        user = User(email="blstatus@example.com", password_hash="x")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        db.add_all(
+            [
+                Shipment(
+                    user_id=user.id,
+                    customer_name="Cycle Customer",
+                    container_number="MSBU1891823",
+                    bl_number="FRE/CCU/0126/976",
+                    shipment_status="active",
+                ),
+                Shipment(
+                    user_id=user.id,
+                    customer_name="Cycle Customer",
+                    container_number="MSBU1904849",
+                    bl_number="FRE/CCU/0126/976",
+                    shipment_status="active",
+                ),
+            ]
+        )
+        db.commit()
+
+        response = update_group_bl_surrender_status(
+            ShipmentGroupBlStatusUpdateRequest(
+                bl_number="FRE/CCU/0126/976",
+                container_numbers=["MSBU1891823"],
+                bl_surrender_status="pending",
+            ),
+            db=db,
+            current_user=user,
+        )
+
+        self.assertTrue(response["updated"])
+        self.assertEqual(response["bl_surrender_status"], "pending")
+        refreshed = list(db.query(Shipment).all())
+        self.assertTrue(all(shipment.bl_surrender_status == "pending" for shipment in refreshed))
 
         db.close()
         engine.dispose()

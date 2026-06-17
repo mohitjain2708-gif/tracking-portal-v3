@@ -9,6 +9,7 @@ import SortableHeader from "../../components/dashboard/SortableHeader";
 import StatCard from "../../components/dashboard/StatCard";
 import {
   badgeClass,
+  formatBlSurrenderStatusLabel,
   formatActionSummary,
   formatDocumentStatusSummary,
   formatLocationLabel,
@@ -139,6 +140,14 @@ function RowActionSummary({ row, className = "" }) {
   return <div className={`row-action-summary ${className}`.trim()}>{summary}</div>;
 }
 
+function BlSurrenderLine({ status, className = "" }) {
+  const label = formatBlSurrenderStatusLabel(status);
+  if (!label) {
+    return null;
+  }
+  return <div className={`bl-surrender-line bl-surrender-line-${status} ${className}`.trim()}>{label}</div>;
+}
+
 function PremiumShipmentCard({
   row,
   isSelected,
@@ -180,7 +189,10 @@ function PremiumShipmentCard({
       <div className="premium-shipment-identity">
         <div>
           <h3>{row.customer_name || "Unnamed customer"}</h3>
-          <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
+          <div className="premium-identity-meta">
+            <BlSurrenderLine status={row.bl_surrender_status} className="premium-bl-surrender-line" />
+            <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
+          </div>
           <RowActionSummary row={row} className="premium-row-action-summary" />
         </div>
         <div className="premium-card-containers">
@@ -482,6 +494,7 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                       <td className="identity-col">
                         <div className="identity-cell">
                           <div className="cell-title customer-name">{row.customer_name || "-"}</div>
+                          <BlSurrenderLine status={row.bl_surrender_status} />
                           <div className="identity-subline">
                             {row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}
                           </div>

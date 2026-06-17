@@ -777,6 +777,18 @@
   letter-spacing: 0.02em;
 }
 
+.bl-surrender-line {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #9a7175;
+}
+
+.bl-surrender-line-pending,
+.bl-surrender-line-surrendered {
+  color: #9a7175;
+}
+
 .row-action-summary {
   font-size: 11px;
   color: #9b6d72;

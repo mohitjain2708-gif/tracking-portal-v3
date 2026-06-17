@@ -496,6 +496,15 @@ html[data-portal-ui="premium"] body {
   line-height: 1.5;
 }
 
+.premium-identity-meta {
+  display: grid;
+  gap: 3px;
+}
+
+.premium-bl-surrender-line {
+  color: #9d7176;
+}
+
 .premium-card-containers {
   max-width: 32ch;
   text-align: left;

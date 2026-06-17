@@ -89,10 +89,49 @@
   color: #203145;
   text-align: left;
   font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .context-menu button:hover {
   background: rgba(19, 58, 99, 0.06);
+}
+
+.context-menu button span,
+.context-menu button small {
+  position: relative;
+  z-index: 1;
+}
+
+.context-menu button small {
+  color: #7c8da1;
+  font-size: 11px;
+}
+
+.context-menu button.is-current {
+  background: rgba(19, 58, 99, 0.06);
+  color: #1d4369;
+}
+
+.context-menu-divider {
+  position: relative;
+  z-index: 1;
+  height: 1px;
+  margin: 4px 2px;
+  background: rgba(214, 223, 234, 0.94);
+}
+
+.context-menu-section-label {
+  position: relative;
+  z-index: 1;
+  padding: 6px 12px 2px;
+  color: #8a97a8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .quick-edit-shell {

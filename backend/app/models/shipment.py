@@ -19,6 +19,7 @@ class Shipment(Base):
     customer_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     container_number: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     bl_number: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    bl_surrender_status: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     shipment_status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
     latest_location: Mapped[str] = mapped_column(Text, nullable=False, default="")
     latest_time: Mapped[str] = mapped_column(String(32), nullable=False, default="")

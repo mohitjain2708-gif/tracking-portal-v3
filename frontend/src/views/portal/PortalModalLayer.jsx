@@ -13,6 +13,7 @@ import {
   badgeClass,
   cleanText,
   exportRowsAsCsv,
+  formatBlSurrenderStatusLabel,
   formatLocationLabel,
   formatShipmentStatusLabel,
   hasDoDateDraftChanges,
@@ -50,6 +51,7 @@ export default function PortalModalLayer({
   clearanceDocNumber,
   rowContextMenu,
   setRowContextMenu,
+  handleUpdateBlSurrenderStatus,
   setQuickEditRow,
   quickEditRow,
   getOperationalDraft,
@@ -414,6 +416,7 @@ export default function PortalModalLayer({
           style={{ top: rowContextMenu.y, left: rowContextMenu.x }}
           onClick={(event) => event.stopPropagation()}
         >
+          <div className="context-menu-section-label">Open</div>
           <button
             type="button"
             onClick={() => {
@@ -440,6 +443,46 @@ export default function PortalModalLayer({
             }}
           >
             Manage Shipment
+          </button>
+          <div className="context-menu-divider" />
+          <div className="context-menu-section-label">BL Status</div>
+          <button
+            type="button"
+            className={cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "surrendered" ? "is-current" : ""}
+            onClick={async () => {
+              const targetRow = rowContextMenu.row;
+              setRowContextMenu(null);
+              await handleUpdateBlSurrenderStatus(targetRow, "surrendered");
+            }}
+          >
+            <span>Mark BL Surrendered</span>
+            {cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "surrendered" ? (
+              <small>{formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status)}</small>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className={cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "pending" ? "is-current" : ""}
+            onClick={async () => {
+              const targetRow = rowContextMenu.row;
+              setRowContextMenu(null);
+              await handleUpdateBlSurrenderStatus(targetRow, "pending");
+            }}
+          >
+            <span>Mark BL Surrender Pending</span>
+            {cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "pending" ? (
+              <small>{formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status)}</small>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const targetRow = rowContextMenu.row;
+              setRowContextMenu(null);
+              await handleUpdateBlSurrenderStatus(targetRow, "");
+            }}
+          >
+            Clear BL Status
           </button>
         </div>
       ) : null}

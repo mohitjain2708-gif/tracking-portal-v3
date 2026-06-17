@@ -24,11 +24,18 @@ class ShipmentStatusUpdateRequest(BaseModel):
     shipment_status: str
 
 
+class ShipmentGroupBlStatusUpdateRequest(BaseModel):
+    bl_number: str = ""
+    container_numbers: list[str] = []
+    bl_surrender_status: str = ""
+
+
 class ShipmentResponse(BaseModel):
     id: int
     customer_name: str
     container_number: str
     bl_number: str
+    bl_surrender_status: str = ""
     shipment_status: str
     latest_location: str = ""
     latest_time: str = ""

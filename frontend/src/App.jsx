@@ -27,6 +27,7 @@ import {
   compareDateStrings,
   compareValues,
   exportRowsAsCsv,
+  formatBlSurrenderStatusLabel,
   formatDateTimeLabel,
   formatDocumentStatusSummary,
   formatImportCompletionText,
@@ -1986,6 +1987,62 @@ function App() {
     [refreshDashboardLight]
   );
 
+  const handleUpdateBlSurrenderStatus = useCallback(
+    async (row, nextStatus) => {
+      const nextLabel = formatBlSurrenderStatusLabel(nextStatus);
+      setFeedback({
+        tone: "info",
+        text: nextLabel ? `Saving ${nextLabel.toLowerCase()}...` : "Clearing BL surrender status...",
+      });
+      try {
+        const data = await api.updateShipmentGroupBlStatus({
+          bl_number: row.bl_number,
+          container_numbers: row.container_numbers,
+          bl_surrender_status: nextStatus,
+        });
+        const appliedStatus = data?.bl_surrender_status ?? nextStatus;
+        setDashboardRows((current) =>
+          current.map((item) =>
+            item.group_key === row.group_key
+              ? {
+                  ...item,
+                  bl_surrender_status: appliedStatus,
+                }
+              : item
+          )
+        );
+        setShipments((current) =>
+          current.map((shipment) =>
+            rowMatchesShipment(row, shipment)
+              ? {
+                  ...shipment,
+                  bl_surrender_status: appliedStatus,
+                }
+              : shipment
+          )
+        );
+        setActionRow((current) =>
+          current?.group_key === row.group_key
+            ? applyOperationalFieldUpdate(current, { bl_surrender_status: appliedStatus })
+            : current
+        );
+        setAuditRow((current) =>
+          current?.group_key === row.group_key
+            ? applyOperationalFieldUpdate(current, { bl_surrender_status: appliedStatus })
+            : current
+        );
+        setFeedback({
+          tone: "success",
+          text: nextLabel ? `${nextLabel} saved.` : "BL surrender status cleared.",
+        });
+        void refreshDashboardLight();
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Failed to update BL surrender status." });
+      }
+    },
+    [refreshDashboardLight]
+  );
+
   const handleGroupDelete = useCallback(
     async (row) => {
       setFeedback(null);
@@ -2644,6 +2701,7 @@ function App() {
             clearanceDocNumber={clearanceDocNumber}
             rowContextMenu={rowContextMenu}
             setRowContextMenu={setRowContextMenu}
+            handleUpdateBlSurrenderStatus={handleUpdateBlSurrenderStatus}
             setQuickEditRow={setQuickEditRow}
             quickEditRow={quickEditRow}
             getOperationalDraft={getOperationalDraft}
