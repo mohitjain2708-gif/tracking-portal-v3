@@ -589,6 +589,18 @@
   color: var(--muted);
 }
 
+.mobile-bl-surrender-line {
+  margin-top: 2px;
+}
+
+.mobile-row-action-summary {
+  margin-top: 2px;
+}
+
+.mobile-shipment-containers .container-text-list {
+  gap: 6px;
+}
+
 .mobile-shipment-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -781,12 +793,15 @@
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
+}
+
+.bl-surrender-line-pending {
   color: #9a7175;
 }
 
-.bl-surrender-line-pending,
 .bl-surrender-line-surrendered {
-  color: #9a7175;
+  color: #1a6c48;
+  font-weight: 700;
 }
 
 .row-action-summary {
@@ -830,7 +845,9 @@
   font-weight: 500;
   letter-spacing: 0.01em;
   color: #405468;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
 .container-text-label {
@@ -1096,5 +1113,27 @@
 
 .hidden-file-input {
   display: none;
+}
+
+@media (max-width: 860px) {
+  .movement-identifiers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tool-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-shipment-list {
+    display: grid;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .movement-identifiers,
+  .mobile-shipment-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 

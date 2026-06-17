@@ -14,6 +14,7 @@ import {
   formatDocumentStatusSummary,
   formatLocationLabel,
   formatShipmentStatusLabel,
+  normalizeBlSurrenderStatus,
 } from "../../lib/portalUtils";
 import { UIPreferenceSegmentedControl, useUIPreference } from "../../ui/UIPreferenceContext";
 
@@ -140,12 +141,111 @@ function RowActionSummary({ row, className = "" }) {
   return <div className={`row-action-summary ${className}`.trim()}>{summary}</div>;
 }
 
+function buildContextMenuAnchor(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return {
+    clientX: rect.right - Math.min(18, rect.width / 2),
+    clientY: rect.bottom + 10,
+  };
+}
+
 function BlSurrenderLine({ status, className = "" }) {
-  const label = formatBlSurrenderStatusLabel(status);
+  const normalizedStatus = normalizeBlSurrenderStatus(status);
+  const label = formatBlSurrenderStatusLabel(normalizedStatus);
   if (!label) {
     return null;
   }
-  return <div className={`bl-surrender-line bl-surrender-line-${status} ${className}`.trim()}>{label}</div>;
+  return (
+    <div
+      className={`bl-surrender-line${normalizedStatus ? ` bl-surrender-line-${normalizedStatus}` : ""} ${className}`.trim()}
+    >
+      {label}
+    </div>
+  );
+}
+
+function ClassicMobileShipmentCard({
+  row,
+  isSelected,
+  isExpanded,
+  onToggleSelection,
+  onOpenAuditRow,
+  onOpenDocuments,
+  onOpenRowContextMenu,
+}) {
+  return (
+    <article
+      className={`mobile-shipment-card ${isSelected ? "is-selected" : ""} ${row.destuffing_ready ? "is-destuffing-ready" : ""}`}
+      onClick={() => onOpenAuditRow(row)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenRowContextMenu(row, event);
+      }}
+    >
+      <div className="mobile-shipment-card-head">
+        <label className="mobile-select-toggle" onClick={(event) => event.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => onToggleSelection(row)}
+            aria-label={`Select shipment ${row.bl_number || row.primary_container_number}`}
+          />
+          <span>Select</span>
+        </label>
+        <div className="mobile-shipment-meta">
+          <span className={badgeClass("status", row.shipment_status)}>{formatShipmentStatusLabel(row.shipment_status)}</span>
+          <span className={badgeClass("movement", row.movement_category)}>{row.movement_category || "Hi Seas"}</span>
+        </div>
+      </div>
+
+      <div className="mobile-shipment-identity">
+        <h3>{row.customer_name || "Unnamed customer"}</h3>
+        <BlSurrenderLine status={row.bl_surrender_status} className="mobile-bl-surrender-line" />
+        <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
+        <RowActionSummary row={row} className="mobile-row-action-summary" />
+      </div>
+
+      <div className="mobile-shipment-containers">
+        <ContainerChipList row={row} expanded={isExpanded} showOverflowHint={false} labelVariant="short" />
+      </div>
+
+      <div className="mobile-shipment-facts">
+        <div className="mobile-fact">
+          <span>Latest location</span>
+          <strong>{formatLocationLabel(row.latest_location) || "Not available"}</strong>
+        </div>
+        <div className="mobile-fact">
+          <span>Movement since</span>
+          <strong>{row.movement_since_date || row.latest_time || "-"}</strong>
+        </div>
+        <div className="mobile-fact">
+          <span>DO date</span>
+          <strong>{row.do_date || "Not set"}</strong>
+        </div>
+        <div className="mobile-fact">
+          <span>Documents</span>
+          <strong>{formatDocumentStatusSummary(row)}</strong>
+        </div>
+      </div>
+
+      <div className="mobile-shipment-actions" onClick={(event) => event.stopPropagation()}>
+        <ActionButton type="button" tone="secondary" onClick={() => onOpenAuditRow(row)}>
+          Open details
+        </ActionButton>
+        <ActionButton type="button" tone="ghost" onClick={() => onOpenDocuments(row)}>
+          {row.documents_complete ? "Open Documents" : "Add Documents"}
+        </ActionButton>
+        <ActionButton
+          type="button"
+          tone="ghost"
+          compact
+          onClick={(event) => onOpenRowContextMenu(row, buildContextMenuAnchor(event))}
+        >
+          Actions
+        </ActionButton>
+      </div>
+    </article>
+  );
 }
 
 function PremiumShipmentCard({
@@ -251,6 +351,16 @@ function PremiumShipmentCard({
             }}
           >
             {row.documents_complete ? "Open Documents" : "Add Documents"}
+          </button>
+          <button
+            type="button"
+            className="button button-ghost premium-card-actions-more"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenRowContextMenu(row, buildContextMenuAnchor(event));
+            }}
+          >
+            Actions
           </button>
         </div>
       </div>
@@ -562,6 +672,30 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mobile-shipment-list">
+          {table.loading ? (
+            <div className="mobile-shipment-empty">Loading shipments...</div>
+          ) : table.rows.length === 0 ? (
+            <div className="mobile-shipment-empty">No shipments match the current filters.</div>
+          ) : (
+            table.rows.map((row) => {
+              const rowKey = String(row.group_key || row.id || "").trim();
+              return (
+                <ClassicMobileShipmentCard
+                  key={`mobile-${row.group_key || row.id}`}
+                  row={row}
+                  isSelected={table.selectedGroupKeys.includes(rowKey)}
+                  isExpanded={table.expandedGroupKeys.includes(rowKey)}
+                  onToggleSelection={actions.onToggleGroupSelection}
+                  onOpenAuditRow={actions.onOpenAuditRow}
+                  onOpenDocuments={actions.onOpenDocuments}
+                  onOpenRowContextMenu={actions.onOpenRowContextMenu}
+                />
+              );
+            })
+          )}
         </div>
       </section>
     </>

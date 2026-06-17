@@ -125,6 +125,13 @@ export default function PortalModalLayer({
 }) {
   const [bulkModalSubmitting, setBulkModalSubmitting] = React.useState(false);
   const [bulkRowSubmittingKeys, setBulkRowSubmittingKeys] = React.useState({});
+  const [blStatusMenuOpen, setBlStatusMenuOpen] = React.useState(false);
+  const [touchMenuMode, setTouchMenuMode] = React.useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = React.useState(null);
+  const [blStatusSubmenuPlacement, setBlStatusSubmenuPlacement] = React.useState("right");
+  const contextMenuRef = React.useRef(null);
+  const blStatusTriggerRef = React.useRef(null);
+  const blStatusSubmenuRef = React.useRef(null);
   const showGoogleSheetsImportModal =
     Boolean(shipmentImportPreview) && shipmentImportSourceContext?.source_type === "google_sheets";
   const importProgressStageOrder = ["validate", "import", "refresh", "complete"];
@@ -137,6 +144,33 @@ export default function PortalModalLayer({
     { key: "import", label: "Import" },
     { key: "refresh", label: "Refresh" },
   ];
+  const currentBlSurrenderStatus = cleanText(rowContextMenu?.row?.bl_surrender_status).toLowerCase();
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(hover: none), (pointer: coarse), (max-width: 860px)");
+    const syncMenuMode = () => setTouchMenuMode(mediaQuery.matches || window.innerWidth <= 860);
+    syncMenuMode();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncMenuMode);
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(syncMenuMode);
+    }
+    window.addEventListener("resize", syncMenuMode);
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", syncMenuMode);
+      } else if (typeof mediaQuery.removeListener === "function") {
+        mediaQuery.removeListener(syncMenuMode);
+      }
+      window.removeEventListener("resize", syncMenuMode);
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!bulkConfirmAction) {
@@ -144,6 +178,96 @@ export default function PortalModalLayer({
       setBulkRowSubmittingKeys({});
     }
   }, [bulkConfirmAction]);
+
+  React.useEffect(() => {
+    setBlStatusMenuOpen(false);
+    setBlStatusSubmenuPlacement(touchMenuMode ? "bottom" : "right");
+    setContextMenuPosition(
+      rowContextMenu
+        ? {
+            top: rowContextMenu.y,
+            left: rowContextMenu.x,
+          }
+        : null
+    );
+  }, [rowContextMenu, touchMenuMode]);
+
+  React.useLayoutEffect(() => {
+    if (!rowContextMenu || !contextMenuRef.current || typeof window === "undefined") {
+      return;
+    }
+
+    const margin = 12;
+    const menuRect = contextMenuRef.current.getBoundingClientRect();
+    const nextLeft = Math.min(
+      Math.max(rowContextMenu.x, margin),
+      Math.max(margin, window.innerWidth - menuRect.width - margin)
+    );
+    const nextTop = Math.min(
+      Math.max(rowContextMenu.y, margin),
+      Math.max(margin, window.innerHeight - menuRect.height - margin)
+    );
+
+    if (!contextMenuPosition || contextMenuPosition.left !== nextLeft || contextMenuPosition.top !== nextTop) {
+      setContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [rowContextMenu, blStatusMenuOpen, blStatusSubmenuPlacement, contextMenuPosition]);
+
+  React.useLayoutEffect(() => {
+    if (
+      !rowContextMenu ||
+      !blStatusMenuOpen ||
+      !blStatusTriggerRef.current ||
+      !blStatusSubmenuRef.current ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    if (touchMenuMode) {
+      if (blStatusSubmenuPlacement !== "bottom") {
+        setBlStatusSubmenuPlacement("bottom");
+      }
+      return;
+    }
+
+    const triggerRect = blStatusTriggerRef.current.getBoundingClientRect();
+    const submenuRect = blStatusSubmenuRef.current.getBoundingClientRect();
+    const margin = 12;
+    const hasRoomRight = window.innerWidth - triggerRect.right >= submenuRect.width + margin;
+    const hasRoomLeft = triggerRect.left >= submenuRect.width + margin;
+    const hasRoomBelow = window.innerHeight - triggerRect.top >= submenuRect.height + margin;
+    const nextPlacement = hasRoomRight ? "right" : hasRoomLeft ? "left" : hasRoomBelow ? "bottom" : "right";
+
+    if (blStatusSubmenuPlacement !== nextPlacement) {
+      setBlStatusSubmenuPlacement(nextPlacement);
+    }
+  }, [rowContextMenu, blStatusMenuOpen, touchMenuMode, blStatusSubmenuPlacement]);
+
+  const closeBlStatusMenu = React.useCallback(() => {
+    setBlStatusMenuOpen(false);
+  }, []);
+
+  const openBlStatusMenu = React.useCallback(() => {
+    setBlStatusMenuOpen(true);
+  }, []);
+
+  const toggleBlStatusMenu = React.useCallback(() => {
+    setBlStatusMenuOpen((current) => !current);
+  }, []);
+
+  const handleBlStatusMenuAction = React.useCallback(
+    async (nextStatus) => {
+      const targetRow = rowContextMenu?.row;
+      setBlStatusMenuOpen(false);
+      setRowContextMenu(null);
+      if (!targetRow) {
+        return;
+      }
+      await handleUpdateBlSurrenderStatus(targetRow, nextStatus);
+    },
+    [handleUpdateBlSurrenderStatus, rowContextMenu, setRowContextMenu]
+  );
 
   return (
     <>
@@ -413,12 +537,15 @@ export default function PortalModalLayer({
       {rowContextMenu ? (
         <div
           className="context-menu"
-          style={{ top: rowContextMenu.y, left: rowContextMenu.x }}
+          ref={contextMenuRef}
+          style={contextMenuPosition || { top: rowContextMenu.y, left: rowContextMenu.x }}
           onClick={(event) => event.stopPropagation()}
+          role="menu"
         >
           <div className="context-menu-section-label">Open</div>
           <button
             type="button"
+            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
             onClick={() => {
               setAuditRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -428,6 +555,7 @@ export default function PortalModalLayer({
           </button>
           <button
             type="button"
+            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
             onClick={() => {
               setQuickEditRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -437,6 +565,7 @@ export default function PortalModalLayer({
           </button>
           <button
             type="button"
+            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
             onClick={() => {
               setActionRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -445,45 +574,92 @@ export default function PortalModalLayer({
             Manage Shipment
           </button>
           <div className="context-menu-divider" />
-          <div className="context-menu-section-label">BL Status</div>
-          <button
-            type="button"
-            className={cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "surrendered" ? "is-current" : ""}
-            onClick={async () => {
-              const targetRow = rowContextMenu.row;
-              setRowContextMenu(null);
-              await handleUpdateBlSurrenderStatus(targetRow, "surrendered");
-            }}
+          <div
+            className={`context-submenu-wrap${blStatusMenuOpen ? " is-open" : ""}`}
+            onMouseEnter={touchMenuMode ? undefined : openBlStatusMenu}
+            onMouseLeave={touchMenuMode ? undefined : closeBlStatusMenu}
           >
-            <span>Mark BL Surrendered</span>
-            {cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "surrendered" ? (
-              <small>{formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status)}</small>
+            <button
+              ref={blStatusTriggerRef}
+              type="button"
+              className={`context-submenu-trigger${blStatusMenuOpen ? " is-open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={blStatusMenuOpen}
+              onClick={() => {
+                if (touchMenuMode) {
+                  toggleBlStatusMenu();
+                  return;
+                }
+                openBlStatusMenu();
+              }}
+            >
+              <span className="context-menu-item-label">BL Status</span>
+              <span className="context-menu-item-arrow" aria-hidden="true">{">"}</span>
+            </button>
+            {blStatusMenuOpen ? (
+              <div
+                ref={blStatusSubmenuRef}
+                className={`context-submenu context-submenu-${blStatusSubmenuPlacement}`}
+                role="menu"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className={
+                    currentBlSurrenderStatus === "surrendered" ? "is-current is-current-surrendered" : ""
+                  }
+                  onClick={() => handleBlStatusMenuAction("surrendered")}
+                >
+                  <span className="context-menu-item-label">Mark BL Surrendered</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {
+                      currentBlSurrenderStatus === "surrendered" ? (
+                        <svg viewBox="0 0 16 16" focusable="false">
+                          <path
+                            d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      ) : null
+                    }
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={currentBlSurrenderStatus === "pending" ? "is-current is-current-pending" : ""}
+                  onClick={() => handleBlStatusMenuAction("pending")}
+                >
+                  <span className="context-menu-item-label">Mark BL Surrender Pending</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {
+                      currentBlSurrenderStatus === "pending" ? (
+                        <svg viewBox="0 0 16 16" focusable="false">
+                          <path
+                            d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      ) : null
+                    }
+                  </span>
+                </button>
+                <button type="button" onClick={() => handleBlStatusMenuAction("")}>
+                  <span className="context-menu-item-label">Clear BL Status</span>
+                  <span className="context-menu-item-trailing subtle-text">
+                    {currentBlSurrenderStatus ? formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status) : ""}
+                  </span>
+                </button>
+              </div>
             ) : null}
-          </button>
-          <button
-            type="button"
-            className={cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "pending" ? "is-current" : ""}
-            onClick={async () => {
-              const targetRow = rowContextMenu.row;
-              setRowContextMenu(null);
-              await handleUpdateBlSurrenderStatus(targetRow, "pending");
-            }}
-          >
-            <span>Mark BL Surrender Pending</span>
-            {cleanText(rowContextMenu.row?.bl_surrender_status).toLowerCase() === "pending" ? (
-              <small>{formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status)}</small>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const targetRow = rowContextMenu.row;
-              setRowContextMenu(null);
-              await handleUpdateBlSurrenderStatus(targetRow, "");
-            }}
-          >
-            Clear BL Status
-          </button>
+          </div>
         </div>
       ) : null}
 

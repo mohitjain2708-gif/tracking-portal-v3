@@ -410,7 +410,7 @@ html[data-portal-ui="premium"] body {
 }
 
 .premium-shipment-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
 }
 
 .premium-shipment-card {
@@ -454,6 +454,10 @@ html[data-portal-ui="premium"] body {
   align-items: center;
 }
 
+.premium-card-actions-more {
+  display: none;
+}
+
 .premium-card-select {
   display: inline-flex;
   align-items: center;
@@ -477,7 +481,9 @@ html[data-portal-ui="premium"] body {
 }
 
 .premium-shipment-identity {
-  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.95fr);
+  align-items: start;
 }
 
 .premium-shipment-identity h3 {
@@ -505,8 +511,18 @@ html[data-portal-ui="premium"] body {
   color: #9d7176;
 }
 
+.premium-bl-surrender-line.bl-surrender-line-pending {
+  color: #9d7176;
+}
+
+.premium-bl-surrender-line.bl-surrender-line-surrendered {
+  color: #15553a;
+  font-weight: 700;
+}
+
 .premium-card-containers {
-  max-width: 32ch;
+  min-width: 220px;
+  max-width: 40ch;
   text-align: left;
 }
 
@@ -563,5 +579,90 @@ html[data-portal-ui="premium"] body {
 
 .compact-actions .button {
   min-height: 38px;
+}
+
+@media (max-width: 860px) {
+  .premium-landing-shell,
+  .premium-board-shell {
+    padding: 18px 16px;
+  }
+
+  .premium-hero-top,
+  .premium-board-header,
+  .premium-control-rack,
+  .premium-hero-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .premium-hero-action-stack {
+    min-width: 0;
+  }
+
+  .premium-summary-grid,
+  .premium-metric-grid,
+  .premium-movement-pills {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .premium-filter-stack {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .premium-movement-pills {
+    flex: 1 1 auto;
+  }
+
+  .premium-shipment-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .premium-shipment-identity {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .premium-card-containers {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  .premium-card-containers .container-text-list {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .premium-shipment-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .premium-card-actions-more {
+    display: inline-flex;
+  }
+
+  .premium-shipment-card-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .premium-shipment-card-actions .compact-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .premium-shipment-card-actions .compact-actions .button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .premium-summary-grid,
+  .premium-metric-grid,
+  .premium-movement-pills,
+  .premium-shipment-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
