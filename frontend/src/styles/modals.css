@@ -130,6 +130,26 @@
   color: #8a5f64;
 }
 
+.context-menu button.is-current-payment-party {
+  background: rgba(26, 108, 72, 0.1);
+  color: #15553a;
+}
+
+.context-menu button.is-current-payment-agency {
+  background: rgba(248, 224, 133, 0.28);
+  color: #15553a;
+}
+
+.context-menu button.is-current-payment-partial {
+  background: rgba(160, 68, 75, 0.1);
+  color: #8f4349;
+}
+
+.context-menu button.is-current-payment-pending {
+  background: rgba(248, 224, 133, 0.28);
+  color: #8f4349;
+}
+
 .context-menu-item-label,
 .context-menu-item-trailing,
 .context-menu-item-arrow {

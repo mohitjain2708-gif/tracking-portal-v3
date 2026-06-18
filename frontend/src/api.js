@@ -456,6 +456,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  updateShipmentGroupPaymentStatus: (payload) =>
+    request("/api/shipments/actions/group/payment-status", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   updateBulkShipmentGroupStatus: (payload) =>
     request("/api/shipments/actions/bulk/status", {
       method: "PATCH",

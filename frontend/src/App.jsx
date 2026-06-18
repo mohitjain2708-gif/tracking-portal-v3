@@ -32,6 +32,7 @@ import {
   formatDocumentStatusSummary,
   formatImportCompletionText,
   formatLocationLabel,
+  formatPaymentStatusLabel,
   formatRefreshStatusLabel,
   formatShipmentStatusLabel,
   fromInputDateValue,
@@ -2043,6 +2044,62 @@ function App() {
     [refreshDashboardLight]
   );
 
+  const handleUpdatePaymentStatus = useCallback(
+    async (row, nextStatus) => {
+      const nextLabel = formatPaymentStatusLabel(nextStatus);
+      setFeedback({
+        tone: "info",
+        text: nextLabel ? `Saving ${nextLabel.toLowerCase()}...` : "Clearing payment status...",
+      });
+      try {
+        const data = await api.updateShipmentGroupPaymentStatus({
+          bl_number: row.bl_number,
+          container_numbers: row.container_numbers,
+          payment_status: nextStatus,
+        });
+        const appliedStatus = data?.payment_status ?? nextStatus;
+        setDashboardRows((current) =>
+          current.map((item) =>
+            item.group_key === row.group_key
+              ? {
+                  ...item,
+                  payment_status: appliedStatus,
+                }
+              : item
+          )
+        );
+        setShipments((current) =>
+          current.map((shipment) =>
+            rowMatchesShipment(row, shipment)
+              ? {
+                  ...shipment,
+                  payment_status: appliedStatus,
+                }
+              : shipment
+          )
+        );
+        setActionRow((current) =>
+          current?.group_key === row.group_key
+            ? applyOperationalFieldUpdate(current, { payment_status: appliedStatus })
+            : current
+        );
+        setAuditRow((current) =>
+          current?.group_key === row.group_key
+            ? applyOperationalFieldUpdate(current, { payment_status: appliedStatus })
+            : current
+        );
+        setFeedback({
+          tone: "success",
+          text: nextLabel ? `${nextLabel} saved.` : "Payment status cleared.",
+        });
+        void refreshDashboardLight();
+      } catch (error) {
+        setFeedback({ tone: "error", text: error.message || "Failed to update payment status." });
+      }
+    },
+    [refreshDashboardLight]
+  );
+
   const handleGroupDelete = useCallback(
     async (row) => {
       setFeedback(null);
@@ -2702,6 +2759,7 @@ function App() {
             rowContextMenu={rowContextMenu}
             setRowContextMenu={setRowContextMenu}
             handleUpdateBlSurrenderStatus={handleUpdateBlSurrenderStatus}
+            handleUpdatePaymentStatus={handleUpdatePaymentStatus}
             setQuickEditRow={setQuickEditRow}
             quickEditRow={quickEditRow}
             getOperationalDraft={getOperationalDraft}

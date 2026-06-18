@@ -507,15 +507,19 @@ html[data-portal-ui="premium"] body {
   gap: 3px;
 }
 
-.premium-bl-surrender-line {
+.premium-status-line {
+  gap: 6px;
+}
+
+.premium-status-line .bl-surrender-line {
   color: #9d7176;
 }
 
-.premium-bl-surrender-line.bl-surrender-line-pending {
+.premium-status-line .bl-surrender-line.bl-surrender-line-pending {
   color: #9d7176;
 }
 
-.premium-bl-surrender-line.bl-surrender-line-surrendered {
+.premium-status-line .bl-surrender-line.bl-surrender-line-surrendered {
   color: #15553a;
   font-weight: 700;
 }

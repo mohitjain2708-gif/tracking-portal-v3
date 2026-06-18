@@ -41,6 +41,7 @@ from app.models.user import User
 from app.schemas.shipment import (
     ShipmentCreateRequest,
     ShipmentGroupBlStatusUpdateRequest,
+    ShipmentGroupPaymentStatusUpdateRequest,
     ShipmentGroupUpdateRequest,
     ShipmentStatusUpdateRequest,
 )
@@ -132,6 +133,7 @@ CUSTOMER_IGNORE_TOKENS = BUSINESS_SUFFIXES | {
 
 SHIPMENT_COLUMN_DEFINITIONS = {
     "bl_surrender_status": "VARCHAR(32) NOT NULL DEFAULT ''",
+    "payment_status": "VARCHAR(32) NOT NULL DEFAULT ''",
     "latest_location": "TEXT NOT NULL DEFAULT ''",
     "latest_time": "VARCHAR(32) NOT NULL DEFAULT ''",
     "port_arrival_date": "VARCHAR(32) NOT NULL DEFAULT ''",
@@ -1168,6 +1170,43 @@ def _normalize_bl_surrender_status(value: Any) -> str:
         return "surrendered"
     if text_value in {"pending", "bl surrender pending", "surrender pending"}:
         return "pending"
+    return ""
+
+
+def _normalize_payment_status(value: Any) -> str:
+    text_value = _clean_text(value).lower()
+    if not text_value:
+        return ""
+    if text_value in {"paid_by_party", "paid by party", "party paid"}:
+        return "paid_by_party"
+    if text_value in {"paid_by_agency", "paid by agency", "agency paid"}:
+        return "paid_by_agency"
+    if text_value in {"partially_paid", "partially paid", "partial payment", "part payment"}:
+        return "partially_paid"
+    if text_value in {"pending", "payment pending"}:
+        return "pending"
+    return ""
+
+
+def _format_bl_surrender_status_label(value: Any) -> str:
+    normalized_value = _normalize_bl_surrender_status(value)
+    if normalized_value == "surrendered":
+        return "BL Surrendered"
+    if normalized_value == "pending":
+        return "BL Surrender Pending"
+    return ""
+
+
+def _format_payment_status_label(value: Any) -> str:
+    normalized_value = _normalize_payment_status(value)
+    if normalized_value == "paid_by_party":
+        return "Invoice Paid by Party"
+    if normalized_value == "paid_by_agency":
+        return "Invoice Paid by Agency"
+    if normalized_value == "partially_paid":
+        return "Invoice Partially Paid"
+    if normalized_value == "pending":
+        return "Invoice Payment Pending"
     return ""
 
 
@@ -2489,6 +2528,7 @@ def _shipment_to_dict(shipment: Shipment) -> dict[str, Any]:
         "container_number": shipment.container_number,
         "bl_number": shipment.bl_number,
         "bl_surrender_status": _normalize_bl_surrender_status(getattr(shipment, "bl_surrender_status", "")),
+        "payment_status": _normalize_payment_status(getattr(shipment, "payment_status", "")),
         "shipment_status": shipment.shipment_status,
         "latest_location": effective_location,
         "latest_time": shipment.latest_time,
@@ -3901,6 +3941,9 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
         bl_surrender_status = _normalize_bl_surrender_status(
             _first_non_empty([item.get("bl_surrender_status", "") for item in sorted_entries])
         )
+        payment_status = _normalize_payment_status(
+            _first_non_empty([item.get("payment_status", "") for item in sorted_entries])
+        )
         container_details = _build_group_container_details(sorted_entries)
         container_numbers = [item["number"] for item in container_details]
         legacy_action_required = any(bool(item.get("action_required")) for item in sorted_entries)
@@ -3943,6 +3986,7 @@ def _group_dashboard_rows_from_items(items: list[dict[str, Any]]) -> list[dict[s
                 "container_count": len(container_numbers),
                 "bl_number": bl_number,
                 "bl_surrender_status": bl_surrender_status,
+                "payment_status": payment_status,
                 "shipment_status": shipment_status,
                 "movement_category": lead.get("movement_category") or "Hi Seas",
                 "latest_location": _first_non_empty([item.get("latest_location", "") for item in sorted_entries]),
@@ -4390,6 +4434,8 @@ def export_dashboard(db: Session = Depends(get_db), current_user: User = Depends
     headers = [
         "Customer",
         "BL Number",
+        "BL Status",
+        "Payment Status",
         "Containers",
         "Shipment Status",
         "Movement",
@@ -4425,6 +4471,8 @@ def export_dashboard(db: Session = Depends(get_db), current_user: User = Depends
             [
                 row.get("customer_name", ""),
                 row.get("bl_number", ""),
+                _format_bl_surrender_status_label(row.get("bl_surrender_status", "")),
+                _format_payment_status_label(row.get("payment_status", "")),
                 ", ".join(row.get("container_numbers") or []),
                 row.get("shipment_status", ""),
                 row.get("movement_category", ""),
@@ -4440,7 +4488,7 @@ def export_dashboard(db: Session = Depends(get_db), current_user: User = Depends
             ]
         )
 
-    widths = [28, 18, 40, 16, 18, 34, 16, 12, 16, 16, 18, 20, 18, 14]
+    widths = [28, 18, 18, 22, 40, 16, 18, 34, 16, 12, 16, 16, 18, 20, 18, 14]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(64 + index)].width = width
 
@@ -4740,6 +4788,60 @@ def update_group_bl_surrender_status(
         "updated": True,
         "count": len(shipments),
         "bl_surrender_status": normalized_status,
+        "items": refreshed_items,
+        "row": rows[0] if rows else None,
+    }
+
+
+@router.patch("/actions/group/payment-status")
+def update_group_payment_status(
+    payload: ShipmentGroupPaymentStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_portal_user),
+):
+    _ensure_user_scope_ready(db, current_user)
+    raw_status = _clean_text(payload.payment_status)
+    normalized_status = _normalize_payment_status(payload.payment_status)
+    if raw_status and not normalized_status:
+        raise HTTPException(status_code=400, detail="Invalid payment status")
+
+    shipments = _resolve_group_shipments(
+        db,
+        current_user,
+        bl_number=payload.bl_number,
+        container_numbers=payload.container_numbers,
+        include_archived=True,
+    )
+    if not shipments:
+        raise HTTPException(status_code=404, detail="Shipment group not found")
+
+    for shipment in shipments:
+        shipment.payment_status = normalized_status
+
+    effective_bl_number = _first_non_empty([shipment.bl_number for shipment in shipments])
+    effective_container_numbers = sorted(
+        {_clean_container(shipment.container_number) for shipment in shipments if _clean_container(shipment.container_number)}
+    )
+    _log_audit_event(
+        db,
+        current_user.id,
+        "shipment_payment_status_updated",
+        bl_number=effective_bl_number,
+        container_number=effective_container_numbers[0] if effective_container_numbers else "",
+        shipment_status=_first_non_empty([shipment.shipment_status for shipment in shipments]),
+        details={
+            "payment_status": normalized_status,
+            "container_numbers": effective_container_numbers,
+        },
+    )
+    db.commit()
+
+    refreshed_items = _shipments_to_dicts(shipments)
+    rows = _group_dashboard_rows_from_items(refreshed_items)
+    return {
+        "updated": True,
+        "count": len(shipments),
+        "payment_status": normalized_status,
         "items": refreshed_items,
         "row": rows[0] if rows else None,
     }

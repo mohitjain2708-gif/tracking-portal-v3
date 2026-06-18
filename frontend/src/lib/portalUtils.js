@@ -388,6 +388,7 @@ export function applyOperationalFieldUpdate(current, updates = {}) {
   return {
     ...current,
     bl_surrender_status: updates.bl_surrender_status ?? current.bl_surrender_status ?? "",
+    payment_status: updates.payment_status ?? current.payment_status ?? "",
     clearance_doc_number: updates.clearance_doc_number ?? current.clearance_doc_number ?? "",
     do_date: updates.do_date ?? current.do_date ?? "",
     document_status: updates.document_status ?? current.document_status ?? "",
@@ -421,13 +422,14 @@ export function formatImportCompletionText(data) {
 
 export function formatAuditActionLabel(value) {
   const action = cleanText(value).toLowerCase();
-    const custom = {
-      shipment_group_refreshed: "Shipment group refreshed",
-      shipment_all_refreshed: "All active shipments refreshed",
-      shipment_imported: "Shipment import completed",
-      shipment_status_updated: "Shipment status updated",
-      shipment_bl_status_updated: "BL status updated",
-      shipment_group_restored: "Shipment restored to live dashboard",
+  const custom = {
+    shipment_group_refreshed: "Shipment group refreshed",
+    shipment_all_refreshed: "All active shipments refreshed",
+    shipment_imported: "Shipment import completed",
+    shipment_status_updated: "Shipment status updated",
+    shipment_bl_status_updated: "BL status updated",
+    shipment_payment_status_updated: "Payment status updated",
+    shipment_group_restored: "Shipment restored to live dashboard",
     shipment_group_deleted: "Shipment group removed",
     shipment_document_uploaded: "Document submitted",
     shipment_orphans_reconciled: "Legacy duplicates cleaned",
@@ -478,6 +480,11 @@ export function formatAuditDetails(details) {
   if (details.bl_surrender_status !== undefined) {
     const label = formatBlSurrenderStatusLabel(details.bl_surrender_status);
     return label ? `${label} saved for this shipment cycle.` : "BL surrender status cleared.";
+  }
+
+  if (details.payment_status !== undefined) {
+    const label = formatPaymentStatusLabel(details.payment_status);
+    return label ? `${label} saved for this shipment cycle.` : "Payment status cleared.";
   }
 
   if (typeof details.deleted_count === "number") {
@@ -605,6 +612,43 @@ export function formatBlSurrenderStatusLabel(value) {
   return "";
 }
 
+export function normalizePaymentStatus(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) {
+    return "";
+  }
+  if (text === "paid_by_party" || text === "paid by party" || text === "party paid") {
+    return "paid_by_party";
+  }
+  if (text === "paid_by_agency" || text === "paid by agency" || text === "agency paid") {
+    return "paid_by_agency";
+  }
+  if (text === "partially_paid" || text === "partially paid" || text === "partial payment" || text === "part payment") {
+    return "partially_paid";
+  }
+  if (text === "pending" || text === "payment pending") {
+    return "pending";
+  }
+  return "";
+}
+
+export function formatPaymentStatusLabel(value) {
+  const normalized = normalizePaymentStatus(value);
+  if (normalized === "paid_by_party") {
+    return "Invoice Paid by Party";
+  }
+  if (normalized === "paid_by_agency") {
+    return "Invoice Paid by Agency";
+  }
+  if (normalized === "partially_paid") {
+    return "Invoice Partially Paid";
+  }
+  if (normalized === "pending") {
+    return "Invoice Payment Pending";
+  }
+  return "";
+}
+
 export function compareDateStrings(left, right) {
   const toValue = (value) => {
     const text = cleanText(value);
@@ -703,6 +747,9 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
       const blSurrenderStatus = normalizeBlSurrenderStatus(
         sortedEntries.find((item) => normalizeBlSurrenderStatus(item.bl_surrender_status))?.bl_surrender_status
       );
+      const paymentStatus = normalizePaymentStatus(
+        sortedEntries.find((item) => normalizePaymentStatus(item.payment_status))?.payment_status
+      );
       return {
         group_key: groupKey,
         id: lead.id,
@@ -713,6 +760,7 @@ export function buildGroupedRowsFromShipments(shipments, statusFilter = null) {
         container_count: containerNumbers.length,
         bl_number: cleanText(lead.bl_number),
         bl_surrender_status: blSurrenderStatus,
+        payment_status: paymentStatus,
         shipment_status: cleanText(lead.shipment_status) || "active",
         movement_category: lead.movement_category || "Hi Seas",
         latest_location: cleanText(lead.latest_location),

@@ -38,11 +38,12 @@ from app.api.routes.shipments import (
     _should_ignore_stale_pristine_data,
     _summarize_import_rows,
     _shipment_needs_action,
+    update_group_payment_status,
 )
 import app.models  # noqa: F401
 from app.core.database import Base
 from app.models.shipment import Shipment
-from app.schemas.shipment import ShipmentGroupBlStatusUpdateRequest
+from app.schemas.shipment import ShipmentGroupBlStatusUpdateRequest, ShipmentGroupPaymentStatusUpdateRequest
 from app.models.user import User
 
 
@@ -122,6 +123,35 @@ class ShipmentMilestoneTests(unittest.TestCase):
 
         self.assertEqual(len(grouped_rows), 1)
         self.assertEqual(grouped_rows[0]["bl_surrender_status"], "pending")
+
+    def test_group_dashboard_rows_include_payment_status(self) -> None:
+        shipments = [
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1891823",
+                bl_number="FRE/CCU/0126/976",
+                payment_status="paid_by_agency",
+                shipment_status="active",
+                movement_category="Arrived Birgunj",
+                latest_location="ICD BIRGANJ, Samastipur",
+                latest_time="14-05-2026",
+            ),
+            Shipment(
+                customer_name="Grouped Customer",
+                container_number="MSBU1904849",
+                bl_number="FRE/CCU/0126/976",
+                payment_status="paid_by_agency",
+                shipment_status="active",
+                movement_category="On Rail",
+                latest_location="RAXAUL JN., Samastipur",
+                latest_time="13-05-2026",
+            ),
+        ]
+
+        grouped_rows = _group_dashboard_rows(shipments)
+
+        self.assertEqual(len(grouped_rows), 1)
+        self.assertEqual(grouped_rows[0]["payment_status"], "paid_by_agency")
 
     def test_dashboard_identifiers_count_shipment_groups_not_containers(self) -> None:
         today_text = datetime.now().strftime("%d-%m-%Y")
@@ -317,20 +347,79 @@ class ShipmentMilestoneTests(unittest.TestCase):
         )
         db.commit()
 
-        response = update_group_bl_surrender_status(
-            ShipmentGroupBlStatusUpdateRequest(
-                bl_number="FRE/CCU/0126/976",
-                container_numbers=["MSBU1891823"],
-                bl_surrender_status="pending",
-            ),
-            db=db,
-            current_user=user,
-        )
+        original_scope_ready = shipments_module._ensure_user_scope_ready
+        try:
+            shipments_module._ensure_user_scope_ready = lambda db, current_user: None
+            response = update_group_bl_surrender_status(
+                ShipmentGroupBlStatusUpdateRequest(
+                    bl_number="FRE/CCU/0126/976",
+                    container_numbers=["MSBU1891823"],
+                    bl_surrender_status="pending",
+                ),
+                db=db,
+                current_user=user,
+            )
+        finally:
+            shipments_module._ensure_user_scope_ready = original_scope_ready
 
         self.assertTrue(response["updated"])
         self.assertEqual(response["bl_surrender_status"], "pending")
         refreshed = list(db.query(Shipment).all())
         self.assertTrue(all(shipment.bl_surrender_status == "pending" for shipment in refreshed))
+
+        db.close()
+        engine.dispose()
+
+    def test_update_group_payment_status_updates_full_cycle(self) -> None:
+        engine = create_engine("sqlite:///:memory:", future=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+        Base.metadata.create_all(engine)
+
+        db = SessionLocal()
+        user = User(email="paymentstatus@example.com", password_hash="x")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        db.add_all(
+            [
+                Shipment(
+                    user_id=user.id,
+                    customer_name="Cycle Customer",
+                    container_number="MSBU1891823",
+                    bl_number="FRE/CCU/0126/976",
+                    shipment_status="active",
+                ),
+                Shipment(
+                    user_id=user.id,
+                    customer_name="Cycle Customer",
+                    container_number="MSBU1904849",
+                    bl_number="FRE/CCU/0126/976",
+                    shipment_status="active",
+                ),
+            ]
+        )
+        db.commit()
+
+        original_scope_ready = shipments_module._ensure_user_scope_ready
+        try:
+            shipments_module._ensure_user_scope_ready = lambda db, current_user: None
+            response = update_group_payment_status(
+                ShipmentGroupPaymentStatusUpdateRequest(
+                    bl_number="FRE/CCU/0126/976",
+                    container_numbers=["MSBU1891823"],
+                    payment_status="paid by agency",
+                ),
+                db=db,
+                current_user=user,
+            )
+        finally:
+            shipments_module._ensure_user_scope_ready = original_scope_ready
+
+        self.assertTrue(response["updated"])
+        self.assertEqual(response["payment_status"], "paid_by_agency")
+        refreshed = list(db.query(Shipment).all())
+        self.assertTrue(all(shipment.payment_status == "paid_by_agency" for shipment in refreshed))
 
         db.close()
         engine.dispose()

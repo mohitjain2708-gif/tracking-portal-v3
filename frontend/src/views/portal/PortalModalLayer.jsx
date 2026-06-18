@@ -15,9 +15,11 @@ import {
   exportRowsAsCsv,
   formatBlSurrenderStatusLabel,
   formatLocationLabel,
+  formatPaymentStatusLabel,
   formatShipmentStatusLabel,
   hasDoDateDraftChanges,
   hasDocumentDraftChanges,
+  normalizePaymentStatus,
 } from "../../lib/portalUtils";
 import ManageShipmentModal from "./modals/ManageShipmentModal";
 import ShipmentDetailModal from "./modals/ShipmentDetailModal";
@@ -52,6 +54,7 @@ export default function PortalModalLayer({
   rowContextMenu,
   setRowContextMenu,
   handleUpdateBlSurrenderStatus,
+  handleUpdatePaymentStatus,
   setQuickEditRow,
   quickEditRow,
   getOperationalDraft,
@@ -126,12 +129,16 @@ export default function PortalModalLayer({
   const [bulkModalSubmitting, setBulkModalSubmitting] = React.useState(false);
   const [bulkRowSubmittingKeys, setBulkRowSubmittingKeys] = React.useState({});
   const [blStatusMenuOpen, setBlStatusMenuOpen] = React.useState(false);
+  const [paymentStatusMenuOpen, setPaymentStatusMenuOpen] = React.useState(false);
   const [touchMenuMode, setTouchMenuMode] = React.useState(false);
   const [contextMenuPosition, setContextMenuPosition] = React.useState(null);
   const [blStatusSubmenuPlacement, setBlStatusSubmenuPlacement] = React.useState("right");
+  const [paymentStatusSubmenuPlacement, setPaymentStatusSubmenuPlacement] = React.useState("right");
   const contextMenuRef = React.useRef(null);
   const blStatusTriggerRef = React.useRef(null);
   const blStatusSubmenuRef = React.useRef(null);
+  const paymentStatusTriggerRef = React.useRef(null);
+  const paymentStatusSubmenuRef = React.useRef(null);
   const showGoogleSheetsImportModal =
     Boolean(shipmentImportPreview) && shipmentImportSourceContext?.source_type === "google_sheets";
   const importProgressStageOrder = ["validate", "import", "refresh", "complete"];
@@ -145,6 +152,7 @@ export default function PortalModalLayer({
     { key: "refresh", label: "Refresh" },
   ];
   const currentBlSurrenderStatus = cleanText(rowContextMenu?.row?.bl_surrender_status).toLowerCase();
+  const currentPaymentStatus = normalizePaymentStatus(rowContextMenu?.row?.payment_status);
 
   React.useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -181,7 +189,9 @@ export default function PortalModalLayer({
 
   React.useEffect(() => {
     setBlStatusMenuOpen(false);
+    setPaymentStatusMenuOpen(false);
     setBlStatusSubmenuPlacement(touchMenuMode ? "bottom" : "right");
+    setPaymentStatusSubmenuPlacement(touchMenuMode ? "bottom" : "right");
     setContextMenuPosition(
       rowContextMenu
         ? {
@@ -244,16 +254,68 @@ export default function PortalModalLayer({
     }
   }, [rowContextMenu, blStatusMenuOpen, touchMenuMode, blStatusSubmenuPlacement]);
 
+  React.useLayoutEffect(() => {
+    if (
+      !rowContextMenu ||
+      !paymentStatusMenuOpen ||
+      !paymentStatusTriggerRef.current ||
+      !paymentStatusSubmenuRef.current ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
+
+    if (touchMenuMode) {
+      if (paymentStatusSubmenuPlacement !== "bottom") {
+        setPaymentStatusSubmenuPlacement("bottom");
+      }
+      return;
+    }
+
+    const triggerRect = paymentStatusTriggerRef.current.getBoundingClientRect();
+    const submenuRect = paymentStatusSubmenuRef.current.getBoundingClientRect();
+    const margin = 12;
+    const hasRoomRight = window.innerWidth - triggerRect.right >= submenuRect.width + margin;
+    const hasRoomLeft = triggerRect.left >= submenuRect.width + margin;
+    const hasRoomBelow = window.innerHeight - triggerRect.top >= submenuRect.height + margin;
+    const nextPlacement = hasRoomRight ? "right" : hasRoomLeft ? "left" : hasRoomBelow ? "bottom" : "right";
+
+    if (paymentStatusSubmenuPlacement !== nextPlacement) {
+      setPaymentStatusSubmenuPlacement(nextPlacement);
+    }
+  }, [rowContextMenu, paymentStatusMenuOpen, touchMenuMode, paymentStatusSubmenuPlacement]);
+
   const closeBlStatusMenu = React.useCallback(() => {
     setBlStatusMenuOpen(false);
   }, []);
 
   const openBlStatusMenu = React.useCallback(() => {
+    setPaymentStatusMenuOpen(false);
     setBlStatusMenuOpen(true);
   }, []);
 
   const toggleBlStatusMenu = React.useCallback(() => {
+    setPaymentStatusMenuOpen(false);
     setBlStatusMenuOpen((current) => !current);
+  }, []);
+
+  const closePaymentStatusMenu = React.useCallback(() => {
+    setPaymentStatusMenuOpen(false);
+  }, []);
+
+  const openPaymentStatusMenu = React.useCallback(() => {
+    setBlStatusMenuOpen(false);
+    setPaymentStatusMenuOpen(true);
+  }, []);
+
+  const togglePaymentStatusMenu = React.useCallback(() => {
+    setBlStatusMenuOpen(false);
+    setPaymentStatusMenuOpen((current) => !current);
+  }, []);
+
+  const closeAllContextSubmenus = React.useCallback(() => {
+    setBlStatusMenuOpen(false);
+    setPaymentStatusMenuOpen(false);
   }, []);
 
   const handleBlStatusMenuAction = React.useCallback(
@@ -267,6 +329,19 @@ export default function PortalModalLayer({
       await handleUpdateBlSurrenderStatus(targetRow, nextStatus);
     },
     [handleUpdateBlSurrenderStatus, rowContextMenu, setRowContextMenu]
+  );
+
+  const handlePaymentStatusMenuAction = React.useCallback(
+    async (nextStatus) => {
+      const targetRow = rowContextMenu?.row;
+      setPaymentStatusMenuOpen(false);
+      setRowContextMenu(null);
+      if (!targetRow) {
+        return;
+      }
+      await handleUpdatePaymentStatus(targetRow, nextStatus);
+    },
+    [handleUpdatePaymentStatus, rowContextMenu, setRowContextMenu]
   );
 
   return (
@@ -545,7 +620,7 @@ export default function PortalModalLayer({
           <div className="context-menu-section-label">Open</div>
           <button
             type="button"
-            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
+            onMouseEnter={touchMenuMode ? undefined : closeAllContextSubmenus}
             onClick={() => {
               setAuditRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -555,7 +630,7 @@ export default function PortalModalLayer({
           </button>
           <button
             type="button"
-            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
+            onMouseEnter={touchMenuMode ? undefined : closeAllContextSubmenus}
             onClick={() => {
               setQuickEditRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -565,7 +640,7 @@ export default function PortalModalLayer({
           </button>
           <button
             type="button"
-            onMouseEnter={touchMenuMode ? undefined : closeBlStatusMenu}
+            onMouseEnter={touchMenuMode ? undefined : closeAllContextSubmenus}
             onClick={() => {
               setActionRow(rowContextMenu.row);
               setRowContextMenu(null);
@@ -655,6 +730,128 @@ export default function PortalModalLayer({
                   <span className="context-menu-item-label">Clear BL Status</span>
                   <span className="context-menu-item-trailing subtle-text">
                     {currentBlSurrenderStatus ? formatBlSurrenderStatusLabel(rowContextMenu.row?.bl_surrender_status) : ""}
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div
+            className={`context-submenu-wrap${paymentStatusMenuOpen ? " is-open" : ""}`}
+            onMouseEnter={touchMenuMode ? undefined : openPaymentStatusMenu}
+            onMouseLeave={touchMenuMode ? undefined : closePaymentStatusMenu}
+          >
+            <button
+              ref={paymentStatusTriggerRef}
+              type="button"
+              className={`context-submenu-trigger${paymentStatusMenuOpen ? " is-open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={paymentStatusMenuOpen}
+              onClick={() => {
+                if (touchMenuMode) {
+                  togglePaymentStatusMenu();
+                  return;
+                }
+                openPaymentStatusMenu();
+              }}
+            >
+              <span className="context-menu-item-label">Payment Status</span>
+              <span className="context-menu-item-arrow" aria-hidden="true">{">"}</span>
+            </button>
+            {paymentStatusMenuOpen ? (
+              <div
+                ref={paymentStatusSubmenuRef}
+                className={`context-submenu context-submenu-${paymentStatusSubmenuPlacement}`}
+                role="menu"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className={currentPaymentStatus === "paid_by_party" ? "is-current is-current-payment-party" : ""}
+                  onClick={() => handlePaymentStatusMenuAction("paid_by_party")}
+                >
+                  <span className="context-menu-item-label">Mark Invoice Paid by Party</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {currentPaymentStatus === "paid_by_party" ? (
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path
+                          d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : null}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={currentPaymentStatus === "paid_by_agency" ? "is-current is-current-payment-agency" : ""}
+                  onClick={() => handlePaymentStatusMenuAction("paid_by_agency")}
+                >
+                  <span className="context-menu-item-label">Mark Invoice Paid by Agency</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {currentPaymentStatus === "paid_by_agency" ? (
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path
+                          d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : null}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={currentPaymentStatus === "partially_paid" ? "is-current is-current-payment-partial" : ""}
+                  onClick={() => handlePaymentStatusMenuAction("partially_paid")}
+                >
+                  <span className="context-menu-item-label">Mark Invoice Partially Paid</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {currentPaymentStatus === "partially_paid" ? (
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path
+                          d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : null}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={currentPaymentStatus === "pending" ? "is-current is-current-payment-pending" : ""}
+                  onClick={() => handlePaymentStatusMenuAction("pending")}
+                >
+                  <span className="context-menu-item-label">Mark Invoice Payment Pending</span>
+                  <span className="context-menu-item-trailing" aria-hidden="true">
+                    {currentPaymentStatus === "pending" ? (
+                      <svg viewBox="0 0 16 16" focusable="false">
+                        <path
+                          d="M3.2 8.4 6.4 11.6 12.8 4.8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : null}
+                  </span>
+                </button>
+                <button type="button" onClick={() => handlePaymentStatusMenuAction("")}>
+                  <span className="context-menu-item-label">Clear Payment Status</span>
+                  <span className="context-menu-item-trailing subtle-text">
+                    {currentPaymentStatus ? formatPaymentStatusLabel(rowContextMenu.row?.payment_status) : ""}
                   </span>
                 </button>
               </div>

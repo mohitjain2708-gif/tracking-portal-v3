@@ -13,8 +13,10 @@ import {
   formatActionSummary,
   formatDocumentStatusSummary,
   formatLocationLabel,
+  formatPaymentStatusLabel,
   formatShipmentStatusLabel,
   normalizeBlSurrenderStatus,
+  normalizePaymentStatus,
 } from "../../lib/portalUtils";
 import { UIPreferenceSegmentedControl, useUIPreference } from "../../ui/UIPreferenceContext";
 
@@ -164,6 +166,37 @@ function BlSurrenderLine({ status, className = "" }) {
   );
 }
 
+function PaymentStatusLine({ status, className = "" }) {
+  const normalizedStatus = normalizePaymentStatus(status);
+  const label = formatPaymentStatusLabel(normalizedStatus);
+  if (!label) {
+    return null;
+  }
+  return (
+    <div
+      className={`payment-status-line${normalizedStatus ? ` payment-status-line-${normalizedStatus}` : ""} ${className}`.trim()}
+    >
+      {label}
+    </div>
+  );
+}
+
+function OperationalStatusLine({ blStatus, paymentStatus, className = "" }) {
+  const hasBlStatus = Boolean(formatBlSurrenderStatusLabel(blStatus));
+  const hasPaymentStatus = Boolean(formatPaymentStatusLabel(paymentStatus));
+
+  if (!hasBlStatus && !hasPaymentStatus) {
+    return null;
+  }
+
+  return (
+    <div className={`operational-status-line ${className}`.trim()}>
+      {hasBlStatus ? <BlSurrenderLine status={blStatus} /> : null}
+      {hasPaymentStatus ? <PaymentStatusLine status={paymentStatus} /> : null}
+    </div>
+  );
+}
+
 function ClassicMobileShipmentCard({
   row,
   isSelected,
@@ -200,7 +233,11 @@ function ClassicMobileShipmentCard({
 
       <div className="mobile-shipment-identity">
         <h3>{row.customer_name || "Unnamed customer"}</h3>
-        <BlSurrenderLine status={row.bl_surrender_status} className="mobile-bl-surrender-line" />
+        <OperationalStatusLine
+          blStatus={row.bl_surrender_status}
+          paymentStatus={row.payment_status}
+          className="mobile-status-line"
+        />
         <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
         <RowActionSummary row={row} className="mobile-row-action-summary" />
       </div>
@@ -290,7 +327,11 @@ function PremiumShipmentCard({
         <div>
           <h3>{row.customer_name || "Unnamed customer"}</h3>
           <div className="premium-identity-meta">
-            <BlSurrenderLine status={row.bl_surrender_status} className="premium-bl-surrender-line" />
+            <OperationalStatusLine
+              blStatus={row.bl_surrender_status}
+              paymentStatus={row.payment_status}
+              className="premium-status-line"
+            />
             <p>{row.bl_number ? `BL ${row.bl_number}` : "BL not linked yet"}</p>
           </div>
           <RowActionSummary row={row} className="premium-row-action-summary" />
@@ -604,7 +645,10 @@ function ClassicPortalLandingView({ model, ownerPanel }) {
                       <td className="identity-col">
                         <div className="identity-cell">
                           <div className="cell-title customer-name">{row.customer_name || "-"}</div>
-                          <BlSurrenderLine status={row.bl_surrender_status} />
+                          <OperationalStatusLine
+                            blStatus={row.bl_surrender_status}
+                            paymentStatus={row.payment_status}
+                          />
                           <div className="identity-subline">
                             {row.bl_number ? `BL ${row.bl_number}` : "BL not linked"}
                           </div>

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 1440
     database_url: str = "sqlite:///./tracking_portal.db"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_upload_mb: int = 10
     upload_dir: str = "./uploads"
     runtime_dir: str = "./runtime_data"
