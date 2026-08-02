@@ -43,7 +43,7 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     dockerCommand: python scripts/refresh_active_shipments.py
-    schedule: "*/15 * * * *"
+    schedule: "0 */2 * * *"
     autoDeploy: true
     envVars:
       - key: APP_ENV

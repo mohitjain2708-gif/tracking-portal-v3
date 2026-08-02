@@ -110,8 +110,9 @@ export async function preflightPortalService({ force = false } = {}) {
   }
 
   if (!serviceWarmPromise) {
+    // Warm the app process without forcing a database wake-up on idle portals.
     serviceWarmPromise = safeFetch(
-      `${API_BASE}/api/health`,
+      `${API_BASE}/api/live`,
       { timeoutMs: SERVICE_WARM_TIMEOUT_MS },
       "/api/auth/login"
     )
